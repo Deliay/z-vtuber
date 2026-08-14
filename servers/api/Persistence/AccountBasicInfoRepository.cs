@@ -12,7 +12,12 @@ public sealed class AccountBasicInfoRepository(IMongoDatabase database)
     public Task UpsertAsync(AccountBasicInfoRecord record, CancellationToken ct = default)
     {
         var filter = Builders<AccountBasicInfoRecord>.Filter.Eq(a => a.Mid, record.Mid);
-        return _collection.ReplaceOneAsync(filter, record, new ReplaceOptions { IsUpsert = true }, ct);
+        var update = Builders<AccountBasicInfoRecord>.Update
+            .Set(a => a.Mid, record.Mid)
+            .Set(a => a.RoomId, record.RoomId)
+            .Set(a => a.Data, record.Data)
+            .Set(a => a.FetchedAt, record.FetchedAt);
+        return _collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
     }
 
     public Task<AccountBasicInfoRecord> GetLatestByMidAsync(long mid, CancellationToken ct = default) =>

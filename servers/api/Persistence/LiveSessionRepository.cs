@@ -20,9 +20,20 @@ public sealed class LiveSessionRepository(IMongoDatabase database)
             return;
         }
 
+        var existingFilter = Builders<LiveSessionRecord>.Filter.In(r => r.LiveId, deduped.Select(r => r.LiveId));
+        var existing = await _collection.Find(existingFilter)
+            .Project<LiveSessionRecord>(Builders<LiveSessionRecord>.Projection.Include(r => r.LiveId).Include(r => r.Id))
+            .ToListAsync(ct);
+        var idByLiveId = existing.ToDictionary(r => r.LiveId, r => r.Id, StringComparer.Ordinal);
+
         var models = new List<WriteModel<LiveSessionRecord>>(deduped.Count);
         foreach (var record in deduped)
         {
+            if (idByLiveId.TryGetValue(record.LiveId, out var id))
+            {
+                record.Id = id;
+            }
+
             var filter = Builders<LiveSessionRecord>.Filter.Eq(r => r.LiveId, record.LiveId);
             models.Add(new ReplaceOneModel<LiveSessionRecord>(filter, record) { IsUpsert = true });
         }
