@@ -32,7 +32,7 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
 
     public async Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
         var raw = await http.GetAsync($"https://ukamnads.icu/api/v2/channel?uId={mid}", ct);
         raw.EnsureSuccessStatusCode();
         using var stream = await raw.Content.ReadAsStreamAsync(ct);
