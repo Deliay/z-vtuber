@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Mikibot.Crawler.Http;
+using Mikibot.Crawler.Http.Bilibili;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Configuration;
 
@@ -38,41 +39,59 @@ public sealed class BiliApiClient(BilibiliCrawlerOptions options) : IBiliApiClie
 
     private static BiliRawCrawler CreateCrawler(HttpClient http, string cookie) => new(http, cookie);
 
+    private static async Task<BilibiliAccount> CreateAccountAsync(HttpClient http, string cookie, CancellationToken ct)
+    {
+        var jar = new CookieJar(cookie);
+        var basic = new BiliBasicInfoCrawler(http, jar);
+        var account = new BilibiliAccount(basic);
+        await account.InitializeAsync(ct);
+        return account;
+    }
+
     public async Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
     {
         using var http = CreateHttpClient();
+        var account = await CreateAccountAsync(http, cookie, ct);
+        var query = account.Sign([new KeyValuePair<string, string>("mid", $"{mid}")]);
         var crawler = CreateCrawler(http, cookie);
-        var response = await crawler.GetAsync($"https://api.bilibili.com/x/space/acc/info?mid={mid}", ct);
+        var response = await crawler.GetAsync($"https://api.bilibili.com/x/space/acc/info?{query}", ct);
         return EnsureSuccess(response).Data;
     }
 
     public async Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default)
     {
         using var http = CreateHttpClient();
+        var account = await CreateAccountAsync(http, cookie, ct);
+        var query = account.Sign([new KeyValuePair<string, string>("room_id", $"{roomId}")]);
         var crawler = CreateCrawler(http, cookie);
-        var response = await crawler.GetAsync($"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={roomId}", ct);
+        var response = await crawler.GetAsync($"https://api.live.bilibili.com/room/v1/Room/get_info?{query}", ct);
         return EnsureSuccess(response).Data.Deserialize<LiveRoomInfo>(JsonOptions);
     }
 
     public async Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default)
     {
         using var http = CreateHttpClient();
-        var crawler = CreateCrawler(http, cookie);
-        var response = await crawler.GetAsync("https://api.bilibili.com/x/web-interface/nav", ct);
-        return EnsureSuccess(response).Data.Deserialize<NavInfo>(JsonOptions);
+        var account = await CreateAccountAsync(http, cookie, ct);
+        return new NavInfo { Mid = account.Mid };
     }
 
     public async Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default)
     {
         using var http = CreateHttpClient();
-        var crawler = CreateCrawler(http, cookie);
-        var url = $"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid={mid}";
+        var account = await CreateAccountAsync(http, cookie, ct);
+
+        var parameters = new List<KeyValuePair<string, string>>
+        {
+            new("host_mid", $"{mid}"),
+        };
         if (!string.IsNullOrEmpty(offset))
         {
-            url += $"&offset={Uri.EscapeDataString(offset)}";
+            parameters.Add(new("offset", offset));
         }
 
-        var response = await crawler.GetAsync(url, ct);
+        var query = account.Sign(parameters);
+        var crawler = CreateCrawler(http, cookie);
+        var response = await crawler.GetAsync($"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?{query}", ct);
         var data = EnsureSuccess(response).Data;
 
         var hasMore = data.TryGetProperty("has_more", out var hasMoreElement) && hasMoreElement.ValueKind == JsonValueKind.True;
