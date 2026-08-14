@@ -6,6 +6,7 @@ namespace Z.Vtuber.Services;
 
 public interface ISubscriptionService
 {
+    event Action<long>? Subscribed;
     Task<IReadOnlyList<long>> GetMidsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<SubscriptionRecord>> GetAllAsync(CancellationToken ct = default);
     Task SubscribeAsync(long mid, CancellationToken ct = default);
@@ -16,6 +17,8 @@ public sealed class SubscriptionService(IMongoDatabase database) : ISubscription
 {
     private readonly IMongoCollection<SubscriptionRecord> _collection =
         database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+
+    public event Action<long>? Subscribed;
 
     public async Task<IReadOnlyList<long>> GetMidsAsync(CancellationToken ct = default)
     {
@@ -42,7 +45,12 @@ public sealed class SubscriptionService(IMongoDatabase database) : ISubscription
 
         var filter = Builders<SubscriptionRecord>.Filter.Eq(s => s.Mid, mid);
         var update = Builders<SubscriptionRecord>.Update.SetOnInsert(s => s.SubscribedAt, DateTime.UtcNow);
-        await _collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+        var result = await _collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
+
+        if (result.UpsertedId is not null)
+        {
+            Subscribed?.Invoke(mid);
+        }
     }
 
     public async Task<bool> UnsubscribeAsync(long mid, CancellationToken ct = default)

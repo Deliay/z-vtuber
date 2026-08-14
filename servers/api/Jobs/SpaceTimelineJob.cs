@@ -6,32 +6,59 @@ using Z.Vtuber.Services;
 
 namespace Z.Vtuber.Jobs;
 
-public sealed class SpaceTimelineJob(
-    IBiliApiClient bili,
-    ICookiePoolService cookiePool,
-    ISubscriptionService subscription,
-    SpaceTimelineRepository repository,
-    CrawlLockProvider locks,
-    BilibiliCrawlerOptions options,
-    ILogger<SpaceTimelineJob> logger) : PeriodicJobBase(logger)
+public sealed class SpaceTimelineJob : PeriodicJobBase
 {
-    protected override TimeSpan Interval => TimeSpan.FromSeconds(options.SpaceTimelineIntervalSeconds);
+    private readonly IBiliApiClient _bili;
+    private readonly ICookiePoolService _cookiePool;
+    private readonly ISubscriptionService _subscription;
+    private readonly SpaceTimelineRepository _repository;
+    private readonly CrawlLockProvider _locks;
+    private readonly BilibiliCrawlerOptions _options;
+    private readonly ILogger<SpaceTimelineJob> _logger;
+
+    public SpaceTimelineJob(
+        IBiliApiClient bili,
+        ICookiePoolService cookiePool,
+        ISubscriptionService subscription,
+        SpaceTimelineRepository repository,
+        CrawlLockProvider locks,
+        BilibiliCrawlerOptions options,
+        ILogger<SpaceTimelineJob> logger) : base(logger)
+    {
+        _bili = bili;
+        _cookiePool = cookiePool;
+        _subscription = subscription;
+        _repository = repository;
+        _locks = locks;
+        _options = options;
+        _logger = logger;
+        subscription.Subscribed += OnSubscribed;
+    }
+
+    protected override TimeSpan Interval => TimeSpan.FromSeconds(_options.SpaceTimelineIntervalSeconds);
 
     protected override async Task RunOnceAsync(CancellationToken ct)
     {
-        var mids = await subscription.GetMidsAsync(ct);
+        var mids = await _subscription.GetMidsAsync(ct);
         foreach (var mid in mids)
         {
-            var gate = locks.GetLock($"space:{mid}");
-            await gate.WaitAsync(ct);
-            try
-            {
-                await CrawlAsync(mid, ct);
-            }
-            finally
-            {
-                gate.Release();
-            }
+            await CrawlLockedAsync(mid, ct);
+        }
+    }
+
+    private void OnSubscribed(long mid) => _ = CrawlLockedAsync(mid, CancellationToken.None);
+
+    private async Task CrawlLockedAsync(long mid, CancellationToken ct)
+    {
+        var gate = _locks.GetLock($"space:{mid}");
+        await gate.WaitAsync(ct);
+        try
+        {
+            await CrawlAsync(mid, ct);
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 
@@ -40,11 +67,11 @@ public sealed class SpaceTimelineJob(
         string cookie;
         try
         {
-            cookie = (await cookiePool.NextAsync(ct)).Cookie;
+            cookie = (await _cookiePool.NextAsync(ct)).Cookie;
         }
         catch (NoAvailableCookieException)
         {
-            logger.LogWarning("Space timeline crawl skipped for mid {Mid}: no active cookie.", mid);
+            _logger.LogWarning("Space timeline crawl skipped for mid {Mid}: no active cookie.", mid);
             return;
         }
 
@@ -56,11 +83,11 @@ public sealed class SpaceTimelineJob(
             SpaceDynamicsPage page;
             try
             {
-                page = await bili.GetSpaceDynamicsAsync(cookie, mid, offset, ct);
+                page = await _bili.GetSpaceDynamicsAsync(cookie, mid, offset, ct);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Space timeline fetch failed for mid {Mid} at offset {Offset}.", mid, offset);
+                _logger.LogError(ex, "Space timeline fetch failed for mid {Mid} at offset {Offset}.", mid, offset);
                 return;
             }
 
@@ -70,7 +97,7 @@ public sealed class SpaceTimelineJob(
             }
 
             var ids = page.Items.Select(i => i.DynamicId).Where(id => !string.IsNullOrEmpty(id)).ToList();
-            var existing = await repository.GetExistingDynamicIdsAsync(ids, ct);
+            var existing = await _repository.GetExistingDynamicIdsAsync(ids, ct);
 
             var toInsert = new List<SpaceTimelineRecord>();
             foreach (var item in page.Items)
@@ -91,7 +118,7 @@ public sealed class SpaceTimelineJob(
 
             if (toInsert.Count > 0)
             {
-                await repository.BulkUpsertAsync(toInsert, ct);
+                await _repository.BulkUpsertAsync(toInsert, ct);
             }
 
             if (!SpaceTimelinePaging.ShouldContinuePaging(ids.Count, existing.Count, page.HasMore, page.Offset))
@@ -101,7 +128,7 @@ public sealed class SpaceTimelineJob(
 
             if (!visitedOffsets.Add(page.Offset))
             {
-                logger.LogWarning("Space timeline paging loop detected for mid {Mid}; stopping.", mid);
+                _logger.LogWarning("Space timeline paging loop detected for mid {Mid}; stopping.", mid);
                 return;
             }
 

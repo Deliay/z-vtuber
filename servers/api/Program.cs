@@ -30,6 +30,7 @@ builder.Services.AddSingleton<MongoDbInitializer>();
 builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 builder.Services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
+builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
 
 builder.Services.AddSingleton<IBiliApiClient, BiliApiClient>();
 builder.Services.AddSingleton<DanmakuClientFactory>();
