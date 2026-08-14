@@ -35,15 +35,11 @@ type: Permanent
 ```mermaid
 flowchart LR
     MAIN[main] --> FEAT[feat/bilibili-live-crawler<br>需求总分支]
-    FEAT --> DEV1[feat/bilibili-live-crawler-contract]
-    FEAT --> DEV2[feat/bilibili-live-crawler-servers]
-    DEV1 -->|PR + review + merge| FEAT
-    DEV2 -->|PR + review + merge| FEAT
-    FEAT -->|全部验收通过后 PR| MAIN
+    FEAT -->|全部验收通过后 PR + review + merge| MAIN
 ```
 
-- 开发分支从需求总分支 `feat/bilibili-live-crawler` 切出，按子项目划分（本需求实质仅 `servers` 一个实现子项目，契约先行单独一支）；完成实现 + 单元测试后提 PR 回合需求总分支，review 通过后删除开发分支。
-- 合并 PR 后删除远端与本地开发分支，**不删除**目标分支。
+- 本需求开发全程只使用需求总分支 `feat/bilibili-live-crawler` 一个分支：契约、实现、测试全部直接在该分支上提交，不再切开发子分支。
+- 全部验收通过后，以 `feat/bilibili-live-crawler` 向 `main` 提 PR，review 通过后 merge（仅 merge，禁止 rebase/squash）；合并 PR 后删除该分支的远端与本地副本，**不删除** `main`。
 - 提交信息使用 Conventional Commits（`feat:` / `test:` / `docs:` / `chore:` 等）。
 
 ## 3. 实施阶段
@@ -55,7 +51,7 @@ flowchart LR
 | # | 任务 | 产出 |
 |---|------|------|
 | 0.1 | 依据提案 §3.1 编写 OpenAPI 契约，覆盖全部 9 个端点（统一前缀 `/api/b`） | `contracts/bilibili-crawler.openapi.yaml` |
-| 0.2 | 契约评审通过后合并回合需求总分支，作为后续实现与 API 测试的唯一依据 | PR 合入 |
+| 0.2 | 契约评审通过后直接提交至需求总分支，作为后续实现与 API 测试的唯一依据 | 契约合入 |
 
 ### Phase 1: 基础设施与编排
 
