@@ -25,12 +25,22 @@ public class BilibiliUserController(
 
     [HttpGet("{mid}/space")]
     public async Task<IActionResult> GetSpaceTimeline(
-        long mid, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
+        long mid,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] DateTime? startedAt = null,
+        [FromQuery] DateTime? endedAt = null,
+        CancellationToken ct = default)
     {
+        if (BadTimeRange(startedAt, endedAt))
+        {
+            return BadRequest(new { error = "startedAt must not be later than endedAt." });
+        }
+
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
 
-        var (total, items) = await spaceTimelineRepository.GetPageAsync(mid, page, pageSize, ct);
+        var (total, items) = await spaceTimelineRepository.GetPageAsync(mid, page, pageSize, startedAt, endedAt, ct);
         var result = items.Select(i => new
         {
             i.Mid,
@@ -44,4 +54,7 @@ public class BilibiliUserController(
 
     internal static JsonNode? ParseRaw(string? raw) =>
         string.IsNullOrEmpty(raw) ? null : JsonNode.Parse(raw);
+
+    internal static bool BadTimeRange(DateTime? startedAt, DateTime? endedAt) =>
+        startedAt.HasValue && endedAt.HasValue && endedAt.Value < startedAt.Value;
 }

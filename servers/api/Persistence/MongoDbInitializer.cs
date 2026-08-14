@@ -91,6 +91,11 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Ascending(t => t.Mid)
             .Descending(t => t.DynamicId);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<SpaceTimelineRecord>(midDynamicIdKeys), cancellationToken: ct);
+
+        var midPubTsKeys = Builders<SpaceTimelineRecord>.IndexKeys
+            .Ascending(t => t.Mid)
+            .Descending(t => t.PubTs);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<SpaceTimelineRecord>(midPubTsKeys), cancellationToken: ct);
     }
 
     private async Task EnsureLiveSessionIndexesAsync(CancellationToken ct)
@@ -105,5 +110,51 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Ascending(l => l.RoomId)
             .Descending(l => l.StartDate);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveSessionRecord>(roomKeys), cancellationToken: ct);
+    }
+
+    public async Task BackfillSpaceTimelinePubTsAsync(CancellationToken ct = default)
+    {
+        const int batchSize = 500;
+        var collection = database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+
+        long processed;
+        do
+        {
+            var cursor = await collection.Find(r => r.PubTs == null)
+                .Project<SpaceTimelineRecord>(Builders<SpaceTimelineRecord>.Projection
+                    .Include(r => r.Id)
+                    .Include(r => r.Data))
+                .Limit(batchSize)
+                .ToCursorAsync(ct);
+
+            var batch = await cursor.ToListAsync(ct);
+            if (batch.Count == 0)
+            {
+                return;
+            }
+
+            var models = new List<WriteModel<SpaceTimelineRecord>>(batch.Count);
+            foreach (var record in batch)
+            {
+                var pubTs = Services.PubTsExtractor.FromRawJson(record.Data);
+                if (pubTs is null)
+                {
+                    continue;
+                }
+
+                models.Add(new UpdateOneModel<SpaceTimelineRecord>(
+                    Builders<SpaceTimelineRecord>.Filter.Eq(r => r.Id, record.Id),
+                    Builders<SpaceTimelineRecord>.Update.Set(r => r.PubTs, pubTs)));
+            }
+
+            if (models.Count > 0)
+            {
+                await collection.BulkWriteAsync(models, cancellationToken: ct);
+            }
+
+            processed = batch.Count;
+            logger.LogInformation("Backfilled PubTs for {Count} space timeline records.", models.Count);
+        }
+        while (processed == batchSize);
     }
 }

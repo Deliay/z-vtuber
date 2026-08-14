@@ -12,7 +12,7 @@ public sealed class CookieProbeJob(
 {
     protected override TimeSpan Interval => TimeSpan.FromMinutes(options.CookieProbeIntervalMinutes);
 
-    protected override async Task RunOnceAsync(CancellationToken ct)
+    internal override async Task RunOnceAsync(CancellationToken ct)
     {
         var cookies = await cookiePool.GetActiveAsync(ct);
         if (cookies.Count == 0)

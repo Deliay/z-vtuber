@@ -17,12 +17,22 @@ public class BilibiliLiveController(
 {
     [HttpGet("{roomId}/state/all")]
     public async Task<IActionResult> GetAllStates(
-        long roomId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
+        long roomId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] DateTime? startedAt = null,
+        [FromQuery] DateTime? endedAt = null,
+        CancellationToken ct = default)
     {
+        if (BilibiliUserController.BadTimeRange(startedAt, endedAt))
+        {
+            return BadRequest(new { error = "startedAt must not be later than endedAt." });
+        }
+
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
 
-        var (total, items) = await liveStatusRepository.GetPageAsync(roomId, page, pageSize, ct);
+        var (total, items) = await liveStatusRepository.GetPageAsync(roomId, page, pageSize, startedAt, endedAt, ct);
         return Ok(new { total, page, pageSize, items = items.Select(ToStateDto) });
     }
 
@@ -35,12 +45,22 @@ public class BilibiliLiveController(
 
     [HttpGet("{roomId}/history")]
     public async Task<IActionResult> GetHistory(
-        long roomId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
+        long roomId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] DateTime? startedAt = null,
+        [FromQuery] DateTime? endedAt = null,
+        CancellationToken ct = default)
     {
+        if (BilibiliUserController.BadTimeRange(startedAt, endedAt))
+        {
+            return BadRequest(new { error = "startedAt must not be later than endedAt." });
+        }
+
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
 
-        var (total, items) = await liveSessionRepository.GetPageAsync(roomId, page, pageSize, ct);
+        var (total, items) = await liveSessionRepository.GetPageAsync(roomId, page, pageSize, startedAt, endedAt, ct);
         return Ok(new { total, page, pageSize, items = items.Select(ToSessionDto) });
     }
 

@@ -67,43 +67,86 @@ public sealed class AccountInfoCrawler(
         }
     }
 
+    private static readonly TimeSpan MergeTolerance = TimeSpan.FromMinutes(10);
+
     private async Task PersistLiveSessionsAsync(long roomId, JsonElement lives, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
-        var records = new List<LiveSessionRecord>();
+        var newRecords = new List<LiveSessionRecord>();
 
         foreach (var live in lives.EnumerateArray())
         {
-            var liveId = live.GetProperty("liveId").GetString() ?? string.Empty;
-            if (string.IsNullOrEmpty(liveId)) continue;
+            var startDate = DateTimeOffset.FromUnixTimeMilliseconds(live.GetProperty("startDate").GetInt64()).UtcDateTime;
+            var record = BuildRecord(roomId, live, startDate, now);
 
-            records.Add(new LiveSessionRecord
+            var candidate = await FindMergeCandidateAsync(roomId, record, startDate, ct);
+            if (candidate is not null)
             {
-                LiveId = liveId,
-                RoomId = roomId,
-                Title = live.GetProperty("title").GetString() ?? string.Empty,
-                CoverUrl = live.TryGetProperty("coverUrl", out var cover) ? cover.GetString() : null,
-                ParentArea = live.TryGetProperty("parentArea", out var parent) ? parent.GetString() : null,
-                Area = live.TryGetProperty("area", out var area) ? area.GetString() : null,
-                IsFinish = live.GetProperty("isFinish").GetBoolean(),
-                StartDate = DateTimeOffset.FromUnixTimeMilliseconds(live.GetProperty("startDate").GetInt64()).UtcDateTime,
-                StopDate = live.TryGetProperty("stopDate", out var stop) && stop.ValueKind == JsonValueKind.Number
-                    ? DateTimeOffset.FromUnixTimeMilliseconds(stop.GetInt64()).UtcDateTime
-                    : null,
-                DanmakuCount = live.GetProperty("danmakusCount").GetInt64(),
-                TotalIncome = live.GetProperty("totalIncome").GetDouble(),
-                WatchCount = live.GetProperty("watchCount").GetInt64(),
-                LikeCount = live.GetProperty("likeCount").GetInt64(),
-                PayCount = live.GetProperty("payCount").GetInt64(),
-                MaxOnlineCount = live.GetProperty("maxOnlineCount").GetInt64(),
-                FetchedAt = now,
-            });
+                record.LiveId = candidate.LiveId;
+                record.Id = candidate.Id;
+                await liveSessionRepository.UpsertAsync(record, ct);
+            }
+            else
+            {
+                newRecords.Add(record);
+            }
         }
 
-        if (records.Count > 0)
+        if (newRecords.Count > 0)
         {
-            await liveSessionRepository.UpsertManyAsync(records, ct);
-            logger.LogInformation("Persisted {Count} live sessions for room {RoomId}.", records.Count, roomId);
+            await liveSessionRepository.UpsertManyAsync(newRecords, ct);
         }
+
+        if (lives.GetArrayLength() > 0)
+        {
+            logger.LogInformation("Persisted {Count} live sessions for room {RoomId}.", lives.GetArrayLength(), roomId);
+        }
+    }
+
+    private async Task<LiveSessionRecord?> FindMergeCandidateAsync(
+        long roomId, LiveSessionRecord record, DateTime startDate, CancellationToken ct)
+    {
+        var candidates = await liveSessionRepository.FindMergeCandidatesAsync(roomId, startDate, MergeTolerance, ct);
+        foreach (var candidate in candidates)
+        {
+            if (string.Equals(candidate.LiveId, record.LiveId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!candidate.IsFinish ||
+                (candidate.StartDate - startDate).Duration() <= MergeTolerance)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static LiveSessionRecord BuildRecord(long roomId, JsonElement live, DateTime startDate, DateTime now)
+    {
+        var liveId = live.GetProperty("liveId").GetString() ?? string.Empty;
+        return new LiveSessionRecord
+        {
+            LiveId = liveId,
+            RoomId = roomId,
+            Title = live.GetProperty("title").GetString() ?? string.Empty,
+            CoverUrl = live.TryGetProperty("coverUrl", out var cover) ? cover.GetString() : null,
+            ParentArea = live.TryGetProperty("parentArea", out var parent) ? parent.GetString() : null,
+            Area = live.TryGetProperty("area", out var area) ? area.GetString() : null,
+            IsFinish = live.GetProperty("isFinish").GetBoolean(),
+            StartDate = startDate,
+            StopDate = live.TryGetProperty("stopDate", out var stop) && stop.ValueKind == JsonValueKind.Number
+                ? DateTimeOffset.FromUnixTimeMilliseconds(stop.GetInt64()).UtcDateTime
+                : null,
+            DanmakuCount = live.GetProperty("danmakusCount").GetInt64(),
+            TotalIncome = live.GetProperty("totalIncome").GetDouble(),
+            WatchCount = live.GetProperty("watchCount").GetInt64(),
+            LikeCount = live.GetProperty("likeCount").GetInt64(),
+            PayCount = live.GetProperty("payCount").GetInt64(),
+            MaxOnlineCount = live.GetProperty("maxOnlineCount").GetInt64(),
+            FetchedAt = now,
+        };
     }
 }

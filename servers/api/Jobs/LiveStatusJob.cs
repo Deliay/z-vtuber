@@ -14,6 +14,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
     private readonly IAccountInfoCrawler _accountInfoCrawler;
     private readonly AccountBasicInfoRepository _accountRepository;
     private readonly LiveStatusRepository _repository;
+    private readonly LiveSessionRepository _sessionRepository;
     private readonly CrawlLockProvider _locks;
     private readonly ILiveSessionTracker _sessionTracker;
     private readonly BilibiliCrawlerOptions _options;
@@ -26,6 +27,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
         IAccountInfoCrawler accountInfoCrawler,
         AccountBasicInfoRepository accountRepository,
         LiveStatusRepository repository,
+        LiveSessionRepository sessionRepository,
         CrawlLockProvider locks,
         ILiveSessionTracker sessionTracker,
         BilibiliCrawlerOptions options,
@@ -37,6 +39,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
         _accountInfoCrawler = accountInfoCrawler;
         _accountRepository = accountRepository;
         _repository = repository;
+        _sessionRepository = sessionRepository;
         _locks = locks;
         _sessionTracker = sessionTracker;
         _options = options;
@@ -46,7 +49,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
 
     protected override TimeSpan Interval => TimeSpan.FromSeconds(_options.StatusIntervalSeconds);
 
-    protected override async Task RunOnceAsync(CancellationToken ct)
+    internal override async Task RunOnceAsync(CancellationToken ct)
     {
         var mids = await _subscription.GetMidsAsync(ct);
         foreach (var mid in mids)
@@ -102,7 +105,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
             var liveStatus = roomInfo.LiveStatus == 1;
 
             var latest = await _repository.GetLatestByRoomIdAsync(roomId, ct);
-            var (shouldPersist, sessionId) = LiveStatusStateMachine.Decide(latest, title, liveStatus);
+            var (shouldPersist, sessionId, transition) = LiveStatusStateMachine.Decide(latest, title, liveStatus);
 
             _sessionTracker.SetCurrentSessionId(roomId, sessionId);
 
@@ -110,6 +113,8 @@ public sealed class LiveStatusJob : PeriodicJobBase
             {
                 return;
             }
+
+            await MaintainSessionAsync(roomId, title, sessionId, transition, ct);
 
             await _repository.InsertAsync(new LiveStatusRecord
             {
@@ -127,6 +132,44 @@ public sealed class LiveStatusJob : PeriodicJobBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Live status crawl failed for room {RoomId}.", roomId);
+        }
+    }
+
+    private async Task MaintainSessionAsync(
+        long roomId, string title, string? sessionId, SessionTransition transition, CancellationToken ct)
+    {
+        if (sessionId is null)
+        {
+            return;
+        }
+
+        try
+        {
+            switch (transition)
+            {
+                case SessionTransition.Started:
+                    await _sessionRepository.UpsertAsync(new LiveSessionRecord
+                    {
+                        LiveId = sessionId,
+                        RoomId = roomId,
+                        Title = title,
+                        IsFinish = false,
+                        StartDate = DateTime.UtcNow,
+                        FetchedAt = DateTime.UtcNow,
+                    }, ct);
+                    break;
+
+                case SessionTransition.Ended:
+                    await _sessionRepository.CloseAsync(sessionId, DateTime.UtcNow, ct);
+                    break;
+
+                default:
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to maintain live session for room {RoomId}; session write skipped.", roomId);
         }
     }
 }

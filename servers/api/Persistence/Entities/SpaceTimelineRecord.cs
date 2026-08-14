@@ -15,6 +15,9 @@ public sealed class SpaceTimelineRecord
 
     public string Data { get; set; } = string.Empty;
 
+    [BsonRepresentation(BsonType.Int64)]
+    public long? PubTs { get; set; }
+
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime FetchedAt { get; set; }
 }
