@@ -147,13 +147,16 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                     Builders<SpaceTimelineRecord>.Update.Set(r => r.PubTs, pubTs)));
             }
 
-            if (models.Count > 0)
+            if (models.Count == 0)
             {
-                await collection.BulkWriteAsync(models, cancellationToken: ct);
+                logger.LogInformation(
+                    "Backfill stopped: {Skipped} records in batch had no extractable PubTs.", batch.Count);
+                return;
             }
 
-            processed = batch.Count;
+            await collection.BulkWriteAsync(models, cancellationToken: ct);
             logger.LogInformation("Backfilled PubTs for {Count} space timeline records.", models.Count);
+            processed = batch.Count;
         }
         while (processed == batchSize);
     }

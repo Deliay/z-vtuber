@@ -60,4 +60,22 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
         var record = await collection.Find(r => r.DynamicId == "1").FirstOrDefaultAsync();
         Assert.Null(record.PubTs);
     }
+
+    [Fact]
+    public async Task Backfill_AllUnextractable_DoesNotLoop()
+    {
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        var docs = Enumerable.Range(0, 600)
+            .Select(i => new SpaceTimelineRecord { DynamicId = i.ToString(), Data = AuthorJson(null) })
+            .ToList();
+        await collection.InsertManyAsync(docs);
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillSpaceTimelinePubTsAsync();
+
+        var total = await collection.CountDocumentsAsync(FilterDefinition<SpaceTimelineRecord>.Empty);
+        Assert.Equal(600, total);
+        var withPubTs = await collection.CountDocumentsAsync(r => r.PubTs != null);
+        Assert.Equal(0, withPubTs);
+    }
 }
