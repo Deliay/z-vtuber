@@ -32,10 +32,12 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
 
     public async Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
     {
-        var provider = await accountProvider.GetProviderAsync(cookie, ct);
-        var crawler = provider.GetRequiredService<BiliLiveCrawler>();
-        var info = await crawler.GetPersonalInfo(mid, ct);
-        return JsonSerializer.SerializeToElement(info, JsonOptions);
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        var raw = await http.GetAsync($"https://ukamnads.icu/api/v2/channel?uId={mid}", ct);
+        raw.EnsureSuccessStatusCode();
+        using var stream = await raw.Content.ReadAsStreamAsync(ct);
+        var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        return doc.RootElement.Clone();
     }
 
     public async Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default)

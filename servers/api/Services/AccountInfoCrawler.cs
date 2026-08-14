@@ -13,8 +13,8 @@ public interface IAccountInfoCrawler
 
 public sealed class AccountInfoCrawler(
     IBiliApiClient bili,
-    ICookiePoolService cookiePool,
-    AccountBasicInfoRepository repository,
+    AccountBasicInfoRepository accountRepository,
+    LiveSessionRepository liveSessionRepository,
     CrawlLockProvider locks,
     ILogger<AccountInfoCrawler> logger) : IAccountInfoCrawler
 {
@@ -36,22 +36,30 @@ public sealed class AccountInfoCrawler(
     {
         try
         {
-            var cookie = await cookiePool.NextAsync(ct);
-            var data = await bili.GetAccountInfoDataAsync(cookie.Cookie, mid, ct);
+            var root = await bili.GetAccountInfoDataAsync(string.Empty, mid, ct);
 
-            var roomId = ExtractRoomId(data);
+            if (root.GetProperty("code").GetInt32() != 200)
+            {
+                logger.LogWarning("Channel API returned non-200 code for mid {Mid}: {Code}", mid, root.GetProperty("code").GetInt32());
+                return;
+            }
 
-            await repository.InsertAsync(new AccountBasicInfoRecord
+            var data = root.GetProperty("data");
+            var channel = data.GetProperty("channel");
+            var roomId = channel.GetProperty("roomId").GetInt64();
+
+            await accountRepository.InsertAsync(new AccountBasicInfoRecord
             {
                 Mid = mid,
                 RoomId = roomId,
-                Data = BsonConvert.FromJsonElement(data),
+                Data = BsonConvert.FromJsonElement(channel),
                 FetchedAt = DateTime.UtcNow,
             }, ct);
-        }
-        catch (NoAvailableCookieException)
-        {
-            logger.LogWarning("Account info crawl skipped for mid {Mid}: no active cookie.", mid);
+
+            if (data.TryGetProperty("lives", out var lives) && lives.ValueKind == JsonValueKind.Array)
+            {
+                await PersistLiveSessionsAsync(roomId, lives, ct);
+            }
         }
         catch (Exception ex)
         {
@@ -59,16 +67,43 @@ public sealed class AccountInfoCrawler(
         }
     }
 
-    internal static long ExtractRoomId(JsonElement data)
+    private async Task PersistLiveSessionsAsync(long roomId, JsonElement lives, CancellationToken ct)
     {
-        if (data.TryGetProperty("live_room", out var liveRoom)
-            && liveRoom.TryGetProperty("roomid", out var roomId)
-            && roomId.ValueKind == JsonValueKind.Number
-            && roomId.TryGetInt64(out var value))
+        var now = DateTime.UtcNow;
+        var records = new List<LiveSessionRecord>();
+
+        foreach (var live in lives.EnumerateArray())
         {
-            return value;
+            var liveId = live.GetProperty("liveId").GetString() ?? string.Empty;
+            if (string.IsNullOrEmpty(liveId)) continue;
+
+            records.Add(new LiveSessionRecord
+            {
+                LiveId = liveId,
+                RoomId = roomId,
+                Title = live.GetProperty("title").GetString() ?? string.Empty,
+                CoverUrl = live.TryGetProperty("coverUrl", out var cover) ? cover.GetString() : null,
+                ParentArea = live.TryGetProperty("parentArea", out var parent) ? parent.GetString() : null,
+                Area = live.TryGetProperty("area", out var area) ? area.GetString() : null,
+                IsFinish = live.GetProperty("isFinish").GetBoolean(),
+                StartDate = DateTimeOffset.FromUnixTimeMilliseconds(live.GetProperty("startDate").GetInt64()).UtcDateTime,
+                StopDate = live.TryGetProperty("stopDate", out var stop) && stop.ValueKind == JsonValueKind.Number
+                    ? DateTimeOffset.FromUnixTimeMilliseconds(stop.GetInt64()).UtcDateTime
+                    : null,
+                DanmakuCount = live.GetProperty("danmakusCount").GetInt64(),
+                TotalIncome = live.GetProperty("totalIncome").GetDouble(),
+                WatchCount = live.GetProperty("watchCount").GetInt64(),
+                LikeCount = live.GetProperty("likeCount").GetInt64(),
+                PayCount = live.GetProperty("payCount").GetInt64(),
+                MaxOnlineCount = live.GetProperty("maxOnlineCount").GetInt64(),
+                FetchedAt = now,
+            });
         }
 
-        return 0;
+        if (records.Count > 0)
+        {
+            await liveSessionRepository.UpsertManyAsync(records, ct);
+            logger.LogInformation("Persisted {Count} live sessions for room {RoomId}.", records.Count, roomId);
+        }
     }
 }

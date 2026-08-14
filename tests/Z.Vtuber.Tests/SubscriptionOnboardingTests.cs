@@ -14,16 +14,16 @@ public class SubscriptionOnboardingTests(MongoDbFixture fixture) : IAsyncLifetim
     public Task DisposeAsync() => Task.CompletedTask;
 
     private static JsonElement AccountInfoFor(long mid) =>
-        JsonDocument.Parse($@"{{""mid"":{mid},""live_room"":{{""roomid"":123456}}}}").RootElement.Clone();
+        JsonDocument.Parse($@"{{""code"":200,""data"":{{""channel"":{{""uId"":{mid},""roomId"":123456,""uName"":""test""}},""lives"":[]}}}}").RootElement.Clone();
 
     [Fact]
     public async Task Subscribe_NewMid_TriggersImmediateAccountInfoCrawl()
     {
         var subscription = new SubscriptionService(fixture.Database);
         var bili = new FakeBiliApiClient { AccountInfoProvider = AccountInfoFor };
-        var cookiePool = new FakeCookiePoolService();
-        var repository = new AccountBasicInfoRepository(fixture.Database);
-        var crawler = new AccountInfoCrawler(bili, cookiePool, repository, new CrawlLockProvider(), NullLogger<AccountInfoCrawler>.Instance);
+        var accountRepository = new AccountBasicInfoRepository(fixture.Database);
+        var liveSessionRepository = new LiveSessionRepository(fixture.Database);
+        var crawler = new AccountInfoCrawler(bili, accountRepository, liveSessionRepository, new CrawlLockProvider(), NullLogger<AccountInfoCrawler>.Instance);
 
         Task? crawlTask = null;
         subscription.Subscribed += mid => crawlTask = crawler.CrawlAsync(mid);
@@ -33,7 +33,7 @@ public class SubscriptionOnboardingTests(MongoDbFixture fixture) : IAsyncLifetim
         Assert.NotNull(crawlTask);
         await crawlTask;
 
-        var latest = await repository.GetLatestByMidAsync(1150976664);
+        var latest = await accountRepository.GetLatestByMidAsync(1150976664);
         Assert.NotNull(latest);
         Assert.Equal(123456L, latest.RoomId);
     }

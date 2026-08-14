@@ -11,6 +11,7 @@ public sealed class MongoCollectionNames
     public const string LiveStatus = "bilibili_live_status";
     public const string LiveEvent = "bilibili_live_event";
     public const string SpaceTimeline = "bilibili_user_space_timeline";
+    public const string LiveSession = "bilibili_live_session";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -25,6 +26,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureLiveStatusIndexesAsync(ct);
         await EnsureLiveEventIndexesAsync(ct);
         await EnsureSpaceTimelineIndexesAsync(ct);
+        await EnsureLiveSessionIndexesAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -84,5 +86,19 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Ascending(t => t.Mid)
             .Descending(t => t.FetchedAt);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<SpaceTimelineRecord>(midKeys), cancellationToken: ct);
+    }
+
+    private async Task EnsureLiveSessionIndexesAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<LiveSessionRecord>(MongoCollectionNames.LiveSession);
+        var uniqueKeys = Builders<LiveSessionRecord>.IndexKeys.Ascending(l => l.LiveId);
+        await collection.Indexes.CreateOneAsync(
+            new CreateIndexModel<LiveSessionRecord>(uniqueKeys, new CreateIndexOptions { Unique = true }),
+            cancellationToken: ct);
+
+        var roomKeys = Builders<LiveSessionRecord>.IndexKeys
+            .Ascending(l => l.RoomId)
+            .Descending(l => l.StartDate);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveSessionRecord>(roomKeys), cancellationToken: ct);
     }
 }
