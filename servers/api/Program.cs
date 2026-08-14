@@ -1,14 +1,55 @@
+using MongoDB.Driver;
+using Z.Vtuber.Configuration;
+using Z.Vtuber.Crawlers;
+using Z.Vtuber.Jobs;
+using Z.Vtuber.Live;
+using Z.Vtuber.Persistence;
+using Z.Vtuber.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
 builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+
+builder.AddMongoDBClient("mongo");
+
+var biliOptions = builder.Configuration
+    .GetSection(BilibiliCrawlerOptions.SectionName)
+    .Get<BilibiliCrawlerOptions>() ?? new BilibiliCrawlerOptions();
+builder.Services.AddSingleton(biliOptions);
+
+builder.Services.AddSingleton<IMongoDatabase>(sp =>
+    sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
+
+builder.Services.AddSingleton<AccountBasicInfoRepository>();
+builder.Services.AddSingleton<LiveStatusRepository>();
+builder.Services.AddSingleton<LiveEventRepository>();
+builder.Services.AddSingleton<SpaceTimelineRepository>();
+builder.Services.AddSingleton<MongoDbInitializer>();
+
+builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
+builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
+builder.Services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
+
+builder.Services.AddSingleton<IBiliApiClient, BiliApiClient>();
+builder.Services.AddSingleton<DanmakuClientFactory>();
+builder.Services.AddSingleton<ILiveEventBus, LiveEventBus>();
+builder.Services.AddSingleton<CrawlLockProvider>();
+
+builder.Services.AddHostedService<CookieProbeJob>();
+builder.Services.AddHostedService<AccountInfoJob>();
+builder.Services.AddHostedService<LiveStatusJob>();
+builder.Services.AddHostedService<SpaceTimelineJob>();
+builder.Services.AddHostedService<LiveEventSource>();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+using (var scope = app.Services.CreateScope())
+{
+    var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
+    await initializer.EnsureIndexesAsync();
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
