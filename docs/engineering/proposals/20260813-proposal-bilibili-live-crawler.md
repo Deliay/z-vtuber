@@ -52,7 +52,7 @@ graph TD
 | 层级 | 技术选型 | 说明 |
 |------|---------|------|
 | 后端 | C# / .NET 10 + ASP.NET Core Web API | 现有 `servers/api` |
-| 抓取库 | Mikibot.Crawler（源码引用） | CookieJar、AddBilibiliCrawlers、BilibiliAccount（wbi 签名）、DanmakuClient、CommandSubscriber |
+| 抓取库 | Mikibot.Crawler（NuGet 包，1.0.8，兼容 net10.0） | CookieJar、AddBilibiliCrawlers、BilibiliAccount（wbi 签名）、DanmakuClient、CommandSubscriber |
 | 数据库 | MongoDB（Aspire 编排） | `Aspire.Hosting.MongoDB` + `Aspire.MongoDB.Driver` |
 | 定时任务 | BackgroundService + PeriodicTimer | 原生轻量，满足 1 天 / 15 秒 / 探活周期 |
 | 实时推送 | Server-Sent Events（text/event-stream） | 对应 EventSource 消费端 |
@@ -83,7 +83,7 @@ graph LR
 | Crawler 调度 | 按周期驱动各抓取任务，为每个请求分配 Cookie | BackgroundService + PeriodicTimer、轮播选择器 |
 | 账号信息抓取 | 每日抓取 space/acc/info 并入库 | BiliLiveCrawler.GetAsync + BilibiliApiResponse\<JsonElement\> |
 | 直播状态抓取 | 15 秒抓取、变化去重、场次 UUID 划分 | GetLiveRoomInfo、末条记录比对 |
-| 直播事件抓取 | 直播间长连接事件持久化与实时分发 | DanmakuClient + CommandSubscriber、Channel 分发 |
+| 直播事件抓取 | 直播间长连接事件持久化与实时分发 | DanmakuClient + CommandSubscriber、直写 Mongo 持久化、按订阅门控的 Channel 分发 |
 | 空间动态抓取 | 动态分页抓取、断点查重、严格去重入库 | GetAsync 手动封装 dynamic/space 接口 |
 | 数据访问层 | MongoDB 集合读写 | MongoDB Driver、索引设计 |
 | 对外查询 API | 6 个 REST/SSE 端点 | Controller + SSE 流式响应 |
@@ -210,7 +210,7 @@ graph LR
 | `ICookiePoolService.Next()` | round-robin 返回一个有效 Cookie；无有效 Cookie 时抛出可观测异常 |
 | `ICookiePoolService.MarkOffline(cookie)` | 探活失败时下线 Cookie |
 | `ISubscriptionService` | 订阅增删查，供调度器获取抓取目标 |
-| `ILiveEventBus` | 直播事件的内存分发总线（写入 Mongo 与推送 SSE 两路订阅），基于 `Channel<T>` 实现 |
+| `ILiveEventBus` | 直播事件的内存分发总线（仅用于 SSE 实时转发），基于 `Channel<T>` 实现。**订阅门控**：仅当某 roomId 存在至少一个活跃 SSE 订阅时才接收事件写入；无订阅时不创建/不写入对应 Channel，最后一个订阅断开后立即移除并停止写入，避免资源浪费 |
 
 ## 4. 数据模型
 
@@ -298,6 +298,7 @@ sequenceDiagram
     participant CP as CookiePool
     participant B as B站接口
     participant DB as MongoDB
+    participant EV as 直播事件抓取
     participant BUS as LiveEventBus
     participant C as SSE 客户端
 
@@ -305,9 +306,11 @@ sequenceDiagram
     T->>B: 携带 Cookie 抓取(状态/信息/动态)
     B-->>T: 报文
     T->>DB: 去重/比对后持久化
-    Note over T,DB: 直播事件为长连接推送
-    B-->>BUS: 弹幕/礼物等事件
-    BUS->>DB: 持久化(含 occurred_at)
+    Note over EV,DB: 直播事件为长连接推送
+    B-->>EV: 弹幕/礼物等事件
+    EV->>DB: 事件直写持久化(含 occurred_at)
+    Note over EV,BUS: 仅当 roomId 存在活跃 SSE 订阅时\n事件才写入 LiveEventBus
+    EV->>BUS: 有订阅时写入事件
     BUS->>C: SSE 实时转发
 ```
 
@@ -315,9 +318,9 @@ sequenceDiagram
 
 #### 实现点 1: Mikibot.Crawler 接入
 
-- **描述**: Mikibot.Crawler 无独立 NuGet 发布，采用 **git submodule**（`external/Mikibot`，锁定 commit）+ 项目引用方式接入 `servers/api`。
+- **描述**: Mikibot.Crawler 已发布 NuGet 包（[Mikibot.Crawler 1.0.8](https://www.nuget.org/packages/Mikibot.Crawler)，兼容 net10.0），`servers/api` 直接通过 `<PackageReference>` 引用并锁定版本。
 - **技术细节**: 通过 `AddBilibiliCrawlers()` 注册；每次抓取前用当前轮取到的 Cookie 构造 `CookieJar` 并初始化 `BilibiliAccount`（wbi 签名）；HTTP 抓取统一走库的 `GetAsync`；直播事件用 `DanmakuClient.ConnectAsync(roomId)` + `CommandSubscriber` 订阅 `DanmuMsg`、`SendGift`、`SuperChatMessage` 等已知事件（参考 [Mikibot.Crawler/Program.cs](https://github.com/Deliay/Mikibot/blob/main/Mikibot.Crawler/Program.cs)）。
-- **风险点**: 上游库 API 变动 → submodule 锁定版本，升级显式进行。
+- **风险点**: 上游包版本升级可能带来 API 变动 → csproj 锁定版本，升级显式进行并回归测试。
 
 #### 实现点 2: Cookie 探活与 round-robin
 
@@ -348,10 +351,14 @@ stateDiagram-v2
 - **技术细节**: 入库依赖 `dynamic_id` 唯一索引 + upsert 忽略重复键冲突，保证严格去重。
 - **风险点**: 接口分页参数（offset 字符串游标）需按文档实现，以集成测试验证。
 
-#### 实现点 5: SSE 实时事件转发
+#### 实现点 5: SSE 实时事件转发（订阅门控）
 
-- **描述**: `DanmakuClient` 事件经 `CommandSubscriber` 归一化为内部事件后写入 `ILiveEventBus`（每 roomId 一个 `Channel`）；一路消费者持久化到 `bilibili_live_event`，另一路向该 roomId 的全部 SSE 连接广播。SSE 端点注册时订阅广播，断开时注销。
-- **风险点**: 长连接断开 → 后台 watchdog 自动重连并记录断档日志。
+- **描述**: `DanmakuClient` 事件经 `CommandSubscriber` 归一化为内部事件后**始终直写 Mongo**（`bilibili_live_event`，持久化链路不依赖 EventBus，保证事件数据完整沉淀）。SSE 实时转发链路实行**订阅门控**，避免无消费者时的资源浪费：
+  - `ILiveEventBus` 按 roomId 惰性创建 `Channel`：仅当某 roomId 有第一个 SSE 订阅进入时才创建并开始接收事件写入；
+  - 直播事件抓取侧写入前检查该 roomId 当前订阅数，**无订阅则跳过 EventBus 写入**（仅做持久化）；
+  - SSE 连接断开时注销订阅，当 roomId 的最后一个订阅断开后，移除对应 `Channel` 并停止向 EventBus 写入；后续有新订阅再重新惰性创建。
+- **技术细节**: 订阅计数用 `ConcurrentDictionary<long, SubscriptionRefCount>` 维护（Interlocked 增减），SSE 端点在 `Request.HttpContext.RequestAborted` 触发时注销；写入侧使用 `TryWrite`，Channel 不存在即视为无订阅直接跳过。
+- **风险点**: 长连接断开 → 后台 watchdog 自动重连并记录断档日志；订阅计数泄漏（连接异常断开未注销）→ 注销逻辑挂在 `RequestAborted` 与 `finally` 双保险上。
 
 ## 6. 技术决策
 
@@ -359,7 +366,7 @@ stateDiagram-v2
 
 | 决策 | 选项 A | 选项 B | 最终选择 | 原因 |
 |------|--------|--------|---------|------|
-| Mikibot.Crawler 引用方式 | git submodule + 项目引用 | 拷贝源码入库 | A | 保留上游演进能力，不污染主仓代码 |
+| Mikibot.Crawler 引用方式 | NuGet 包引用（锁定版本） | git submodule + 项目引用 | A | 官方已发布 NuGet 包（1.0.8，兼容 net10.0），引入与升级成本最低，不引入 submodule 维护负担 |
 | 定时任务框架 | BackgroundService + PeriodicTimer | Quartz.NET / Hangfire | A | 周期固定且简单，不引入额外存储依赖 |
 | 实时推送协议 | SSE (text/event-stream) | WebSocket | A | 需求明确 EventSource，单向推送足够 |
 | 数据库 | MongoDB | PostgreSQL + JSONB | A | 需求指定 MongoDB，原始报文 Schema 灵活 |
@@ -369,7 +376,7 @@ stateDiagram-v2
 
 | 类型 | 内容 | 说明 |
 |------|------|------|
-| 依赖 | Mikibot.Crawler（Deliay/Mikibot） | submodule 锁定 commit |
+| 依赖 | Mikibot.Crawler（NuGet，1.0.8） | csproj PackageReference 锁定版本 |
 | 依赖 | Aspire.Hosting.MongoDB / Aspire.MongoDB.Driver | AppHost 与 API 分别引入 |
 | 约束 | 抓取周期固定（1 天 / 15 秒） | 遵守 PRD 风控约束 |
 | 约束 | 单实例运行 | 定时任务不做分布式锁，多副本部署需另行设计 |
@@ -378,8 +385,6 @@ stateDiagram-v2
 
 ```
 z-vtuber/
-├── external/
-│   └── Mikibot/                  # git submodule（Mikibot.Crawler 源码）
 ├── infra/apphost/
 │   └── AppHost.cs                # 增加 AddMongoDB 资源并向 api 注入连接
 ├── servers/api/
@@ -402,14 +407,14 @@ z-vtuber/
 
 ### 8.1 测试覆盖要求
 
-- 单元测试覆盖率: >= 80%（核心逻辑：状态去重/场次划分、动态查重续抓、Cookie 轮询与下线）
+- 单元测试覆盖率: >= 80%（核心逻辑：状态去重/场次划分、动态查重续抓、Cookie 轮询与下线、EventBus 订阅门控）
 - API 测试覆盖的端点: 本提案 3.1 全部 9 个端点
 
 ### 8.2 测试类型
 
 | 类型 | 工具 | 覆盖范围 |
 |------|------|---------|
-| 单元测试 | xUnit + NSubstitute | 去重比对、场次状态机、分页查重、round-robin 选取 |
+| 单元测试 | xUnit + NSubstitute | 去重比对、场次状态机、分页查重、round-robin 选取、EventBus 订阅门控（无订阅不写入/末订阅断开移除 Channel） |
 | 集成测试 | xUnit + Testcontainers(MongoDB) | 持久化与唯一索引去重、查询 API 分页 |
 | API 测试 | z-test 工作流 | 契约端点全量验证 |
 | 外部接口 | 手动验证 + 录制样例报文 | B 站接口以样例报文 mock，不做 CI 直连 |
