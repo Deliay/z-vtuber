@@ -48,7 +48,7 @@ public sealed class AccountInfoCrawler(
             var channel = data.GetProperty("channel");
             var roomId = channel.GetProperty("roomId").GetInt64();
 
-            await accountRepository.InsertAsync(new AccountBasicInfoRecord
+            await accountRepository.UpsertAsync(new AccountBasicInfoRecord
             {
                 Mid = mid,
                 RoomId = roomId,

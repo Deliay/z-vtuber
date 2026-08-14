@@ -9,8 +9,11 @@ public sealed class AccountBasicInfoRepository(IMongoDatabase database)
     private readonly IMongoCollection<AccountBasicInfoRecord> _collection =
         database.GetCollection<AccountBasicInfoRecord>(MongoCollectionNames.AccountBasicInfo);
 
-    public Task InsertAsync(AccountBasicInfoRecord record, CancellationToken ct = default) =>
-        _collection.InsertOneAsync(record, cancellationToken: ct);
+    public Task UpsertAsync(AccountBasicInfoRecord record, CancellationToken ct = default)
+    {
+        var filter = Builders<AccountBasicInfoRecord>.Filter.Eq(a => a.Mid, record.Mid);
+        return _collection.ReplaceOneAsync(filter, record, new ReplaceOptions { IsUpsert = true }, ct);
+    }
 
     public Task<AccountBasicInfoRecord> GetLatestByMidAsync(long mid, CancellationToken ct = default) =>
         _collection.Find(a => a.Mid == mid)
