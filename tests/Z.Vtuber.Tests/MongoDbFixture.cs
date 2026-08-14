@@ -7,7 +7,9 @@ namespace Z.Vtuber.Tests;
 
 public sealed class MongoDbFixture : IAsyncLifetime
 {
-    private readonly MongoDbContainer _container = new MongoDbBuilder("mongo:7.0").Build();
+    private readonly MongoDbContainer _container = new MongoDbBuilder("mongo:7.0")
+        .WithEntrypoint("sh", "-c", "ulimit -n 65535 && exec docker-entrypoint.sh mongod")
+        .Build();
 
     public IMongoDatabase Database { get; private set; } = null!;
 
