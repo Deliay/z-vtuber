@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Z.Vtuber.Persistence.Entities;
 
@@ -29,10 +30,9 @@ public sealed class LiveSessionRepository(IMongoDatabase database)
         var models = new List<WriteModel<LiveSessionRecord>>(deduped.Count);
         foreach (var record in deduped)
         {
-            if (idByLiveId.TryGetValue(record.LiveId, out var id))
-            {
-                record.Id = id;
-            }
+            record.Id = idByLiveId.TryGetValue(record.LiveId, out var id)
+                ? id
+                : ObjectId.GenerateNewId();
 
             var filter = Builders<LiveSessionRecord>.Filter.Eq(r => r.LiveId, record.LiveId);
             models.Add(new ReplaceOneModel<LiveSessionRecord>(filter, record) { IsUpsert = true });
