@@ -10,17 +10,30 @@ public sealed class LiveSessionRepository(IMongoDatabase database)
 
     public async Task UpsertManyAsync(IEnumerable<LiveSessionRecord> records, CancellationToken ct = default)
     {
-        var models = new List<WriteModel<LiveSessionRecord>>();
-        foreach (var record in records)
+        var deduped = records
+            .GroupBy(r => r.LiveId, StringComparer.Ordinal)
+            .Select(g => g.Last())
+            .ToList();
+
+        if (deduped.Count == 0)
         {
-            var filter = Builders<LiveSessionRecord>.Filter.Eq(r => r.LiveId, record.LiveId);
-            var upsert = new ReplaceOneModel<LiveSessionRecord>(filter, record) { IsUpsert = true };
-            models.Add(upsert);
+            return;
         }
 
-        if (models.Count > 0)
+        var models = new List<WriteModel<LiveSessionRecord>>(deduped.Count);
+        foreach (var record in deduped)
+        {
+            var filter = Builders<LiveSessionRecord>.Filter.Eq(r => r.LiveId, record.LiveId);
+            models.Add(new ReplaceOneModel<LiveSessionRecord>(filter, record) { IsUpsert = true });
+        }
+
+        try
         {
             await _collection.BulkWriteAsync(models, cancellationToken: ct);
+        }
+        catch (MongoBulkWriteException ex) when (ex.WriteErrors.All(e => e.Code == (int)ServerErrorCategory.DuplicateKey))
+        {
+            // A concurrent sync already persisted the same LiveId; the unique index guarantees no duplicates.
         }
     }
 
