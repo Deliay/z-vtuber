@@ -22,7 +22,8 @@ type: Permanent
 
 - 引入 MongoDB 并由 Aspire 编排，API 通过 Aspire 集成引用。
 - 实现 Cookie 池（round-robin 调度 + 定时探活自动下线）。
-- 实现四类抓取任务：账号基本信息（1 天）、直播状态（15 秒，含场次划分与变化去重）、直播间事件（长连接持续抓取）、空间动态（分页 + 断点查重续抓）。
+- 实现四类抓取任务：账号基本信息（1 天）、直播状态（15 秒，含场次划分与变化去重）、直播间事件（长连接持续抓取）、空间动态（30 秒，分页 + 断点查重续抓）。
+- 所有定时抓取按抓取对象（mid / roomId）加锁串行化：同一对象上一轮未处理完成时，下一轮等待完成后再开始，不并发重入。
 - 对外提供 6 个数据 API（含 SSE 实时事件转发）。
 - 全程 TDD，核心逻辑单元测试覆盖率 ≥ 80%。
 
@@ -80,7 +81,7 @@ graph LR
 |------|------|-----------|
 | CookiePool | Cookie 录入/查询、round-robin 选取、定时探活与自动下线 | GetNavInfoV2 探活、状态字段管理 |
 | 订阅管理 | 订阅 mid 列表的增删查 | 幂等订阅 |
-| Crawler 调度 | 按周期驱动各抓取任务，为每个请求分配 Cookie | BackgroundService + PeriodicTimer、轮播选择器 |
+| Crawler 调度 | 按周期驱动各抓取任务，为每个请求分配 Cookie，按 mid/roomId 加锁保证同一对象串行抓取 | BackgroundService + PeriodicTimer、轮播选择器、per-key SemaphoreSlim |
 | 账号信息抓取 | 每日抓取 space/acc/info 并入库 | BiliLiveCrawler.GetAsync + BilibiliApiResponse\<JsonElement\> |
 | 直播状态抓取 | 15 秒抓取、变化去重、场次 UUID 划分 | GetLiveRoomInfo、末条记录比对 |
 | 直播事件抓取 | 直播间长连接事件持久化与实时分发 | DanmakuClient + CommandSubscriber、直写 Mongo 持久化、按订阅门控的 Channel 分发 |
@@ -347,7 +348,7 @@ stateDiagram-v2
 
 #### 实现点 4: 空间动态断点续抓
 
-- **描述**: 接口（[dynamic/space 文档](https://github.com/bilibili-plugins/bilibili-api-collect/blob/master/docs/dynamic/space.md)）不在库内，用库的 `GetAsync` 手动封装。动态线性分页：抓取一页后取全部 `dynamic_id` 做 `where in (...)` 查询，命中数量与页大小相等说明已接上历史，停止翻页；否则继续翻下一页（用上一页 offset/last_id 游标），直至接上或无更多数据。
+- **描述**: 接口（[dynamic/space 文档](https://github.com/bilibili-plugins/bilibili-api-collect/blob/master/docs/dynamic/space.md)）不在库内，用库的 `GetAsync` 手动封装。每 30 秒对每个被订阅主播执行一轮抓取。动态线性分页：抓取一页后取全部 `dynamic_id` 做 `where in (...)` 查询，命中数量与页大小相等说明已接上历史，停止翻页；否则继续翻下一页（用上一页 offset/last_id 游标），直至接上或无更多数据。
 - **技术细节**: 入库依赖 `dynamic_id` 唯一索引 + upsert 忽略重复键冲突，保证严格去重。
 - **风险点**: 接口分页参数（offset 字符串游标）需按文档实现，以集成测试验证。
 
@@ -359,6 +360,12 @@ stateDiagram-v2
   - SSE 连接断开时注销订阅，当 roomId 的最后一个订阅断开后，移除对应 `Channel` 并停止向 EventBus 写入；后续有新订阅再重新惰性创建。
 - **技术细节**: 订阅计数用 `ConcurrentDictionary<long, SubscriptionRefCount>` 维护（Interlocked 增减），SSE 端点在 `Request.HttpContext.RequestAborted` 触发时注销；写入侧使用 `TryWrite`，Channel 不存在即视为无订阅直接跳过。
 - **风险点**: 长连接断开 → 后台 watchdog 自动重连并记录断档日志；订阅计数泄漏（连接异常断开未注销）→ 注销逻辑挂在 `RequestAborted` 与 `finally` 双保险上。
+
+#### 实现点 6: 抓取按对象加锁串行化
+
+- **描述**: 所有定时抓取任务（账号信息、直播状态、空间动态）在执行前按抓取对象加锁——账号信息与空间动态按 `mid`、直播状态按 `roomId`，保证同一对象任意时刻只有一轮抓取在执行。当某轮处理时间超过抓取周期时，下一轮到点后在锁上等待，待本轮完成后再开始，**不并发重入、不跳过周期**；不同 mid/roomId 之间互不阻塞，可并行。
+- **技术细节**: 调度器对每个抓取对象使用 `ConcurrentDictionary<string, SemaphoreSlim>` 维护 per-key 信号量（初始计数 1），每轮抓取 `WaitAsync` 获取锁、`finally` 中释放；锁获取不设超时，确保「等待完成后再抓」语义。任务主循环为 `while (await timer.WaitForNextTickAsync())`，周期到点仅触发一次取锁等待，天然避免同一对象的重入叠加。
+- **风险点**: 单轮抓取异常长时间挂起会导致该对象后续抓取持续等待 → 单次 HTTP 抓取设置合理超时（如 10 秒），超时按失败处理并释放锁，下个周期重试。
 
 ## 6. 技术决策
 
@@ -407,14 +414,14 @@ z-vtuber/
 
 ### 8.1 测试覆盖要求
 
-- 单元测试覆盖率: >= 80%（核心逻辑：状态去重/场次划分、动态查重续抓、Cookie 轮询与下线、EventBus 订阅门控）
+- 单元测试覆盖率: >= 80%（核心逻辑：状态去重/场次划分、动态查重续抓、Cookie 轮询与下线、EventBus 订阅门控、per-key 抓取锁串行化）
 - API 测试覆盖的端点: 本提案 3.1 全部 9 个端点
 
 ### 8.2 测试类型
 
 | 类型 | 工具 | 覆盖范围 |
 |------|------|---------|
-| 单元测试 | xUnit + NSubstitute | 去重比对、场次状态机、分页查重、round-robin 选取、EventBus 订阅门控（无订阅不写入/末订阅断开移除 Channel） |
+| 单元测试 | xUnit + NSubstitute | 去重比对、场次状态机、分页查重、round-robin 选取、EventBus 订阅门控（无订阅不写入/末订阅断开移除 Channel）、per-key 抓取锁（同对象串行等待、异对象并行） |
 | 集成测试 | xUnit + Testcontainers(MongoDB) | 持久化与唯一索引去重、查询 API 分页 |
 | API 测试 | z-test 工作流 | 契约端点全量验证 |
 | 外部接口 | 手动验证 + 录制样例报文 | B 站接口以样例报文 mock，不做 CI 直连 |
@@ -434,6 +441,7 @@ z-vtuber/
 |--------|------|--------|
 | ConnectionStrings__mongo | Aspire 注入的 MongoDB 连接 | 由 AppHost 编排 |
 | BilibiliCrawler__StatusIntervalSeconds | 直播状态抓取周期 | 15 |
+| BilibiliCrawler__SpaceTimelineIntervalSeconds | 空间动态抓取周期 | 30 |
 | BilibiliCrawler__AccountInfoIntervalHours | 账号信息抓取周期 | 24 |
 | BilibiliCrawler__CookieProbeIntervalMinutes | Cookie 探活周期 | 5 |
 
