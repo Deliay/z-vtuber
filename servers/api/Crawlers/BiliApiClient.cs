@@ -62,6 +62,9 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
         var parameters = new List<KeyValuePair<string, string>>
         {
             new("host_mid", $"{mid}"),
+            new("platform", "web"),
+            new("features", "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard,commentsNewVersion,onlyfansAssetsV2,ugcDelete,onlyfansQaCard,avatarAutoTheme,sunflowerStyle,cardsEnhance,eva3CardOpus,eva3CardVideo,eva3CardComment,eva3CardUser"),
+            new("web_location", "0.0"),
         };
         if (!string.IsNullOrEmpty(offset))
         {
@@ -69,8 +72,8 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
         }
 
         var query = account.Sign(parameters);
-        var http = provider.GetRequiredService<HttpClient>();
-        var raw = await http.GetAsync($"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?{query}", ct);
+        var http = provider.GetRequiredService<BiliLiveCrawler>();
+        var raw = await http.Client.GetAsync($"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?{query}", ct);
         raw.EnsureSuccessStatusCode();
         using var stream = await raw.Content.ReadAsStreamAsync(ct);
         var response = await JsonSerializer.DeserializeAsync<BilibiliApiResponse<JsonElement>>(stream, JsonOptions, ct);
