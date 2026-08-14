@@ -1,6 +1,7 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
 var mongo = builder.AddMongoDB("mongo")
+    .WithImage("mongo", "7")
     .WithMongoExpress()
     .WithDataVolume();
 
