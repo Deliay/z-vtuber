@@ -1,0 +1,341 @@
+openapi: 3.1.0
+info:
+  title: Bilibili Live Crawler API
+  version: 1.0.0
+  description: B站主播数据抓取与订阅服务对外数据接口（统一前缀 /api/b）
+servers:
+  - url: /
+paths:
+  /api/b/cookie:
+    get:
+      summary: 查询活跃 Cookie 列表
+      operationId: listActiveCookies
+      responses:
+        "200":
+          description: 活跃 Cookie 列表（不含明文 Cookie）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieList"
+    post:
+      summary: 录入 Cookie
+      operationId: addCookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CookieAddRequest"
+      responses:
+        "200":
+          description: 录入成功（幂等）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieItem"
+        "400":
+          description: Cookie 为空
+  /api/b/subscription:
+    get:
+      summary: 获取订阅主播列表
+      operationId: listSubscriptions
+      responses:
+        "200":
+          description: 订阅主播 mid 列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionList"
+    post:
+      summary: 订阅主播
+      operationId: subscribe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscribeRequest"
+      responses:
+        "200":
+          description: 订阅成功（幂等）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionItem"
+        "400":
+          description: mid 非法
+  /api/b/subscription/{mid}:
+    delete:
+      summary: 取消订阅
+      operationId: unsubscribe
+      parameters:
+        - $ref: "#/components/parameters/Mid"
+      responses:
+        "204":
+          description: 取消成功
+        "404":
+          description: 未订阅
+  /api/b/user/{mid}:
+    get:
+      summary: 查询主播账号基本信息
+      operationId: getAccountBasicInfo
+      parameters:
+        - $ref: "#/components/parameters/Mid"
+      responses:
+        "200":
+          description: bilibili_account_basic_info 最新一条完整 Data
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: 未抓取过该主播
+  /api/b/user/{mid}/space:
+    get:
+      summary: 分页查询空间动态
+      operationId: listSpaceTimeline
+      parameters:
+        - $ref: "#/components/parameters/Mid"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: 空间动态分页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpaceTimelinePage"
+  /api/b/live/{roomId}/state/all:
+    get:
+      summary: 分页查询直播状态历史
+      operationId: listLiveStates
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: 直播状态分页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveStatePage"
+  /api/b/live/{roomId}/state/current:
+    get:
+      summary: 查询当前直播状态
+      operationId: getCurrentLiveState
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: created_at 最新一条 bilibili_live_status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveState"
+        "404":
+          description: 无记录
+  /api/b/live/{roomId}/event/subscribe:
+    get:
+      summary: 订阅直播间实时事件（SSE）
+      operationId: subscribeLiveEvents
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: text/event-stream，仅推送连接建立之后的事件
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /api/b/live/{roomId}/event/range:
+    get:
+      summary: 查询时间段内直播事件
+      operationId: listLiveEventsRange
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - name: startedAt
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: endedAt
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: 时间段内事件
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveEventList"
+        "400":
+          description: 时间范围非法
+components:
+  parameters:
+    Mid:
+      name: mid
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    RoomId:
+      name: roomId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  schemas:
+    CookieAddRequest:
+      type: object
+      required: [cookie]
+      properties:
+        cookie:
+          type: string
+    CookieItem:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [active, offline]
+        lastCheckedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CookieList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CookieItem"
+    SubscribeRequest:
+      type: object
+      required: [mid]
+      properties:
+        mid:
+          type: integer
+          format: int64
+    SubscriptionItem:
+      type: object
+      properties:
+        mid:
+          type: integer
+          format: int64
+        subscribedAt:
+          type: string
+          format: date-time
+    SubscriptionList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubscriptionItem"
+    LiveState:
+      type: object
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        title:
+          type: string
+        liveStatus:
+          type: boolean
+        liveSessionId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    LiveStatePage:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveState"
+    SpaceTimelineItem:
+      type: object
+      properties:
+        mid:
+          type: integer
+          format: int64
+        dynamicId:
+          type: string
+        fetchedAt:
+          type: string
+          format: date-time
+        data:
+          type: object
+    SpaceTimelinePage:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpaceTimelineItem"
+    LiveEvent:
+      type: object
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        type:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        liveSessionId:
+          type: string
+          nullable: true
+        payload:
+          type: object
+    LiveEventList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveEvent"

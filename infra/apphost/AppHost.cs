@@ -1,6 +1,12 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
+var mongo = builder.AddMongoDB("mongo")
+    .WithImage("mongo", "7")
+    .WithMongoExpress()
+    .WithDataVolume();
+
 var api = builder.AddProject<Projects.Z_Vtuber>("api")
+    .WithReference(mongo)
     .WithExternalHttpEndpoints();
 
 var web = builder.AddViteApp("web", "../../apps/web")
