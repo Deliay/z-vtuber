@@ -18,6 +18,7 @@ public sealed class LiveEventSource(
 {
     private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan NoCookieRetryDelay = TimeSpan.FromSeconds(30);
 
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _connections = new();
 
@@ -140,8 +141,15 @@ public sealed class LiveEventSource(
             }
             catch (NoAvailableCookieException)
             {
-                logger.LogWarning("Danmaku connection for room {RoomId} skipped: no active cookie.", roomId);
-                break;
+                logger.LogWarning("Danmaku connection for room {RoomId} skipped: no active cookie; retrying in {Delay}s.", roomId, NoCookieRetryDelay.TotalSeconds);
+                try
+                {
+                    await Task.Delay(NoCookieRetryDelay, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
             }
             catch (Exception ex)
             {

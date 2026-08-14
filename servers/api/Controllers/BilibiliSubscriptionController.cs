@@ -10,8 +10,8 @@ public class BilibiliSubscriptionController(ISubscriptionService subscription) :
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
-        var mids = await subscription.GetMidsAsync(ct);
-        var items = mids.Select(mid => new SubscriptionItemDto(mid, null)).ToList();
+        var subscriptions = await subscription.GetAllAsync(ct);
+        var items = subscriptions.Select(s => new SubscriptionItemDto(s.Mid, s.SubscribedAt)).ToList();
         return Ok(new { items });
     }
 

@@ -23,6 +23,19 @@ public class SubscriptionServiceTests(MongoDbFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetAll_ReturnsSubscribedAt()
+    {
+        var service = CreateService();
+        await service.SubscribeAsync(1150976664);
+
+        var all = await service.GetAllAsync();
+
+        var single = Assert.Single(all);
+        Assert.Equal(1150976664L, single.Mid);
+        Assert.True(single.SubscribedAt > DateTime.MinValue);
+    }
+
+    [Fact]
     public async Task Unsubscribe_RemovesOnlyTarget()
     {
         var service = CreateService();

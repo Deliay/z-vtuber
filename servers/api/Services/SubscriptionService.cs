@@ -7,6 +7,7 @@ namespace Z.Vtuber.Services;
 public interface ISubscriptionService
 {
     Task<IReadOnlyList<long>> GetMidsAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<SubscriptionRecord>> GetAllAsync(CancellationToken ct = default);
     Task SubscribeAsync(long mid, CancellationToken ct = default);
     Task<bool> UnsubscribeAsync(long mid, CancellationToken ct = default);
 }
@@ -23,6 +24,13 @@ public sealed class SubscriptionService(IMongoDatabase database) : ISubscription
             .Project<SubscriptionRecord>(projection)
             .ToListAsync(ct);
         return records.Select(s => s.Mid).ToList();
+    }
+
+    public async Task<IReadOnlyList<SubscriptionRecord>> GetAllAsync(CancellationToken ct = default)
+    {
+        return await _collection.Find(FilterDefinition<SubscriptionRecord>.Empty)
+            .SortBy(s => s.SubscribedAt)
+            .ToListAsync(ct);
     }
 
     public async Task SubscribeAsync(long mid, CancellationToken ct = default)
