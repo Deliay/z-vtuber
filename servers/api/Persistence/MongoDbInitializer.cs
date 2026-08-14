@@ -86,6 +86,11 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Ascending(t => t.Mid)
             .Descending(t => t.FetchedAt);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<SpaceTimelineRecord>(midKeys), cancellationToken: ct);
+
+        var midDynamicIdKeys = Builders<SpaceTimelineRecord>.IndexKeys
+            .Ascending(t => t.Mid)
+            .Descending(t => t.DynamicId);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<SpaceTimelineRecord>(midDynamicIdKeys), cancellationToken: ct);
     }
 
     private async Task EnsureLiveSessionIndexesAsync(CancellationToken ct)

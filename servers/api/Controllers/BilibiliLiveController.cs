@@ -12,6 +12,7 @@ namespace Z.Vtuber.Controllers;
 public class BilibiliLiveController(
     LiveStatusRepository liveStatusRepository,
     LiveEventRepository liveEventRepository,
+    LiveSessionRepository liveSessionRepository,
     ILiveEventBus eventBus) : ControllerBase
 {
     [HttpGet("{roomId}/state/all")]
@@ -30,6 +31,17 @@ public class BilibiliLiveController(
     {
         var record = await liveStatusRepository.GetLatestByRoomIdAsync(roomId, ct);
         return record is null ? NotFound() : Ok(ToStateDto(record));
+    }
+
+    [HttpGet("{roomId}/history")]
+    public async Task<IActionResult> GetHistory(
+        long roomId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var (total, items) = await liveSessionRepository.GetPageAsync(roomId, page, pageSize, ct);
+        return Ok(new { total, page, pageSize, items = items.Select(ToSessionDto) });
     }
 
     [HttpGet("{roomId}/event/range")]
@@ -80,6 +92,25 @@ public class BilibiliLiveController(
         liveStatus = record.LiveStatus,
         liveSessionId = record.LiveSessionId,
         createdAt = record.CreatedAt,
+    };
+
+    private static object ToSessionDto(LiveSessionRecord record) => new
+    {
+        liveId = record.LiveId,
+        roomId = record.RoomId,
+        title = record.Title,
+        coverUrl = record.CoverUrl,
+        parentArea = record.ParentArea,
+        area = record.Area,
+        isFinish = record.IsFinish,
+        startDate = record.StartDate,
+        stopDate = record.StopDate,
+        danmakuCount = record.DanmakuCount,
+        totalIncome = record.TotalIncome,
+        watchCount = record.WatchCount,
+        likeCount = record.LikeCount,
+        payCount = record.PayCount,
+        maxOnlineCount = record.MaxOnlineCount,
     };
 
     private static object ToEventDto(LiveEventRecord record) => new
