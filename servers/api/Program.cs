@@ -32,6 +32,7 @@ builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 builder.Services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
 builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
 
+builder.Services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
 builder.Services.AddSingleton<IBiliApiClient, BiliApiClient>();
 builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventBus, LiveEventBus>();
