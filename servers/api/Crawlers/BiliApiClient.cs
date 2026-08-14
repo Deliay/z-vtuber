@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Mikibot.Crawler.Http;
+using Mikibot.Crawler.Http.Bilibili;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Configuration;
 
@@ -40,7 +42,8 @@ public sealed class BiliApiClient(BilibiliCrawlerOptions options, IBilibiliAccou
 
     public async Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
     {
-        var account = await accountProvider.GetAsync(cookie, ct);
+        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var account = provider.GetRequiredService<BilibiliAccount>();
         var query = account.Sign([new KeyValuePair<string, string>("mid", $"{mid}")]);
         using var http = CreateHttpClient();
         var crawler = CreateCrawler(http, cookie);
@@ -50,7 +53,8 @@ public sealed class BiliApiClient(BilibiliCrawlerOptions options, IBilibiliAccou
 
     public async Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default)
     {
-        var account = await accountProvider.GetAsync(cookie, ct);
+        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var account = provider.GetRequiredService<BilibiliAccount>();
         var query = account.Sign([new KeyValuePair<string, string>("room_id", $"{roomId}")]);
         using var http = CreateHttpClient();
         var crawler = CreateCrawler(http, cookie);
@@ -60,13 +64,15 @@ public sealed class BiliApiClient(BilibiliCrawlerOptions options, IBilibiliAccou
 
     public async Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default)
     {
-        var account = await accountProvider.GetAsync(cookie, ct);
+        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var account = provider.GetRequiredService<BilibiliAccount>();
         return new NavInfo { Mid = account.Mid };
     }
 
     public async Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default)
     {
-        var account = await accountProvider.GetAsync(cookie, ct);
+        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var account = provider.GetRequiredService<BilibiliAccount>();
 
         var parameters = new List<KeyValuePair<string, string>>
         {
