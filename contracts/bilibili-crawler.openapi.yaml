@@ -93,6 +93,7 @@ paths:
   /api/b/user/{mid}/space:
     get:
       summary: 分页查询空间动态
+      description: 按动态 ID（dynamicId）倒序分页查询空间动态。B 站动态 ID 为单调递增的数值字符串，倒序即创建时间倒序，最新动态排在最前。
       operationId: listSpaceTimeline
       parameters:
         - $ref: "#/components/parameters/Mid"
@@ -135,6 +136,22 @@ paths:
                 $ref: "#/components/schemas/LiveState"
         "404":
           description: 无记录
+  /api/b/live/{roomId}/history:
+    get:
+      summary: 分页查询直播间历史场次
+      description: 按开播时间（startDate）倒序分页查询 bilibili_live_session，最新开播的场次排在最前。
+      operationId: listLiveSessionHistory
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: 直播间历史场次分页（按 startDate 倒序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveSessionHistoryPage"
   /api/b/live/{roomId}/event/subscribe:
     get:
       summary: 订阅直播间实时事件（SSE）
@@ -290,6 +307,65 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LiveState"
+    LiveSession:
+      type: object
+      properties:
+        liveId:
+          type: string
+        roomId:
+          type: integer
+          format: int64
+        title:
+          type: string
+        coverUrl:
+          type: string
+          nullable: true
+        parentArea:
+          type: string
+          nullable: true
+        area:
+          type: string
+          nullable: true
+        isFinish:
+          type: boolean
+        startDate:
+          type: string
+          format: date-time
+        stopDate:
+          type: string
+          format: date-time
+          nullable: true
+        danmakuCount:
+          type: integer
+          format: int64
+        totalIncome:
+          type: number
+          format: double
+        watchCount:
+          type: integer
+          format: int64
+        likeCount:
+          type: integer
+          format: int64
+        payCount:
+          type: integer
+          format: int64
+        maxOnlineCount:
+          type: integer
+          format: int64
+    LiveSessionHistoryPage:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveSession"
     SpaceTimelineItem:
       type: object
       properties:

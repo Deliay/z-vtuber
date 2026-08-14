@@ -53,8 +53,16 @@ public sealed class SpaceTimelineRepository(IMongoDatabase database)
     {
         var filter = Builders<SpaceTimelineRecord>.Filter.Eq(t => t.Mid, mid);
         var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);
-        var items = await _collection.Find(filter)
-            .SortByDescending(t => t.FetchedAt)
+
+        var numericIdStage = BsonDocument.Parse(
+            """{ $addFields: { _dynamicIdLong: { $convert: { input: "$DynamicId", to: "long", onError: null, onNull: null } } } }""");
+        var unsetStage = BsonDocument.Parse("""{ $unset: "_dynamicIdLong" }""");
+
+        var items = await _collection.Aggregate()
+            .Match(filter)
+            .AppendStage<SpaceTimelineRecord>(numericIdStage)
+            .Sort(Builders<SpaceTimelineRecord>.Sort.Descending("_dynamicIdLong"))
+            .AppendStage<SpaceTimelineRecord>(unsetStage)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
             .ToListAsync(ct);

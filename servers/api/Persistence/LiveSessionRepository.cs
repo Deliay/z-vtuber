@@ -48,14 +48,16 @@ public sealed class LiveSessionRepository(IMongoDatabase database)
         }
     }
 
-    public async Task<IReadOnlyList<LiveSessionRecord>> GetByRoomIdAsync(long roomId, int page, int pageSize, CancellationToken ct = default)
+    public async Task<(long Total, IReadOnlyList<LiveSessionRecord> Items)> GetPageAsync(
+        long roomId, int page, int pageSize, CancellationToken ct = default)
     {
-        var total = await _collection.CountDocumentsAsync(r => r.RoomId == roomId, cancellationToken: ct);
-        var items = await _collection.Find(r => r.RoomId == roomId)
+        var filter = Builders<LiveSessionRecord>.Filter.Eq(r => r.RoomId, roomId);
+        var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);
+        var items = await _collection.Find(filter)
             .SortByDescending(r => r.StartDate)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
             .ToListAsync(ct);
-        return items;
+        return (total, items);
     }
 }

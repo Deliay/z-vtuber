@@ -5,6 +5,7 @@ obj/
 *.suo
 .vs/
 artifacts/
+TestResults/
 
 # Node
 node_modules/
