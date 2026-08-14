@@ -6,7 +6,7 @@ namespace Z.Vtuber.Services;
 
 public interface ICookiePoolService
 {
-    Task AddAsync(string cookie, CancellationToken ct = default);
+    Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default);
     Task<CookieRecord> NextAsync(CancellationToken ct = default);
     Task MarkOfflineAsync(string cookie, CancellationToken ct = default);
     Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default);
@@ -25,26 +25,28 @@ public sealed class CookiePoolService(IMongoDatabase database) : ICookiePoolServ
     private readonly IMongoCollection<CookieRecord> _collection =
         database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
 
-    public async Task AddAsync(string cookie, CancellationToken ct = default)
+    public async Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(cookie))
         {
             throw new ArgumentException("Cookie must not be empty.", nameof(cookie));
         }
 
-        var exists = await _collection
+        var existing = await _collection
             .Find(c => c.Cookie == cookie)
-            .AnyAsync(ct);
-        if (exists)
+            .FirstOrDefaultAsync(ct);
+        if (existing is not null)
         {
-            return;
+            return existing;
         }
 
-        await _collection.InsertOneAsync(new CookieRecord
+        var record = new CookieRecord
         {
             Cookie = cookie,
             Status = CookieStatus.Active,
-        }, cancellationToken: ct);
+        };
+        await _collection.InsertOneAsync(record, cancellationToken: ct);
+        return record;
     }
 
     public async Task<CookieRecord> NextAsync(CancellationToken ct = default)

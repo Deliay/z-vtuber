@@ -39,6 +39,17 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AddAsync_ReturnsRecordWithId_AndPreservesSameIdOnDuplicate()
+    {
+        var service = CreateService();
+        var first = await service.AddAsync("cookie-a");
+        var second = await service.AddAsync("cookie-a");
+
+        Assert.NotEqual(MongoDB.Bson.ObjectId.Empty, first.Id);
+        Assert.Equal(first.Id, second.Id);
+    }
+
+    [Fact]
     public async Task OfflineCookie_IsNotSelected()
     {
         var service = CreateService();

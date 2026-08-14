@@ -6,6 +6,35 @@ info:
 servers:
   - url: /
 paths:
+  /api/b/cookie:
+    get:
+      summary: 查询活跃 Cookie 列表
+      operationId: listActiveCookies
+      responses:
+        "200":
+          description: 活跃 Cookie 列表（不含明文 Cookie）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieList"
+    post:
+      summary: 录入 Cookie
+      operationId: addCookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CookieAddRequest"
+      responses:
+        "200":
+          description: 录入成功（幂等）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieItem"
+        "400":
+          description: Cookie 为空
   /api/b/subscription:
     get:
       summary: 获取订阅主播列表
@@ -180,6 +209,35 @@ components:
         maximum: 100
         default: 20
   schemas:
+    CookieAddRequest:
+      type: object
+      required: [cookie]
+      properties:
+        cookie:
+          type: string
+    CookieItem:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [active, offline]
+        lastCheckedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CookieList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CookieItem"
     SubscribeRequest:
       type: object
       required: [mid]
