@@ -28,15 +28,14 @@ public interface IBiliApiClient
 
 public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IBiliApiClient
 {
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
     public async Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
     {
         var provider = await accountProvider.GetProviderAsync(cookie, ct);
-        var crawler = provider.GetRequiredService<BiliLiveCrawlerWrapper>();
-        var account = provider.GetRequiredService<BilibiliAccount>();
-        var query = account.Sign([new KeyValuePair<string, string>("mid", $"{mid}")]);
-        var result = await crawler.GetAsync<BilibiliApiResponse<JsonElement>>(
-            $"https://api.bilibili.com/x/space/acc/info?{query}", ct);
-        return EnsureSuccess(result!).Data;
+        var crawler = provider.GetRequiredService<BiliLiveCrawler>();
+        var info = await crawler.GetPersonalInfo(mid, ct);
+        return JsonSerializer.SerializeToElement(info, JsonOptions);
     }
 
     public async Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default)
@@ -49,16 +48,13 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
     public async Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default)
     {
         var provider = await accountProvider.GetProviderAsync(cookie, ct);
-        var crawler = provider.GetRequiredService<BiliLiveCrawlerWrapper>();
-        var result = await crawler.GetAsync<BilibiliApiResponse<NavInfo>>(
-            "https://api.bilibili.com/x/web-interface/nav", ct);
-        return EnsureSuccess(result!).Data;
+        var basic = provider.GetRequiredService<BiliBasicInfoCrawler>();
+        return await basic.GetNavInfoV2(ct);
     }
 
     public async Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default)
     {
         var provider = await accountProvider.GetProviderAsync(cookie, ct);
-        var crawler = provider.GetRequiredService<BiliLiveCrawlerWrapper>();
         var account = provider.GetRequiredService<BilibiliAccount>();
 
         var parameters = new List<KeyValuePair<string, string>>
@@ -71,9 +67,12 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
         }
 
         var query = account.Sign(parameters);
-        var data = await crawler.GetAsync<BilibiliApiResponse<JsonElement>>(
-            $"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?{query}", ct);
-        var root = EnsureSuccess(data!).Data;
+        var http = provider.GetRequiredService<HttpClient>();
+        var raw = await http.GetAsync($"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?{query}", ct);
+        raw.EnsureSuccessStatusCode();
+        using var stream = await raw.Content.ReadAsStreamAsync(ct);
+        var response = await JsonSerializer.DeserializeAsync<BilibiliApiResponse<JsonElement>>(stream, JsonOptions, ct);
+        var root = EnsureSuccess(response!).Data;
 
         var hasMore = root.TryGetProperty("has_more", out var hasMoreElement) && hasMoreElement.ValueKind == JsonValueKind.True;
         var nextOffset = root.TryGetProperty("offset", out var offsetElement) && offsetElement.ValueKind == JsonValueKind.String
