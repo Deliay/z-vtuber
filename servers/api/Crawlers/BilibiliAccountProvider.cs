@@ -27,8 +27,14 @@ public sealed class BilibiliAccountProvider(BilibiliCrawlerOptions options) : IB
     {
         var services = new ServiceCollection();
         services.AddSingleton(new HttpClient { Timeout = TimeSpan.FromSeconds(options.HttpTimeoutSeconds) });
-        services.AddSingleton(new CookieJar(cookie));
+        var jar = new CookieJar(cookie);
+        services.AddSingleton(jar);
         services.AddBilibiliCrawlers();
+        services.AddSingleton<BiliLiveCrawler>(sp =>
+            new BiliLiveCrawlerWrapper(
+                sp.GetRequiredService<HttpClient>(),
+                sp.GetRequiredService<BilibiliAccount>(),
+                jar));
 
         var provider = services.BuildServiceProvider();
         var account = provider.GetRequiredService<BilibiliAccount>();
