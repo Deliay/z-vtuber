@@ -176,7 +176,7 @@ paths:
   /api/b/live/{roomId}/event/range:
     get:
       summary: 分页查询直播间事件
-      description: 按发生时间（occurredAt）升序分页查询直播间事件，可按事件类型（type）与可选时间范围（startedAt/endedAt，含起止边界）筛选；startedAt 晚于 endedAt 时返回 400。
+      description: 按发生时间（occurredAt）降序分页查询直播间事件，可按事件类型（type）与可选时间范围（startedAt/endedAt，含起止边界）筛选；startedAt 晚于 endedAt 时返回 400。
       operationId: listLiveEventsRange
       parameters:
         - $ref: "#/components/parameters/RoomId"
@@ -187,7 +187,7 @@ paths:
         - $ref: "#/components/parameters/EndedAt"
       responses:
         "200":
-          description: 直播间事件分页（按 occurredAt 升序）
+          description: 直播间事件分页（按 occurredAt 降序）
           content:
             application/json:
               schema:
