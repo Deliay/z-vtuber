@@ -24,7 +24,15 @@ public class PubTsExtractorTests
     }
 
     [Fact]
-    public void FromJsonElement_ReturnsNull_WhenInvalidType()
+    public void FromJsonElement_ReturnsPubTs_WhenString()
+    {
+        var element = Parse("""{"modules":{"module_author":{"pub_ts":"1710000000"}}}""");
+
+        Assert.Equal(1710000000, PubTsExtractor.FromJsonElement(element));
+    }
+
+    [Fact]
+    public void FromJsonElement_ReturnsNull_WhenStringNotParsable()
     {
         var element = Parse("""{"modules":{"module_author":{"pub_ts":"not-a-number"}}}""");
 

@@ -12,6 +12,7 @@ public sealed class MongoCollectionNames
     public const string LiveEvent = "bilibili_live_event";
     public const string SpaceTimeline = "bilibili_user_space_timeline";
     public const string LiveSession = "bilibili_live_session";
+    public const string Meta = "zvtuber_meta";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -112,12 +113,23 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveSessionRecord>(roomKeys), cancellationToken: ct);
     }
 
+    public const string SpaceTimelinePubTsMigrationKey = "space_timeline_pub_ts_backfill_v1";
+
     public async Task BackfillSpaceTimelinePubTsAsync(CancellationToken ct = default)
     {
+        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == SpaceTimelinePubTsMigrationKey)
+            .AnyAsync(ct);
+        if (markerExists)
+        {
+            logger.LogInformation("Space timeline PubTs backfill already applied; skipping.");
+            return;
+        }
+
         const int batchSize = 500;
         var collection = database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
 
-        long processed;
+        long processed = batchSize;
         do
         {
             var cursor = await collection.Find(r => r.PubTs == null)
@@ -130,7 +142,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             var batch = await cursor.ToListAsync(ct);
             if (batch.Count == 0)
             {
-                return;
+                break;
             }
 
             var models = new List<WriteModel<SpaceTimelineRecord>>(batch.Count);
@@ -151,7 +163,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             {
                 logger.LogInformation(
                     "Backfill stopped: {Skipped} records in batch had no extractable PubTs.", batch.Count);
-                return;
+                break;
             }
 
             await collection.BulkWriteAsync(models, cancellationToken: ct);
@@ -159,5 +171,14 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             processed = batch.Count;
         }
         while (processed == batchSize);
+
+        await meta.InsertOneAsync(new MetaRecord { Key = SpaceTimelinePubTsMigrationKey }, ct);
+        logger.LogInformation("Space timeline PubTs backfill completed and marked as applied.");
     }
+}
+
+public sealed class MetaRecord
+{
+    [MongoDB.Bson.Serialization.Attributes.BsonId]
+    public string Key { get; set; } = string.Empty;
 }

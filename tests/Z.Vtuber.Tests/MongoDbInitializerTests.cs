@@ -16,12 +16,15 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
         ? """{"modules":{"module_author":{}}}"""
         : string.Format("""{{"modules":{{"module_author":{{"pub_ts":{0}}}}}}}""", pubTs);
 
+    private static string AuthorJson(string pubTs) =>
+        string.Format("""{{"modules":{{"module_author":{{"pub_ts":"{0}"}}}}}}""", pubTs);
+
     [Fact]
     public async Task Backfill_PopulatesPubTs_FromRawData()
     {
         var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
-        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson(1000) });
-        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "2", Data = AuthorJson(2000) });
+        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)1000) });
+        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "2", Data = AuthorJson((long?)2000) });
 
         var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
         await initializer.BackfillSpaceTimelinePubTsAsync();
@@ -36,7 +39,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
     public async Task Backfill_IsIdempotent()
     {
         var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
-        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson(1000) });
+        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)1000) });
 
         var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
         await initializer.BackfillSpaceTimelinePubTsAsync();
@@ -52,7 +55,37 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
     public async Task Backfill_LeavesMissingPubTs_Null()
     {
         var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
-        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson(null) });
+        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)null) });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillSpaceTimelinePubTsAsync();
+
+        var record = await collection.Find(r => r.DynamicId == "1").FirstOrDefaultAsync();
+        Assert.Null(record.PubTs);
+    }
+
+    [Fact]
+    public async Task Backfill_PopulatesPubTs_FromStringPubTs()
+    {
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson("3000") });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillSpaceTimelinePubTsAsync();
+
+        var record = await collection.Find(r => r.DynamicId == "1").FirstOrDefaultAsync();
+        Assert.Equal(3000, record.PubTs);
+    }
+
+    [Fact]
+    public async Task Backfill_Marker_PreventsRerun()
+    {
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var marker = new MetaRecord { Key = MongoDbInitializer.SpaceTimelinePubTsMigrationKey };
+        await meta.InsertOneAsync(marker);
+
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)1000) });
 
         var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
         await initializer.BackfillSpaceTimelinePubTsAsync();
@@ -66,7 +99,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
     {
         var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
         var docs = Enumerable.Range(0, 600)
-            .Select(i => new SpaceTimelineRecord { DynamicId = i.ToString(), Data = AuthorJson(null) })
+            .Select(i => new SpaceTimelineRecord { DynamicId = i.ToString(), Data = AuthorJson((long?)null) })
             .ToList();
         await collection.InsertManyAsync(docs);
 

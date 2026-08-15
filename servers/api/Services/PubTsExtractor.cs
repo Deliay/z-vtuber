@@ -19,16 +19,25 @@ public static class PubTsExtractor
 
     public static long? FromJsonElement(JsonElement element)
     {
-        if (element.ValueKind == JsonValueKind.Object &&
-            element.TryGetProperty("modules", out var modules) &&
-            modules.ValueKind == JsonValueKind.Object &&
-            modules.TryGetProperty("module_author", out var author) &&
-            author.ValueKind == JsonValueKind.Object &&
-            author.TryGetProperty("pub_ts", out var pubTs) &&
-            pubTs.ValueKind == JsonValueKind.Number &&
-            pubTs.TryGetInt64(out var value))
+        if (element.ValueKind != JsonValueKind.Object ||
+            !element.TryGetProperty("modules", out var modules) ||
+            modules.ValueKind != JsonValueKind.Object ||
+            !modules.TryGetProperty("module_author", out var author) ||
+            author.ValueKind != JsonValueKind.Object ||
+            !author.TryGetProperty("pub_ts", out var pubTs))
         {
-            return value;
+            return null;
+        }
+
+        if (pubTs.ValueKind == JsonValueKind.Number && pubTs.TryGetInt64(out var intValue))
+        {
+            return intValue;
+        }
+
+        if (pubTs.ValueKind == JsonValueKind.String &&
+            long.TryParse(pubTs.GetString(), out var strValue))
+        {
+            return strValue;
         }
 
         return null;
