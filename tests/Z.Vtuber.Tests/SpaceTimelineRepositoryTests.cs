@@ -12,11 +12,12 @@ public class SpaceTimelineRepositoryTests(MongoDbFixture fixture) : IAsyncLifeti
 
     public Task DisposeAsync() => Task.CompletedTask;
 
-    private static SpaceTimelineRecord Record(string dynamicId) => new()
+    private static SpaceTimelineRecord Record(string dynamicId, long? pubTs = null) => new()
     {
         Mid = 1150976664,
         DynamicId = dynamicId,
         Data = $@"{{""id_str"":""{dynamicId}""}}",
+        PubTs = pubTs,
         FetchedAt = DateTime.UtcNow,
     };
 
@@ -73,5 +74,78 @@ public class SpaceTimelineRepositoryTests(MongoDbFixture fixture) : IAsyncLifeti
         Assert.Equal(5, total);
         Assert.Equal(["5", "4"], page1.Select(i => i.DynamicId).ToArray());
         Assert.Equal(["1"], page3.Select(i => i.DynamicId).ToArray());
+    }
+
+    [Fact]
+    public async Task GetPage_TimeRange_FiltersByPubTsInclusive()
+    {
+        var repository = CreateRepository();
+        await repository.BulkUpsertAsync([
+            Record("1", pubTs: 1000),
+            Record("2", pubTs: 2000),
+            Record("3", pubTs: 3000),
+            Record("4", pubTs: 4000),
+        ]);
+
+        var start = DateTimeOffset.FromUnixTimeSeconds(2000).UtcDateTime;
+        var end = DateTimeOffset.FromUnixTimeSeconds(3000).UtcDateTime;
+        var (total, items) = await repository.GetPageAsync(1150976664, 1, 100, start, end);
+
+        Assert.Equal(2, total);
+        Assert.Equal(["3", "2"], items.Select(i => i.DynamicId).ToArray());
+    }
+
+    [Fact]
+    public async Task GetPage_TimeRange_SingleSidedBoundary()
+    {
+        var repository = CreateRepository();
+        await repository.BulkUpsertAsync([
+            Record("1", pubTs: 1000),
+            Record("2", pubTs: 2000),
+            Record("3", pubTs: 3000),
+        ]);
+
+        var start = DateTimeOffset.FromUnixTimeSeconds(2000).UtcDateTime;
+        var (total, items) = await repository.GetPageAsync(1150976664, 1, 100, startedAt: start);
+
+        Assert.Equal(2, total);
+        Assert.Equal(["3", "2"], items.Select(i => i.DynamicId).ToArray());
+    }
+
+    [Fact]
+    public async Task GetPage_TimeRange_ExcludesNullPubTs()
+    {
+        var repository = CreateRepository();
+        await repository.BulkUpsertAsync([
+            Record("1", pubTs: 1000),
+            Record("2", pubTs: null),
+            Record("3", pubTs: 2000),
+        ]);
+
+        var start = DateTimeOffset.FromUnixTimeSeconds(500).UtcDateTime;
+        var end = DateTimeOffset.FromUnixTimeSeconds(2500).UtcDateTime;
+        var (total, items) = await repository.GetPageAsync(1150976664, 1, 100, start, end);
+
+        Assert.Equal(2, total);
+        Assert.Equal(["3", "1"], items.Select(i => i.DynamicId).ToArray());
+    }
+
+    [Fact]
+    public async Task GetPage_TimeRange_PaginatesWithoutOverlapOrGap()
+    {
+        var repository = CreateRepository();
+        for (var i = 1; i <= 4; i++)
+        {
+            await repository.BulkUpsertAsync([Record($"{i}", pubTs: i)]);
+        }
+
+        var start = DateTimeOffset.FromUnixTimeSeconds(1).UtcDateTime;
+        var end = DateTimeOffset.FromUnixTimeSeconds(4).UtcDateTime;
+        var (total, page1) = await repository.GetPageAsync(1150976664, 1, 2, start, end);
+        var (_, page2) = await repository.GetPageAsync(1150976664, 2, 2, start, end);
+
+        Assert.Equal(4, total);
+        Assert.Equal(["4", "3"], page1.Select(i => i.DynamicId).ToArray());
+        Assert.Equal(["2", "1"], page2.Select(i => i.DynamicId).ToArray());
     }
 }

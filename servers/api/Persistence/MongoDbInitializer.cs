@@ -12,6 +12,7 @@ public sealed class MongoCollectionNames
     public const string LiveEvent = "bilibili_live_event";
     public const string SpaceTimeline = "bilibili_user_space_timeline";
     public const string LiveSession = "bilibili_live_session";
+    public const string Meta = "zvtuber_meta";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -91,6 +92,11 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Ascending(t => t.Mid)
             .Descending(t => t.DynamicId);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<SpaceTimelineRecord>(midDynamicIdKeys), cancellationToken: ct);
+
+        var midPubTsKeys = Builders<SpaceTimelineRecord>.IndexKeys
+            .Ascending(t => t.Mid)
+            .Descending(t => t.PubTs);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<SpaceTimelineRecord>(midPubTsKeys), cancellationToken: ct);
     }
 
     private async Task EnsureLiveSessionIndexesAsync(CancellationToken ct)
@@ -106,4 +112,73 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Descending(l => l.StartDate);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveSessionRecord>(roomKeys), cancellationToken: ct);
     }
+
+    public const string SpaceTimelinePubTsMigrationKey = "space_timeline_pub_ts_backfill_v1";
+
+    public async Task BackfillSpaceTimelinePubTsAsync(CancellationToken ct = default)
+    {
+        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == SpaceTimelinePubTsMigrationKey)
+            .AnyAsync(ct);
+        if (markerExists)
+        {
+            logger.LogInformation("Space timeline PubTs backfill already applied; skipping.");
+            return;
+        }
+
+        const int batchSize = 500;
+        var collection = database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+
+        long processed = batchSize;
+        do
+        {
+            var cursor = await collection.Find(r => r.PubTs == null)
+                .Project<SpaceTimelineRecord>(Builders<SpaceTimelineRecord>.Projection
+                    .Include(r => r.Id)
+                    .Include(r => r.Data))
+                .Limit(batchSize)
+                .ToCursorAsync(ct);
+
+            var batch = await cursor.ToListAsync(ct);
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            var models = new List<WriteModel<SpaceTimelineRecord>>(batch.Count);
+            foreach (var record in batch)
+            {
+                var pubTs = Services.PubTsExtractor.FromRawJson(record.Data);
+                if (pubTs is null)
+                {
+                    continue;
+                }
+
+                models.Add(new UpdateOneModel<SpaceTimelineRecord>(
+                    Builders<SpaceTimelineRecord>.Filter.Eq(r => r.Id, record.Id),
+                    Builders<SpaceTimelineRecord>.Update.Set(r => r.PubTs, pubTs)));
+            }
+
+            if (models.Count == 0)
+            {
+                logger.LogInformation(
+                    "Backfill stopped: {Skipped} records in batch had no extractable PubTs.", batch.Count);
+                break;
+            }
+
+            await collection.BulkWriteAsync(models, cancellationToken: ct);
+            logger.LogInformation("Backfilled PubTs for {Count} space timeline records.", models.Count);
+            processed = batch.Count;
+        }
+        while (processed == batchSize);
+
+        await meta.InsertOneAsync(new MetaRecord { Key = SpaceTimelinePubTsMigrationKey }, ct);
+        logger.LogInformation("Space timeline PubTs backfill completed and marked as applied.");
+    }
+}
+
+public sealed class MetaRecord
+{
+    [MongoDB.Bson.Serialization.Attributes.BsonId]
+    public string Key { get; set; } = string.Empty;
 }

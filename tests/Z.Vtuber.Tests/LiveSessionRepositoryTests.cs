@@ -93,4 +93,81 @@ public class LiveSessionRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Equal(0, total);
         Assert.Empty(items);
     }
+
+    [Fact]
+    public async Task GetPage_TimeRange_FiltersByStartDateInclusive()
+    {
+        var repository = new LiveSessionRepository(fixture.Database);
+        var baseDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        for (var i = 1; i <= 4; i++)
+        {
+            await repository.UpsertManyAsync([Record($"live-{i}", baseDate.AddHours(i))]);
+        }
+
+        var (total, items) = await repository.GetPageAsync(123456, 1, 100, baseDate.AddHours(2), baseDate.AddHours(3));
+
+        Assert.Equal(2, total);
+        Assert.Equal(["live-3", "live-2"], items.Select(i => i.LiveId).ToArray());
+    }
+
+    [Fact]
+    public async Task Upsert_SingleRecord_InsertsAndUpdates()
+    {
+        var repository = new LiveSessionRepository(fixture.Database);
+
+        await repository.UpsertAsync(Record("live-1"));
+        await repository.UpsertAsync(Record("live-1", DateTime.UtcNow.AddHours(2)));
+
+        var (total, items) = await repository.GetPageAsync(123456, 1, 100);
+        Assert.Equal(1, total);
+        Assert.Equal("live-1", items[0].LiveId);
+    }
+
+    [Fact]
+    public async Task CloseAsync_MarksFinished_IsIdempotent()
+    {
+        var repository = new LiveSessionRepository(fixture.Database);
+        var startDate = DateTime.UtcNow;
+        await repository.UpsertAsync(Record("live-1", startDate));
+
+        var stopDate = startDate.AddHours(1);
+        await repository.CloseAsync("live-1", stopDate);
+        await repository.CloseAsync("live-1", stopDate.AddHours(1));
+
+        var (total, items) = await repository.GetPageAsync(123456, 1, 100);
+        Assert.Equal(1, total);
+        Assert.True(items[0].IsFinish);
+        Assert.Equal(TruncateToMs(stopDate), TruncateToMs(items[0].StopDate!.Value));
+    }
+
+    private static DateTime TruncateToMs(DateTime value)
+    {
+        var ms = value.Ticks - (value.Ticks % TimeSpan.TicksPerMillisecond);
+        return new DateTime(ms, DateTimeKind.Utc);
+    }
+
+    [Fact]
+    public async Task FindMergeCandidates_ReturnsUnfinishedOrNearbySessions()
+    {
+        var repository = new LiveSessionRepository(fixture.Database);
+        var baseDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var ongoing = Record("ongoing", baseDate);
+        ongoing.IsFinish = false;
+        var finishedFar = Record("finished-far", baseDate.AddDays(-3));
+        finishedFar.IsFinish = true;
+        var finishedNear = Record("finished-near", baseDate.AddMinutes(3));
+        finishedNear.IsFinish = true;
+        await repository.UpsertAsync(ongoing);
+        await repository.UpsertAsync(finishedFar);
+        await repository.UpsertAsync(finishedNear);
+
+        var candidates = await repository.FindMergeCandidatesAsync(123456, baseDate, TimeSpan.FromMinutes(10));
+
+        var ids = candidates.Select(c => c.LiveId).ToHashSet();
+        Assert.Contains("ongoing", ids);
+        Assert.Contains("finished-near", ids);
+        Assert.DoesNotContain("finished-far", ids);
+    }
 }
