@@ -67,32 +67,46 @@ public class BilibiliLiveController(
     [HttpGet("{roomId}/event/range")]
     public async Task<IActionResult> GetEventsRange(
         long roomId,
-        [FromQuery] DateTime startedAt,
-        [FromQuery] DateTime endedAt,
-        CancellationToken ct)
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string[]? type = null,
+        [FromQuery] DateTime? startedAt = null,
+        [FromQuery] DateTime? endedAt = null,
+        CancellationToken ct = default)
     {
-        if (endedAt < startedAt)
+        if (BilibiliUserController.BadTimeRange(startedAt, endedAt))
         {
-            return BadRequest(new { error = "endedAt must not be earlier than startedAt." });
+            return BadRequest(new { error = "startedAt must not be later than endedAt." });
         }
 
-        var items = await liveEventRepository.GetRangeAsync(roomId, startedAt, endedAt, ct);
-        return Ok(new { items = items.Select(ToEventDto) });
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var types = NormalizeTypes(type);
+        var (total, items) = await liveEventRepository.GetPageAsync(roomId, page, pageSize, types, startedAt, endedAt, ct);
+        return Ok(new { total, page, pageSize, items = items.Select(ToEventDto) });
     }
 
     [HttpGet("{roomId}/event/subscribe")]
-    public async Task Subscribe(long roomId, CancellationToken ct)
+    public async Task Subscribe(long roomId, [FromQuery] string[]? type = null, CancellationToken ct = default)
     {
         Response.StatusCode = StatusCodes.Status200OK;
         Response.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache";
         Response.Headers.Connection = "keep-alive";
 
+        var types = NormalizeTypes(type);
+
         var subscription = eventBus.Subscribe(roomId);
         try
         {
             await foreach (var liveEvent in subscription.Reader.ReadAllAsync(ct))
             {
+                if (types is { Count: > 0 } && !types.Contains(liveEvent.Type))
+                {
+                    continue;
+                }
+
                 var data = JsonSerializer.Serialize(ToEventDto(liveEvent));
                 await Response.WriteAsync($"event: {liveEvent.Type}\n", ct);
                 await Response.WriteAsync($"data: {data}\n\n", ct);
@@ -103,6 +117,25 @@ public class BilibiliLiveController(
         {
             eventBus.Unsubscribe(roomId, subscription.Id);
         }
+    }
+
+    private static HashSet<string>? NormalizeTypes(string[]? types)
+    {
+        if (types is null || types.Length == 0)
+        {
+            return null;
+        }
+
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var type in types)
+        {
+            if (!string.IsNullOrWhiteSpace(type))
+            {
+                set.Add(type);
+            }
+        }
+
+        return set.Count == 0 ? null : set;
     }
 
     private static object ToStateDto(LiveStatusRecord record) => new
