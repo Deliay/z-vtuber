@@ -33,7 +33,7 @@ public sealed class LiveEventRepository(IMongoDatabase database)
 
         var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);
         var items = await _collection.Find(filter)
-            .SortBy(e => e.OccurredAt)
+            .SortByDescending(e => e.OccurredAt)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
             .ToListAsync(ct);
