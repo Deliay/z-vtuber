@@ -1,10 +1,14 @@
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("Z.Vtuber.Tests")]
+
 namespace Z.Vtuber.Jobs;
 
 public abstract class PeriodicJobBase(ILogger logger) : BackgroundService
 {
     protected abstract TimeSpan Interval { get; }
 
-    protected abstract Task RunOnceAsync(CancellationToken ct);
+    internal abstract Task RunOnceAsync(CancellationToken ct);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

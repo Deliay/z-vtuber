@@ -104,4 +104,70 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
         Assert.False(item.GetProperty("isFinish").GetBoolean());
         Assert.Equal(JsonValueKind.Null, item.GetProperty("stopDate").ValueKind);
     }
+
+    [Fact]
+    public async Task GetHistory_TimeRange_FiltersSessions()
+    {
+        var repository = new LiveSessionRepository(fixture.Database);
+        var baseDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        for (var i = 1; i <= 3; i++)
+        {
+            await repository.UpsertManyAsync([Session($"live-{i}", baseDate.AddHours(i))]);
+        }
+
+        var json = Ok(await CreateController(fixture.Database)
+            .GetHistory(123456, startedAt: baseDate.AddHours(2), endedAt: baseDate.AddHours(3)));
+
+        Assert.Equal(2, json.GetProperty("total").GetInt32());
+        Assert.Equal(2, json.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task GetHistory_StartedAfterEnded_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.GetHistory(123456,
+            startedAt: new DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc),
+            endedAt: new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task GetAllStates_TimeRange_FiltersStates()
+    {
+        var repository = new LiveStatusRepository(fixture.Database);
+        var baseDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        for (var i = 1; i <= 3; i++)
+        {
+            await repository.InsertAsync(new LiveStatusRecord
+            {
+                RoomId = 123456,
+                Title = "title",
+                LiveStatus = true,
+                CreatedAt = baseDate.AddHours(i),
+            });
+        }
+
+        var json = Ok(await CreateController(fixture.Database)
+            .GetAllStates(123456, startedAt: baseDate.AddHours(2), endedAt: baseDate.AddHours(3)));
+
+        Assert.Equal(2, json.GetProperty("total").GetInt32());
+        Assert.Equal(2, json.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task GetAllStates_StartedAfterEnded_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.GetAllStates(123456,
+            startedAt: new DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc),
+            endedAt: new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
 }

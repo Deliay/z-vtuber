@@ -40,6 +40,7 @@ public sealed class SpaceTimelineRepository(IMongoDatabase database)
             var update = Builders<SpaceTimelineRecord>.Update
                 .SetOnInsert(t => t.Mid, record.Mid)
                 .SetOnInsert(t => t.Data, record.Data)
+                .SetOnInsert(t => t.PubTs, record.PubTs)
                 .SetOnInsert(t => t.FetchedAt, record.FetchedAt);
             models.Add(new UpdateOneModel<SpaceTimelineRecord>(filter, update) { IsUpsert = true });
         }
@@ -49,9 +50,11 @@ public sealed class SpaceTimelineRepository(IMongoDatabase database)
     }
 
     public async Task<(long Total, IReadOnlyList<SpaceTimelineRecord> Items)> GetPageAsync(
-        long mid, int page, int pageSize, CancellationToken ct = default)
+        long mid, int page, int pageSize, DateTime? startedAt = null, DateTime? endedAt = null,
+        CancellationToken ct = default)
     {
-        var filter = Builders<SpaceTimelineRecord>.Filter.Eq(t => t.Mid, mid);
+        var filter = BuildTimeRangeFilter(
+            Builders<SpaceTimelineRecord>.Filter.Eq(t => t.Mid, mid), startedAt, endedAt);
         var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);
 
         var numericIdStage = BsonDocument.Parse(
@@ -68,4 +71,22 @@ public sealed class SpaceTimelineRepository(IMongoDatabase database)
             .ToListAsync(ct);
         return (total, items);
     }
+
+    internal static FilterDefinition<SpaceTimelineRecord> BuildTimeRangeFilter(
+        FilterDefinition<SpaceTimelineRecord> baseFilter, DateTime? startedAt, DateTime? endedAt)
+    {
+        var conditions = new List<FilterDefinition<SpaceTimelineRecord>> { baseFilter };
+        if (startedAt.HasValue)
+        {
+            conditions.Add(Builders<SpaceTimelineRecord>.Filter.Gte(t => t.PubTs, ToUnixSeconds(startedAt.Value)));
+        }
+        if (endedAt.HasValue)
+        {
+            conditions.Add(Builders<SpaceTimelineRecord>.Filter.Lte(t => t.PubTs, ToUnixSeconds(endedAt.Value)));
+        }
+        return conditions.Count == 1 ? conditions[0] : Builders<SpaceTimelineRecord>.Filter.And(conditions);
+    }
+
+    private static long ToUnixSeconds(DateTime utc) =>
+        new DateTimeOffset(utc).ToUnixTimeSeconds();
 }

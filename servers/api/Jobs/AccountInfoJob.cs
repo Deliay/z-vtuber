@@ -23,7 +23,7 @@ public sealed class AccountInfoJob : PeriodicJobBase
 
     protected override TimeSpan Interval => TimeSpan.FromHours(_options.AccountInfoIntervalHours);
 
-    protected override async Task RunOnceAsync(CancellationToken ct)
+    internal override async Task RunOnceAsync(CancellationToken ct)
     {
         var mids = await _subscription.GetMidsAsync(ct);
         foreach (var mid in mids)

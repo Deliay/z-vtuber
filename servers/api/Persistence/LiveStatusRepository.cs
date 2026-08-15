@@ -17,9 +17,18 @@ public sealed class LiveStatusRepository(IMongoDatabase database)
             .FirstOrDefaultAsync(ct);
 
     public async Task<(long Total, IReadOnlyList<LiveStatusRecord> Items)> GetPageAsync(
-        long roomId, int page, int pageSize, CancellationToken ct = default)
+        long roomId, int page, int pageSize, DateTime? startedAt = null, DateTime? endedAt = null,
+        CancellationToken ct = default)
     {
         var filter = Builders<LiveStatusRecord>.Filter.Eq(l => l.RoomId, roomId);
+        if (startedAt.HasValue)
+        {
+            filter &= Builders<LiveStatusRecord>.Filter.Gte(l => l.CreatedAt, startedAt.Value);
+        }
+        if (endedAt.HasValue)
+        {
+            filter &= Builders<LiveStatusRecord>.Filter.Lte(l => l.CreatedAt, endedAt.Value);
+        }
         var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);
         var items = await _collection.Find(filter)
             .SortByDescending(l => l.CreatedAt)

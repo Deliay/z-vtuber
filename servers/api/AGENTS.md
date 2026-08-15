@@ -24,8 +24,9 @@ graph LR
 - `Crawlers/`：`IBiliApiClient`/`BiliApiClient`（per-cookie HTTP 抓取封装）、`BiliRawCrawler`
 - `Jobs/`：`PeriodicJobBase`、`CrawlLockProvider`（per-key 锁）、`CookieProbeJob`/`AccountInfoJob`/`LiveStatusJob`/`SpaceTimelineJob`
 - `Live/`：`LiveEventSource`（弹幕长连接）、`DanmakuClientFactory`、`DanmakuEventNormalizer`、`ILiveEventBus`/`LiveEventBus`（SSE 订阅门控）、`LiveEvent`
-- `Persistence/`：6 个 MongoDB 集合实体、仓储、`MongoDbInitializer`（索引初始化）、`BsonConvert`
-- `Services/`：`ICookiePoolService`（round-robin）、`ISubscriptionService`、`ILiveSessionTracker`、`LiveStatusStateMachine`（场次划分）、`SpaceTimelinePaging`
+- `Persistence/`：6 个 MongoDB 集合实体、仓储、`MongoDbInitializer`（索引初始化 + `SpaceTimeline` PubTs 幂等回填）、`BsonConvert`
+- `Services/`：`ICookiePoolService`（round-robin）、`ISubscriptionService`、`ILiveSessionTracker`、`LiveStatusStateMachine`（场次划分，`Decide` 返回 `SessionTransition`：None/Started/Ended）、`PubTsExtractor`（从动态 JSON 提取 `pub_ts`）、`AccountInfoCrawler`（B 站场次按时间邻近合并去重）、`SpaceTimelinePaging`
+- 场次维护：`LiveStatusJob` 在开播/下播时通过 `LiveSessionRepository.UpsertAsync`/`CloseAsync` 同步 `bilibili_live_session`；分页端点统一支持可选 `startedAt`/`endedAt` 时间范围过滤
 
 ## 开发流程
 
