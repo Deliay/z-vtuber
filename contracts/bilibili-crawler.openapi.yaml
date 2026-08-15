@@ -161,9 +161,11 @@ paths:
   /api/b/live/{roomId}/event/subscribe:
     get:
       summary: 订阅直播间实时事件（SSE）
+      description: 订阅直播间实时事件，可传入一个或多个 type 仅推送匹配类型的事件，不传 type 推送全部类型。
       operationId: subscribeLiveEvents
       parameters:
         - $ref: "#/components/parameters/RoomId"
+        - $ref: "#/components/parameters/EventType"
       responses:
         "200":
           description: text/event-stream，仅推送连接建立之后的事件
@@ -173,29 +175,23 @@ paths:
                 type: string
   /api/b/live/{roomId}/event/range:
     get:
-      summary: 查询时间段内直播事件
+      summary: 分页查询直播间事件
+      description: 按发生时间（occurredAt）升序分页查询直播间事件，可按事件类型（type）与可选时间范围（startedAt/endedAt，含起止边界）筛选；startedAt 晚于 endedAt 时返回 400。
       operationId: listLiveEventsRange
       parameters:
         - $ref: "#/components/parameters/RoomId"
-        - name: startedAt
-          in: query
-          required: true
-          schema:
-            type: string
-            format: date-time
-        - name: endedAt
-          in: query
-          required: true
-          schema:
-            type: string
-            format: date-time
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/EventType"
+        - $ref: "#/components/parameters/StartedAt"
+        - $ref: "#/components/parameters/EndedAt"
       responses:
         "200":
-          description: 时间段内事件
+          description: 直播间事件分页（按 occurredAt 升序）
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LiveEventList"
+                $ref: "#/components/schemas/LiveEventPage"
         "400":
           description: 时间范围非法
 components:
@@ -231,11 +227,22 @@ components:
         minimum: 1
         maximum: 100
         default: 20
+    EventType:
+      name: type
+      in: query
+      required: false
+      description: 事件类型筛选，可重复传入（如 type=danmaku&type=gift），多值为合集，不传返回全部类型。
+      style: form
+      explode: true
+      schema:
+        type: array
+        items:
+          type: string
     StartedAt:
       name: startedAt
       in: query
       required: false
-      description: 筛选起始时间（含边界，UTC，ISO 8601）。space 端点按动态发布时间（pub_ts）过滤且 pub_ts 缺失的记录被排除；state/all 按记录创建时间（createdAt）过滤；history 按开播时间（startDate）过滤。
+      description: 筛选起始时间（含边界，UTC，ISO 8601）。space 端点按动态发布时间（pub_ts）过滤且 pub_ts 缺失的记录被排除；state/all 按记录创建时间（createdAt）过滤；history 按开播时间（startDate）过滤；event/range 按事件发生时间（occurredAt）过滤。
       schema:
         type: string
         format: date-time
@@ -243,7 +250,7 @@ components:
       name: endedAt
       in: query
       required: false
-      description: 筛选结束时间（含边界，UTC，ISO 8601）。过滤语义同 startedAt。当 startedAt 晚于 endedAt 时返回 400。
+      description: 筛选结束时间（含边界，UTC，ISO 8601）。过滤语义同 startedAt；event/range 按事件发生时间（occurredAt）过滤。当 startedAt 晚于 endedAt 时返回 400。
       schema:
         type: string
         format: date-time
@@ -430,9 +437,15 @@ components:
           nullable: true
         payload:
           type: object
-    LiveEventList:
+    LiveEventPage:
       type: object
       properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
         items:
           type: array
           items:
