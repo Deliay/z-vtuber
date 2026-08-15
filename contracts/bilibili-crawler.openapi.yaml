@@ -99,6 +99,8 @@ paths:
         - $ref: "#/components/parameters/Mid"
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/StartedAt"
+        - $ref: "#/components/parameters/EndedAt"
       responses:
         "200":
           description: 空间动态分页
@@ -114,6 +116,8 @@ paths:
         - $ref: "#/components/parameters/RoomId"
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/StartedAt"
+        - $ref: "#/components/parameters/EndedAt"
       responses:
         "200":
           description: 直播状态分页
@@ -145,6 +149,8 @@ paths:
         - $ref: "#/components/parameters/RoomId"
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/StartedAt"
+        - $ref: "#/components/parameters/EndedAt"
       responses:
         "200":
           description: 直播间历史场次分页（按 startDate 倒序）
@@ -225,6 +231,22 @@ components:
         minimum: 1
         maximum: 100
         default: 20
+    StartedAt:
+      name: startedAt
+      in: query
+      required: false
+      description: 筛选起始时间（含边界，UTC，ISO 8601）。space 端点按动态发布时间（pub_ts）过滤且 pub_ts 缺失的记录被排除；state/all 按记录创建时间（createdAt）过滤；history 按开播时间（startDate）过滤。
+      schema:
+        type: string
+        format: date-time
+    EndedAt:
+      name: endedAt
+      in: query
+      required: false
+      description: 筛选结束时间（含边界，UTC，ISO 8601）。过滤语义同 startedAt。当 startedAt 晚于 endedAt 时返回 400。
+      schema:
+        type: string
+        format: date-time
   schemas:
     CookieAddRequest:
       type: object

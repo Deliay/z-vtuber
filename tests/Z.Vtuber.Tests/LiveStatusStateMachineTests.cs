@@ -8,19 +8,21 @@ public class LiveStatusStateMachineTests
     [Fact]
     public void FirstCrawl_Live_GeneratesSessionId()
     {
-        var (shouldPersist, sessionId) = LiveStatusStateMachine.Decide(null, "title", true);
+        var (shouldPersist, sessionId, transition) = LiveStatusStateMachine.Decide(null, "title", true);
 
         Assert.True(shouldPersist);
         Assert.False(string.IsNullOrWhiteSpace(sessionId));
+        Assert.Equal(SessionTransition.Started, transition);
     }
 
     [Fact]
     public void FirstCrawl_NotLive_NoSessionId()
     {
-        var (shouldPersist, sessionId) = LiveStatusStateMachine.Decide(null, "title", false);
+        var (shouldPersist, sessionId, transition) = LiveStatusStateMachine.Decide(null, "title", false);
 
         Assert.True(shouldPersist);
         Assert.Null(sessionId);
+        Assert.Equal(SessionTransition.None, transition);
     }
 
     [Fact]
@@ -28,10 +30,11 @@ public class LiveStatusStateMachineTests
     {
         var latest = new LiveStatusRecord { Title = "title", LiveStatus = true, LiveSessionId = "s1" };
 
-        var (shouldPersist, sessionId) = LiveStatusStateMachine.Decide(latest, "title", true);
+        var (shouldPersist, sessionId, transition) = LiveStatusStateMachine.Decide(latest, "title", true);
 
         Assert.False(shouldPersist);
         Assert.Equal("s1", sessionId);
+        Assert.Equal(SessionTransition.None, transition);
     }
 
     [Fact]
@@ -39,10 +42,11 @@ public class LiveStatusStateMachineTests
     {
         var latest = new LiveStatusRecord { Title = "old", LiveStatus = true, LiveSessionId = "s1" };
 
-        var (shouldPersist, sessionId) = LiveStatusStateMachine.Decide(latest, "new", true);
+        var (shouldPersist, sessionId, transition) = LiveStatusStateMachine.Decide(latest, "new", true);
 
         Assert.True(shouldPersist);
         Assert.Equal("s1", sessionId);
+        Assert.Equal(SessionTransition.None, transition);
     }
 
     [Fact]
@@ -50,10 +54,11 @@ public class LiveStatusStateMachineTests
     {
         var latest = new LiveStatusRecord { Title = "title", LiveStatus = true, LiveSessionId = "s1" };
 
-        var (shouldPersist, sessionId) = LiveStatusStateMachine.Decide(latest, "title", false);
+        var (shouldPersist, sessionId, transition) = LiveStatusStateMachine.Decide(latest, "title", false);
 
         Assert.True(shouldPersist);
         Assert.Equal("s1", sessionId);
+        Assert.Equal(SessionTransition.Ended, transition);
     }
 
     [Fact]
@@ -61,11 +66,12 @@ public class LiveStatusStateMachineTests
     {
         var latest = new LiveStatusRecord { Title = "title", LiveStatus = false, LiveSessionId = "s1" };
 
-        var (shouldPersist, sessionId) = LiveStatusStateMachine.Decide(latest, "title", true);
+        var (shouldPersist, sessionId, transition) = LiveStatusStateMachine.Decide(latest, "title", true);
 
         Assert.True(shouldPersist);
         Assert.False(string.IsNullOrWhiteSpace(sessionId));
         Assert.NotEqual("s1", sessionId);
+        Assert.Equal(SessionTransition.Started, transition);
     }
 
     [Fact]
@@ -73,9 +79,10 @@ public class LiveStatusStateMachineTests
     {
         var latest = new LiveStatusRecord { Title = "old", LiveStatus = false, LiveSessionId = null };
 
-        var (shouldPersist, sessionId) = LiveStatusStateMachine.Decide(latest, "new", false);
+        var (shouldPersist, sessionId, transition) = LiveStatusStateMachine.Decide(latest, "new", false);
 
         Assert.True(shouldPersist);
         Assert.Null(sessionId);
+        Assert.Equal(SessionTransition.None, transition);
     }
 }

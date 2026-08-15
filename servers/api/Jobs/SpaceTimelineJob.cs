@@ -37,7 +37,7 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
 
     protected override TimeSpan Interval => TimeSpan.FromSeconds(_options.SpaceTimelineIntervalSeconds);
 
-    protected override async Task RunOnceAsync(CancellationToken ct)
+    internal override async Task RunOnceAsync(CancellationToken ct)
     {
         var mids = await _subscription.GetMidsAsync(ct);
         foreach (var mid in mids)
@@ -112,6 +112,7 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
                     Mid = mid,
                     DynamicId = item.DynamicId,
                     Data = BsonConvert.FromJsonElement(item.Data),
+                    PubTs = PubTsExtractor.FromJsonElement(item.Data),
                     FetchedAt = DateTime.UtcNow,
                 });
             }

@@ -17,8 +17,11 @@ public sealed class FakeBiliApiClient : IBiliApiClient
         return Task.FromResult(data);
     }
 
+    public Func<long, LiveRoomInfo>? LiveRoomInfoProvider { get; set; }
+
     public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default) =>
-        Task.FromResult(new LiveRoomInfo { Title = "title", RoomId = roomId, LiveStatus = 1 });
+        Task.FromResult(LiveRoomInfoProvider?.Invoke(roomId)
+            ?? new LiveRoomInfo { Title = "title", RoomId = roomId, LiveStatus = 1 });
 
     public Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default) =>
         Task.FromResult(new NavInfo { Mid = 1 });
