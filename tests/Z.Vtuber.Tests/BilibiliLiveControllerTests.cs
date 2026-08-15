@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using Z.Vtuber.Controllers;
@@ -169,5 +171,253 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
             endedAt: new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc));
 
         Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    private static readonly DateTime EventBaseDate = new(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    private static LiveEventRecord Event(string type, DateTime occurredAt) => new()
+    {
+        RoomId = 123456,
+        Type = type,
+        OccurredAt = occurredAt,
+        Payload = "{}",
+    };
+
+    private static async Task SeedEvents(LiveEventRepository repository, params LiveEventRecord[] records)
+    {
+        foreach (var record in records)
+        {
+            await repository.InsertAsync(record);
+        }
+    }
+
+    [Fact]
+    public async Task GetEventsRange_ReturnsPagedStructure()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("danmaku", EventBaseDate.AddHours(1)),
+            Event("gift", EventBaseDate.AddHours(2)),
+            Event("danmaku", EventBaseDate.AddHours(3)));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456, page: 1, pageSize: 2));
+
+        Assert.Equal(3, json.GetProperty("total").GetInt32());
+        Assert.Equal(1, json.GetProperty("page").GetInt32());
+        Assert.Equal(2, json.GetProperty("pageSize").GetInt32());
+        Assert.Equal(2, json.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_ClampsPageAndPageSize()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository, Event("danmaku", EventBaseDate.AddHours(1)));
+
+        var controller = CreateController(fixture.Database);
+
+        var json = Ok(await controller.GetEventsRange(123456, page: 0, pageSize: 0));
+        Assert.Equal(1, json.GetProperty("page").GetInt32());
+        Assert.Equal(1, json.GetProperty("pageSize").GetInt32());
+
+        var bigJson = Ok(await controller.GetEventsRange(123456, page: -5, pageSize: 500));
+        Assert.Equal(1, bigJson.GetProperty("page").GetInt32());
+        Assert.Equal(100, bigJson.GetProperty("pageSize").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_BeyondLastPage_ReturnsEmptyWithRealTotal()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository, Event("danmaku", EventBaseDate.AddHours(1)));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456, page: 5, pageSize: 20));
+
+        Assert.Equal(1, json.GetProperty("total").GetInt32());
+        Assert.Equal(0, json.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_SingleType_Filters()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("danmaku", EventBaseDate.AddHours(1)),
+            Event("gift", EventBaseDate.AddHours(2)),
+            Event("danmaku", EventBaseDate.AddHours(3)));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456, type: ["danmaku"]));
+
+        Assert.Equal(2, json.GetProperty("total").GetInt32());
+        Assert.All(json.GetProperty("items").EnumerateArray(), i => Assert.Equal("danmaku", i.GetProperty("type").GetString()));
+    }
+
+    [Fact]
+    public async Task GetEventsRange_MultipleTypes_ReturnsUnion()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("danmaku", EventBaseDate.AddHours(1)),
+            Event("gift", EventBaseDate.AddHours(2)),
+            Event("super_chat", EventBaseDate.AddHours(3)),
+            Event("guard_buy", EventBaseDate.AddHours(4)));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456, type: ["danmaku", "super_chat"]));
+
+        Assert.Equal(2, json.GetProperty("total").GetInt32());
+        var types = json.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("type").GetString()!).ToHashSet();
+        Assert.Equal(["danmaku", "super_chat"], types.OrderBy(t => t).ToArray());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_DuplicateTypes_AreDeduplicated()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("danmaku", EventBaseDate.AddHours(1)),
+            Event("gift", EventBaseDate.AddHours(2)));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456, type: ["danmaku", "danmaku"]));
+
+        Assert.Equal(1, json.GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_BlankTypes_AreIgnored()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("danmaku", EventBaseDate.AddHours(1)),
+            Event("gift", EventBaseDate.AddHours(2)));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456, type: ["danmaku", "", "  ", null!]));
+
+        Assert.Equal(1, json.GetProperty("total").GetInt32());
+        Assert.Equal("danmaku", json.GetProperty("items")[0].GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_SingleSidedTimeBoundary_Filters()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("danmaku", EventBaseDate.AddHours(1)),
+            Event("danmaku", EventBaseDate.AddHours(2)),
+            Event("danmaku", EventBaseDate.AddHours(3)));
+
+        var lowerJson = Ok(await CreateController(fixture.Database).GetEventsRange(123456, startedAt: EventBaseDate.AddHours(2)));
+        Assert.Equal(2, lowerJson.GetProperty("total").GetInt32());
+
+        var upperJson = Ok(await CreateController(fixture.Database).GetEventsRange(123456, endedAt: EventBaseDate.AddHours(2)));
+        Assert.Equal(2, upperJson.GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_NoTimeRange_ReturnsAll()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("danmaku", EventBaseDate.AddHours(1)),
+            Event("gift", EventBaseDate.AddHours(2)));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456));
+
+        Assert.Equal(2, json.GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_StartedAfterEnded_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.GetEventsRange(123456,
+            startedAt: new DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc),
+            endedAt: new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Subscribe_WithTypeFilter_OnlyPushesMatchingEvents()
+    {
+        var bus = new LiveEventBus();
+        var controller = new BilibiliLiveController(
+            new LiveStatusRepository(fixture.Database),
+            new LiveEventRepository(fixture.Database),
+            new LiveSessionRepository(fixture.Database),
+            bus);
+
+        var content = await RunSubscribeAsync(controller, bus, 123456, ["danmaku"],
+        [
+            new LiveEvent(123456, "danmaku", null, EventBaseDate.AddHours(1), "{}"),
+            new LiveEvent(123456, "gift", null, EventBaseDate.AddHours(2), "{}"),
+            new LiveEvent(123456, "danmaku", null, EventBaseDate.AddHours(3), "{}"),
+        ]);
+
+        Assert.Equal(2, CountOccurrences(content, "event: danmaku\n"));
+        Assert.DoesNotContain("event: gift", content);
+    }
+
+    [Fact]
+    public async Task Subscribe_WithoutType_PushesAllEvents()
+    {
+        var bus = new LiveEventBus();
+        var controller = new BilibiliLiveController(
+            new LiveStatusRepository(fixture.Database),
+            new LiveEventRepository(fixture.Database),
+            new LiveSessionRepository(fixture.Database),
+            bus);
+
+        var content = await RunSubscribeAsync(controller, bus, 123456, null,
+        [
+            new LiveEvent(123456, "danmaku", null, EventBaseDate.AddHours(1), "{}"),
+            new LiveEvent(123456, "gift", null, EventBaseDate.AddHours(2), "{}"),
+        ]);
+
+        Assert.Contains("event: danmaku\n", content);
+        Assert.Contains("event: gift\n", content);
+        Assert.Contains("data: ", content);
+    }
+
+    private static async Task<string> RunSubscribeAsync(
+        BilibiliLiveController controller, LiveEventBus bus, long roomId, string[]? type, IEnumerable<LiveEvent> events)
+    {
+        using var body = new MemoryStream();
+        var context = new DefaultHttpContext { Response = { Body = body } };
+        controller.ControllerContext = new ControllerContext { HttpContext = context };
+
+        using var cts = new CancellationTokenSource();
+        var subscribeTask = controller.Subscribe(roomId, type, cts.Token);
+
+        foreach (var evt in events)
+        {
+            bus.TryPublish(roomId, evt);
+        }
+
+        await Task.Delay(300);
+        cts.Cancel();
+        try
+        {
+            await subscribeTask;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        body.Position = 0;
+        using var reader = new StreamReader(body, Encoding.UTF8);
+        return await reader.ReadToEndAsync();
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+        return count;
     }
 }
