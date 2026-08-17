@@ -63,7 +63,43 @@ PRD 功能点 3 写「支持两位小数以内的数值」，但实现接受任�
 1. **P2修复**: 在 `BilibiliLiveController.cs` 第83-86行添加上限校验
 2. **P3修复**: 修改PRD文档，明确小数位数支持
 3. **P4修复**: 为两个文件添加末尾换行符
-4. **验证**: 运行单元测试确保修复正确
+4. **历史数据清洗**: 添加 `BackfillGiftPriceAsync` 方法，为历史gift记录补充Price字段
+5. **验证**: 运行单元测试确保修复正确
+
+## 历史数据清洗
+
+**问题**: 历史gift记录缺少Price字段，在minPrice过滤时被视为金额0，导致高价值历史礼物无法被查询到。
+
+**解决方案**: 创建 `BackfillGiftPriceAsync` 方法，在应用启动时自动执行历史数据清洗。
+
+**实现细节**:
+- 在 `MongoDbInitializer.cs` 中新增 `BackfillGiftPriceAsync` 方法
+- 在 `Program.cs` 中调用该方法
+- 使用幂等标记防止重复执行
+- 分批处理（每批500条），避免内存溢出
+- 复用 `GiftPriceExtractor.ExtractGoldSeeds` 提取逻辑
+
+**清洗规则**:
+- 仅处理 `Type == "gift"` 且 `Price == 0` 的记录
+- 从 `Payload` JSON 中提取 `data.price`（金瓜子）
+- 跳过银瓜子免费礼物（`coin_type == "silver"`）
+- 跳过payload解析失败的记录
+- 跳过已有正确Price值的记录
+
+**影响文件**:
+- `servers/api/Persistence/MongoDbInitializer.cs` - 新增 `BackfillGiftPriceAsync` 方法
+- `servers/api/Program.cs` - 启动时调用清洗方法
+- `tests/Z.Vtuber.Tests/MongoDbInitializerTests.cs` - 新增8个测试用例
+
+**测试用例**:
+1. `BackfillGiftPrice_PopulatesPrice_FromGoldGiftPayload` - 正常gold礼物提取
+2. `BackfillGiftPrice_LeavesSilverGiftAtZero` - silver免费礼物保持0
+3. `BackfillGiftPrice_SkipsNonGiftType` - 非gift类型跳过
+4. `BackfillGiftPrice_IsIdempotent` - 幂等性验证
+5. `BackfillGiftPrice_Marker_PreventsRerun` - 幂等标记阻止重跑
+6. `BackfillGiftPrice_SkipsRecordsWithExistingPrice` - 已有Price的记录不被覆盖
+7. `BackfillGiftPrice_HandlesInvalidPayloadGracefully` - 无效payload处理
+8. `BackfillGiftPrice_ProcessesLargeBatch` - 大批量数据分批处理
 
 ## 跟进事项
 
