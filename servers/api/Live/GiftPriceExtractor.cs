@@ -19,12 +19,21 @@ public static class GiftPriceExtractor
             {
                 if (data.TryGetProperty("coin_type", out var coinType) &&
                     coinType.ValueKind == JsonValueKind.String &&
-                    coinType.GetString() == "gold" &&
-                    data.TryGetProperty("price", out var price) &&
-                    price.ValueKind == JsonValueKind.Number &&
-                    price.TryGetInt64(out var priceValue))
+                    coinType.GetString() == "gold")
                 {
-                    return priceValue;
+                    if (data.TryGetProperty("discount_price", out var discountPrice) &&
+                        discountPrice.ValueKind == JsonValueKind.Number &&
+                        discountPrice.TryGetInt64(out var discountPriceValue))
+                    {
+                        return discountPriceValue;
+                    }
+
+                    if (data.TryGetProperty("price", out var price) &&
+                        price.ValueKind == JsonValueKind.Number &&
+                        price.TryGetInt64(out var priceValue))
+                    {
+                        return priceValue;
+                    }
                 }
             }
         }

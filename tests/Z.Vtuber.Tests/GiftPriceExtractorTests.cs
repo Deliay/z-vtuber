@@ -79,4 +79,36 @@ public class GiftPriceExtractorTests
     {
         Assert.Equal(0, GiftPriceExtractor.ExtractGoldSeeds("gift", "{}"));
     }
+
+    [Fact]
+    public void ExtractGoldSeeds_ReturnsDiscountPrice_WhenBothPriceAndDiscountPriceExist()
+    {
+        var payload = """{"data":{"price":200,"discount_price":150,"coin_type":"gold"}}""";
+        
+        Assert.Equal(150, GiftPriceExtractor.ExtractGoldSeeds("gift", payload));
+    }
+
+    [Fact]
+    public void ExtractGoldSeeds_ReturnsPrice_WhenOnlyPriceExists()
+    {
+        var payload = """{"data":{"price":200,"coin_type":"gold"}}""";
+        
+        Assert.Equal(200, GiftPriceExtractor.ExtractGoldSeeds("gift", payload));
+    }
+
+    [Fact]
+    public void ExtractGoldSeeds_ReturnsZero_WhenDiscountPriceIsNotNumber()
+    {
+        var payload = """{"data":{"price":200,"discount_price":"150","coin_type":"gold"}}""";
+        
+        Assert.Equal(200, GiftPriceExtractor.ExtractGoldSeeds("gift", payload));
+    }
+
+    [Fact]
+    public void ExtractGoldSeeds_ReturnsZero_WhenBothPriceAndDiscountPriceAreInvalid()
+    {
+        var payload = """{"data":{"price":"200","discount_price":"150","coin_type":"gold"}}""";
+        
+        Assert.Equal(0, GiftPriceExtractor.ExtractGoldSeeds("gift", payload));
+    }
 }
