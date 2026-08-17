@@ -15,6 +15,7 @@ public sealed class LiveEventRepository(IMongoDatabase database)
         long roomId, int page, int pageSize,
         IReadOnlyCollection<string>? types = null,
         DateTime? startedAt = null, DateTime? endedAt = null,
+        long? minPriceGoldSeeds = null,
         CancellationToken ct = default)
     {
         var filter = Builders<LiveEventRecord>.Filter.Eq(e => e.RoomId, roomId);
@@ -29,6 +30,12 @@ public sealed class LiveEventRepository(IMongoDatabase database)
         if (endedAt.HasValue)
         {
             filter &= Builders<LiveEventRecord>.Filter.Lte(e => e.OccurredAt, endedAt.Value);
+        }
+        if (minPriceGoldSeeds.HasValue)
+        {
+            var notGiftFilter = Builders<LiveEventRecord>.Filter.Ne(e => e.Type, "gift");
+            var priceFilter = Builders<LiveEventRecord>.Filter.Gte(e => e.Price, minPriceGoldSeeds.Value);
+            filter &= notGiftFilter | priceFilter;
         }
 
         var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);

@@ -19,4 +19,7 @@ public sealed class LiveEventRecord
 
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime OccurredAt { get; set; }
+
+    [BsonRepresentation(BsonType.Int64)]
+    public long Price { get; set; }
 }
