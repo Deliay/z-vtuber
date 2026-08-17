@@ -175,6 +175,64 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await meta.InsertOneAsync(new MetaRecord { Key = SpaceTimelinePubTsMigrationKey }, ct);
         logger.LogInformation("Space timeline PubTs backfill completed and marked as applied.");
     }
+
+    public const string GiftPriceBackfillMigrationKey = "live_event_gift_price_backfill_v2";
+
+    public async Task BackfillGiftPriceAsync(CancellationToken ct = default)
+    {
+        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == GiftPriceBackfillMigrationKey)
+            .AnyAsync(ct);
+        if (markerExists)
+        {
+            logger.LogInformation("Gift price backfill already applied; skipping.");
+            return;
+        }
+
+        const int batchSize = 500;
+        var collection = database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+
+        var filter = Builders<LiveEventRecord>.Filter.And(
+            Builders<LiveEventRecord>.Filter.Eq(e => e.Type, "gift"),
+            Builders<LiveEventRecord>.Filter.Or(
+                Builders<LiveEventRecord>.Filter.Not(Builders<LiveEventRecord>.Filter.Exists(e => e.Price)),
+                Builders<LiveEventRecord>.Filter.Eq(e => e.Price, 0L)));
+
+        long processed = batchSize;
+        do
+        {
+            var cursor = await collection.Find(filter)
+                .Project<LiveEventRecord>(Builders<LiveEventRecord>.Projection
+                    .Include(r => r.Id)
+                    .Include(r => r.Type)
+                    .Include(r => r.Payload))
+                .Limit(batchSize)
+                .ToCursorAsync(ct);
+
+            var batch = await cursor.ToListAsync(ct);
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            var models = new List<WriteModel<LiveEventRecord>>(batch.Count);
+            foreach (var record in batch)
+            {
+                var price = Live.GiftPriceExtractor.ExtractGoldSeeds(record.Type, record.Payload);
+                models.Add(new UpdateOneModel<LiveEventRecord>(
+                    Builders<LiveEventRecord>.Filter.Eq(r => r.Id, record.Id),
+                    Builders<LiveEventRecord>.Update.Set(r => r.Price, price)));
+            }
+
+            await collection.BulkWriteAsync(models, cancellationToken: ct);
+            logger.LogInformation("Backfilled gift price for {Count} records.", models.Count);
+            processed = batch.Count;
+        }
+        while (processed == batchSize);
+
+        await meta.InsertOneAsync(new MetaRecord { Key = GiftPriceBackfillMigrationKey }, ct);
+        logger.LogInformation("Gift price backfill completed and marked as applied.");
+    }
 }
 
 public sealed class MetaRecord

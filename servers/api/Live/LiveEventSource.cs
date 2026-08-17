@@ -130,6 +130,7 @@ public sealed class LiveEventSource(
                         Type = liveEvent.Type,
                         Payload = liveEvent.Payload,
                         OccurredAt = liveEvent.OccurredAt,
+                        Price = GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
                     }, ct);
 
                     bus.TryPublish(roomId, liveEvent);

@@ -72,6 +72,7 @@ public class BilibiliLiveController(
         [FromQuery] string[]? type = null,
         [FromQuery] DateTime? startedAt = null,
         [FromQuery] DateTime? endedAt = null,
+        [FromQuery] decimal? minPrice = null,
         CancellationToken ct = default)
     {
         if (BilibiliUserController.BadTimeRange(startedAt, endedAt))
@@ -79,11 +80,27 @@ public class BilibiliLiveController(
             return BadRequest(new { error = "startedAt must not be later than endedAt." });
         }
 
+        if (minPrice.HasValue && minPrice.Value < 0.01m)
+        {
+            return BadRequest(new { error = "minPrice must be at least 0.01." });
+        }
+
+        if (minPrice.HasValue && minPrice.Value > 9_000_000_000_000_000m)
+        {
+            return BadRequest(new { error = "minPrice is too large." });
+        }
+
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
 
+        long? minPriceGoldSeeds = null;
+        if (minPrice.HasValue)
+        {
+            minPriceGoldSeeds = (long)Math.Ceiling(minPrice.Value * 1000m);
+        }
+
         var types = NormalizeTypes(type);
-        var (total, items) = await liveEventRepository.GetPageAsync(roomId, page, pageSize, types, startedAt, endedAt, ct);
+        var (total, items) = await liveEventRepository.GetPageAsync(roomId, page, pageSize, types, startedAt, endedAt, minPriceGoldSeeds, ct);
         return Ok(new { total, page, pageSize, items = items.Select(ToEventDto) });
     }
 

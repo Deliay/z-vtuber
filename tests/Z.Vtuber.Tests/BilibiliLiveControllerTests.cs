@@ -175,12 +175,13 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
 
     private static readonly DateTime EventBaseDate = new(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
 
-    private static LiveEventRecord Event(string type, DateTime occurredAt) => new()
+    private static LiveEventRecord Event(string type, DateTime occurredAt, long price = 0) => new()
     {
         RoomId = 123456,
         Type = type,
         OccurredAt = occurredAt,
         Payload = "{}",
+        Price = price,
     };
 
     private static async Task SeedEvents(LiveEventRepository repository, params LiveEventRecord[] records)
@@ -419,5 +420,100 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
             index += value.Length;
         }
         return count;
+    }
+
+    [Fact]
+    public async Task GetEventsRange_MinPrice001_IsValid()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("gift", EventBaseDate.AddHours(1), price: 100),
+            Event("gift", EventBaseDate.AddHours(2), price: 50));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456, minPrice: 0.01m));
+
+        Assert.Equal(2, json.GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_MinPriceLessThan001_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.GetEventsRange(123456, minPrice: 0.001m);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var json = JsonSerializer.SerializeToElement(badRequest.Value);
+        Assert.Contains("minPrice must be at least 0.01", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_MinPriceZero_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.GetEventsRange(123456, minPrice: 0m);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task GetEventsRange_MinPriceNegative_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.GetEventsRange(123456, minPrice: -1m);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task GetEventsRange_MinPriceConversion_ToGoldSeeds()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("gift", EventBaseDate.AddHours(1), price: 10),
+            Event("gift", EventBaseDate.AddHours(2), price: 11),
+            Event("gift", EventBaseDate.AddHours(3), price: 9));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456, minPrice: 0.01m));
+
+        Assert.Equal(2, json.GetProperty("total").GetInt32());
+
+        var json2 = Ok(await CreateController(fixture.Database).GetEventsRange(123456, minPrice: 0.011m));
+        Assert.Equal(1, json2.GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_WithoutMinPrice_ReturnsAll()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("gift", EventBaseDate.AddHours(1), price: 100),
+            Event("gift", EventBaseDate.AddHours(2), price: 50),
+            Event("danmaku", EventBaseDate.AddHours(3)));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456));
+
+        Assert.Equal(3, json.GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_MinPrice_FiltersGiftOnly()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await SeedEvents(repository,
+            Event("gift", EventBaseDate.AddHours(1), price: 100),
+            Event("danmaku", EventBaseDate.AddHours(2)),
+            Event("gift", EventBaseDate.AddHours(3), price: 50));
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456, minPrice: 0.08m));
+
+        Assert.Equal(2, json.GetProperty("total").GetInt32());
+        Assert.All(json.GetProperty("items").EnumerateArray(), i =>
+        {
+            var type = i.GetProperty("type").GetString();
+            Assert.True(type == "danmaku" || type == "gift");
+        });
     }
 }

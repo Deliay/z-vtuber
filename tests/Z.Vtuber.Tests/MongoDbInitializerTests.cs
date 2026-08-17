@@ -111,4 +111,176 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
         var withPubTs = await collection.CountDocumentsAsync(r => r.PubTs != null);
         Assert.Equal(0, withPubTs);
     }
+
+    [Fact]
+    public async Task BackfillGiftPrice_PopulatesPrice_FromGoldGiftPayload()
+    {
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.InsertOneAsync(new LiveEventRecord
+        {
+            Type = "gift",
+            Payload = """{"data":{"price":5000,"coin_type":"gold"}}""",
+            Price = 0,
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+
+        var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal(5000, record.Price);
+    }
+
+    [Fact]
+    public async Task BackfillGiftPrice_LeavesSilverGiftAtZero()
+    {
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.InsertOneAsync(new LiveEventRecord
+        {
+            Type = "gift",
+            Payload = """{"data":{"price":100,"coin_type":"silver"}}""",
+            Price = 0,
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+
+        var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal(0, record.Price);
+    }
+
+    [Fact]
+    public async Task BackfillGiftPrice_SkipsNonGiftType()
+    {
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.InsertOneAsync(new LiveEventRecord
+        {
+            Type = "danmaku",
+            Payload = """{"data":{"price":100,"coin_type":"gold"}}""",
+            Price = 0,
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+
+        var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal(0, record.Price);
+    }
+
+    [Fact]
+    public async Task BackfillGiftPrice_IsIdempotent()
+    {
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.InsertOneAsync(new LiveEventRecord
+        {
+            Type = "gift",
+            Payload = """{"data":{"price":5000,"coin_type":"gold"}}""",
+            Price = 0,
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+        await initializer.BackfillGiftPriceAsync();
+
+        var count = await collection.CountDocumentsAsync(FilterDefinition<LiveEventRecord>.Empty);
+        Assert.Equal(1, count);
+        var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal(5000, record.Price);
+    }
+
+    [Fact]
+    public async Task BackfillGiftPrice_Marker_PreventsRerun()
+    {
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        await meta.InsertOneAsync(new MetaRecord { Key = MongoDbInitializer.GiftPriceBackfillMigrationKey });
+
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.InsertOneAsync(new LiveEventRecord
+        {
+            Type = "gift",
+            Payload = """{"data":{"price":5000,"coin_type":"gold"}}""",
+            Price = 0,
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+
+        var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal(0, record.Price);
+    }
+
+    [Fact]
+    public async Task BackfillGiftPrice_SkipsRecordsWithExistingPrice()
+    {
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.InsertOneAsync(new LiveEventRecord
+        {
+            Type = "gift",
+            Payload = """{"data":{"price":5000,"coin_type":"gold"}}""",
+            Price = 5000,
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+
+        var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal(5000, record.Price);
+    }
+
+    [Fact]
+    public async Task BackfillGiftPrice_HandlesInvalidPayloadGracefully()
+    {
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.InsertOneAsync(new LiveEventRecord
+        {
+            Type = "gift",
+            Payload = "invalid json",
+            Price = 0,
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+
+        var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal(0, record.Price);
+    }
+
+    [Fact]
+    public async Task BackfillGiftPrice_ProcessesLargeBatch()
+    {
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var docs = Enumerable.Range(0, 600)
+            .Select(i => new LiveEventRecord
+            {
+                Type = "gift",
+                Payload = """{"data":{"price":""" + (i + 1) + ""","coin_type":"gold"}}""",
+                Price = 0,
+            })
+            .ToList();
+        await collection.InsertManyAsync(docs);
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+
+        var count = await collection.CountDocumentsAsync(
+            Builders<LiveEventRecord>.Filter.Gt(e => e.Price, 0L));
+        Assert.Equal(600, count);
+    }
+
+    [Fact]
+    public async Task BackfillGiftPrice_PrefersDiscountPrice_WhenBothExist()
+    {
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.InsertOneAsync(new LiveEventRecord
+        {
+            Type = "gift",
+            Payload = """{"data":{"price":200,"discount_price":150,"coin_type":"gold"}}""",
+            Price = 0,
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+
+        var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal(150, record.Price);
+    }
 }

@@ -12,12 +12,13 @@ public class LiveEventRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
 
     private static readonly DateTime BaseDate = new(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
 
-    private static LiveEventRecord Event(long roomId, string type, DateTime occurredAt) => new()
+    private static LiveEventRecord Event(long roomId, string type, DateTime occurredAt, long price = 0) => new()
     {
         RoomId = roomId,
         Type = type,
         OccurredAt = occurredAt,
         Payload = "{}",
+        Price = price,
     };
 
     [Fact]
@@ -175,5 +176,135 @@ public class LiveEventRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
 
         Assert.Equal(0, total);
         Assert.Empty(items);
+    }
+
+    [Fact]
+    public async Task GetPage_MinPrice_FiltersGiftByPrice()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(1), price: 100));
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(2), price: 50));
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(3), price: 200));
+
+        var (total, items) = await repository.GetPageAsync(1, 1, 100, minPriceGoldSeeds: 100);
+
+        Assert.Equal(2, total);
+        Assert.All(items, i => Assert.True(i.Price >= 100));
+    }
+
+    [Fact]
+    public async Task GetPage_MinPrice_NonGiftType_NotFiltered()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await repository.InsertAsync(Event(1, "danmaku", BaseDate.AddHours(1), price: 0));
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(2), price: 100));
+        await repository.InsertAsync(Event(1, "super_chat", BaseDate.AddHours(3), price: 0));
+
+        var (total, items) = await repository.GetPageAsync(1, 1, 100, minPriceGoldSeeds: 100);
+
+        Assert.Equal(3, total);
+        Assert.Contains(items, i => i.Type == "danmaku");
+        Assert.Contains(items, i => i.Type == "gift");
+        Assert.Contains(items, i => i.Type == "super_chat");
+    }
+
+    [Fact]
+    public async Task GetPage_MinPrice_HistoricalRecords_PriceZero_Filtered()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(1), price: 0));
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(2), price: 100));
+
+        var (total, items) = await repository.GetPageAsync(1, 1, 100, minPriceGoldSeeds: 1);
+
+        Assert.Equal(1, total);
+        Assert.Single(items);
+        Assert.Equal(100, items[0].Price);
+    }
+
+    [Fact]
+    public async Task GetPage_MinPrice_WithTypeFilter_Combined()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(1), price: 100));
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(2), price: 50));
+        await repository.InsertAsync(Event(1, "danmaku", BaseDate.AddHours(3), price: 0));
+        await repository.InsertAsync(Event(1, "super_chat", BaseDate.AddHours(4), price: 0));
+
+        var (total, items) = await repository.GetPageAsync(1, 1, 100, ["gift"], minPriceGoldSeeds: 100);
+
+        Assert.Equal(1, total);
+        Assert.Single(items);
+        Assert.Equal("gift", items[0].Type);
+        Assert.Equal(100, items[0].Price);
+    }
+
+    [Fact]
+    public async Task GetPage_MinPrice_WithTimeRange_Combined()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(1), price: 100));
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(2), price: 50));
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(3), price: 200));
+
+        var (total, items) = await repository.GetPageAsync(
+            1, 1, 100, startedAt: BaseDate.AddHours(2), endedAt: BaseDate.AddHours(3), minPriceGoldSeeds: 100);
+
+        Assert.Equal(1, total);
+        Assert.Single(items);
+        Assert.Equal(200, items[0].Price);
+    }
+
+    [Fact]
+    public async Task GetPage_MinPrice_TotalMatchesFilteredCount()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        for (var i = 1; i <= 5; i++)
+        {
+            await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(i), price: i * 10));
+        }
+        await repository.InsertAsync(Event(1, "danmaku", BaseDate.AddHours(6), price: 0));
+
+        var (total, items) = await repository.GetPageAsync(1, 1, 2, minPriceGoldSeeds: 30);
+
+        Assert.Equal(4, total);
+        Assert.Equal(2, items.Count);
+    }
+
+    [Fact]
+    public async Task GetPage_MinPrice_PaginateWithoutOverlapOrGap()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        for (var i = 1; i <= 5; i++)
+        {
+            await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(i), price: i * 10));
+        }
+
+        var (total, page1) = await repository.GetPageAsync(1, 1, 2, minPriceGoldSeeds: 10);
+        var (_, page2) = await repository.GetPageAsync(1, 2, 2, minPriceGoldSeeds: 10);
+        var (_, page3) = await repository.GetPageAsync(1, 3, 2, minPriceGoldSeeds: 10);
+
+        Assert.Equal(5, total);
+        Assert.Equal(2, page1.Count);
+        Assert.Equal(2, page2.Count);
+        Assert.Single(page3);
+
+        var all = page1.Concat(page2).Concat(page3).Select(i => i.OccurredAt).ToArray();
+        Assert.Equal(5, all.Distinct().Count());
+        Assert.Equal(all.OrderByDescending(t => t).ToArray(), all);
+    }
+
+    [Fact]
+    public async Task GetPage_WithoutMinPrice_ReturnsAll()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(1), price: 100));
+        await repository.InsertAsync(Event(1, "gift", BaseDate.AddHours(2), price: 50));
+        await repository.InsertAsync(Event(1, "danmaku", BaseDate.AddHours(3), price: 0));
+
+        var (total, items) = await repository.GetPageAsync(1, 1, 100);
+
+        Assert.Equal(3, total);
+        Assert.Equal(3, items.Count);
     }
 }
