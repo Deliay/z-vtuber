@@ -176,7 +176,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         logger.LogInformation("Space timeline PubTs backfill completed and marked as applied.");
     }
 
-    public const string GiftPriceBackfillMigrationKey = "live_event_gift_price_backfill_v1";
+    public const string GiftPriceBackfillMigrationKey = "live_event_gift_price_backfill_v2";
 
     public async Task BackfillGiftPriceAsync(CancellationToken ct = default)
     {

@@ -265,4 +265,22 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
             Builders<LiveEventRecord>.Filter.Gt(e => e.Price, 0L));
         Assert.Equal(600, count);
     }
+
+    [Fact]
+    public async Task BackfillGiftPrice_PrefersDiscountPrice_WhenBothExist()
+    {
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.InsertOneAsync(new LiveEventRecord
+        {
+            Type = "gift",
+            Payload = """{"data":{"price":200,"discount_price":150,"coin_type":"gold"}}""",
+            Price = 0,
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillGiftPriceAsync();
+
+        var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal(150, record.Price);
+    }
 }
