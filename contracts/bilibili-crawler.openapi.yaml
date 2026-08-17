@@ -176,7 +176,7 @@ paths:
   /api/b/live/{roomId}/event/range:
     get:
       summary: 分页查询直播间事件
-      description: 按发生时间（occurredAt）降序分页查询直播间事件，可按事件类型（type）与可选时间范围（startedAt/endedAt，含起止边界）筛选；startedAt 晚于 endedAt 时返回 400。
+      description: 按发生时间（occurredAt）降序分页查询直播间事件，可按事件类型（type）与可选时间范围（startedAt/endedAt，含起止边界）筛选；支持按礼物金额下限（minPrice）筛选，仅作用于 gift 类型事件；startedAt 晚于 endedAt 或 minPrice 非法时返回 400。
       operationId: listLiveEventsRange
       parameters:
         - $ref: "#/components/parameters/RoomId"
@@ -185,6 +185,7 @@ paths:
         - $ref: "#/components/parameters/EventType"
         - $ref: "#/components/parameters/StartedAt"
         - $ref: "#/components/parameters/EndedAt"
+        - $ref: "#/components/parameters/MinPrice"
       responses:
         "200":
           description: 直播间事件分页（按 occurredAt 降序）
@@ -193,7 +194,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/LiveEventPage"
         "400":
-          description: 时间范围非法
+          description: 时间范围非法或 minPrice 非法（小于 0.01 或非数值）
 components:
   parameters:
     Mid:
@@ -254,6 +255,14 @@ components:
       schema:
         type: string
         format: date-time
+    MinPrice:
+      name: minPrice
+      in: query
+      required: false
+      description: 礼物金额下限（元），最小 0.01，含边界；仅作用于 gift 类型事件，其他类型不受影响；不传不限制；小于 0.01 或非数值返回 400。
+      schema:
+        type: number
+        minimum: 0.01
   schemas:
     CookieAddRequest:
       type: object
