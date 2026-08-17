@@ -166,3 +166,25 @@ fix: 修复验收报告中的4个问题
 3. `servers/api/Live/GiftPriceExtractor.cs` - 添加末尾换行符
 4. `tests/Z.Vtuber.Tests/GiftPriceExtractorTests.cs` - 添加末尾换行符
 5. `docs/engineering/fixes/20260817-fix-min-price-issues.md` - 新增修复文档
+
+**第二次提交信息**: 
+```
+feat: 添加历史数据清洗脚本，为历史gift记录补充Price字段
+
+- 在MongoDbInitializer.cs中新增BackfillGiftPriceAsync方法
+- 在Program.cs中启动时调用清洗方法
+- 新增8个测试用例验证清洗逻辑
+- 更新修复文档记录历史数据清洗方案
+
+测试结果：140/140全部通过
+```
+
+**提交哈希**: `4dc56ab`
+**分支**: `integration`
+**推送状态**: 已推送到远端 `origin/integration`
+
+**修改文件**:
+1. `servers/api/Persistence/MongoDbInitializer.cs` - 新增 `BackfillGiftPriceAsync` 方法
+2. `servers/api/Program.cs` - 启动时调用清洗方法
+3. `tests/Z.Vtuber.Tests/MongoDbInitializerTests.cs` - 新增8个测试用例
+4. `docs/engineering/fixes/20260817-fix-min-price-issues.md` - 更新修复文档
