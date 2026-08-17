@@ -194,7 +194,9 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         var filter = Builders<LiveEventRecord>.Filter.And(
             Builders<LiveEventRecord>.Filter.Eq(e => e.Type, "gift"),
-            Builders<LiveEventRecord>.Filter.Eq(e => e.Price, 0L));
+            Builders<LiveEventRecord>.Filter.Or(
+                Builders<LiveEventRecord>.Filter.Not(Builders<LiveEventRecord>.Filter.Exists(e => e.Price)),
+                Builders<LiveEventRecord>.Filter.Eq(e => e.Price, 0L)));
 
         long processed = batchSize;
         do
