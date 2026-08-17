@@ -219,21 +219,9 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             foreach (var record in batch)
             {
                 var price = Live.GiftPriceExtractor.ExtractGoldSeeds(record.Type, record.Payload);
-                if (price == 0)
-                {
-                    continue;
-                }
-
                 models.Add(new UpdateOneModel<LiveEventRecord>(
                     Builders<LiveEventRecord>.Filter.Eq(r => r.Id, record.Id),
                     Builders<LiveEventRecord>.Update.Set(r => r.Price, price)));
-            }
-
-            if (models.Count == 0)
-            {
-                logger.LogInformation(
-                    "Gift price backfill stopped: {Skipped} records in batch had no extractable price.", batch.Count);
-                break;
             }
 
             await collection.BulkWriteAsync(models, cancellationToken: ct);
