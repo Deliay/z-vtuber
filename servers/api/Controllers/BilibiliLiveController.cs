@@ -85,6 +85,11 @@ public class BilibiliLiveController(
             return BadRequest(new { error = "minPrice must be at least 0.01." });
         }
 
+        if (minPrice.HasValue && minPrice.Value > 9_000_000_000_000_000m)
+        {
+            return BadRequest(new { error = "minPrice is too large." });
+        }
+
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
 
