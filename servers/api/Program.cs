@@ -52,6 +52,7 @@ using (var scope = app.Services.CreateScope())
     var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
     await initializer.EnsureIndexesAsync();
     await initializer.BackfillSpaceTimelinePubTsAsync();
+    await initializer.BackfillGiftPriceAsync();
 }
 
 if (app.Environment.IsDevelopment())
