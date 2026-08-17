@@ -66,13 +66,20 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         return collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveStatusRecord>(keys), cancellationToken: ct);
     }
 
-    private Task EnsureLiveEventIndexesAsync(CancellationToken ct)
+    private async Task EnsureLiveEventIndexesAsync(CancellationToken ct)
     {
         var collection = database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
-        var keys = Builders<LiveEventRecord>.IndexKeys
+
+        var roomTimeKeys = Builders<LiveEventRecord>.IndexKeys
             .Ascending(e => e.RoomId)
             .Ascending(e => e.OccurredAt);
-        return collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(keys), cancellationToken: ct);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(roomTimeKeys), cancellationToken: ct);
+
+        var roomTypeTimeKeys = Builders<LiveEventRecord>.IndexKeys
+            .Ascending(e => e.RoomId)
+            .Ascending(e => e.Type)
+            .Descending(e => e.OccurredAt);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(roomTypeTimeKeys), cancellationToken: ct);
     }
 
     private async Task EnsureSpaceTimelineIndexesAsync(CancellationToken ct)
