@@ -106,3 +106,27 @@ PRD 功能点 3 写「支持两位小数以内的数值」，但实现接受任�
 - 历史数据price为0的处理
 
 **结论**: 所有修复已验证通过，无回归问题。
+
+## 代码提交
+
+**提交信息**: 
+```
+fix: 修复验收报告中的4个问题
+
+- P2: 添加minPrice上限校验，防止超大值导致OverflowException
+- P3: 修订PRD文档，明确支持任意精度小数
+- P4: 为GiftPriceExtractor.cs和测试文件添加末尾换行符
+
+测试结果：132/132全部通过
+```
+
+**提交哈希**: `b432546`
+**分支**: `integration`
+**推送状态**: 已推送到远端 `origin/integration`
+
+**修改文件**:
+1. `servers/api/Controllers/BilibiliLiveController.cs` - 添加minPrice上限校验
+2. `docs/product/draft/20260817-gift-min-price-filter-prd.md` - 修订PRD文档
+3. `servers/api/Live/GiftPriceExtractor.cs` - 添加末尾换行符
+4. `tests/Z.Vtuber.Tests/GiftPriceExtractorTests.cs` - 添加末尾换行符
+5. `docs/engineering/fixes/20260817-fix-min-price-issues.md` - 新增修复文档
