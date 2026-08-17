@@ -1,5 +1,5 @@
 ---
-description: 礼物事件金额筛选技术提案——event/range 新增 min_price 参数，礼物事件落库时提取金额（金瓜子），仓储层叠加金额过滤
+description: 礼物事件金额筛选技术提案——event/range 新增 minPrice 参数，礼物事件落库时提取金额（金瓜子），仓储层叠加金额过滤
 type: Permanent
 ---
 
@@ -25,7 +25,7 @@ type: Permanent
 
 ### 1.2 目标
 
-- `event/range` 新增可选参数 `min_price`（元，最小 0.01），仅过滤礼物（`gift`）类型事件，金额低于该值的礼物不返回；不传不限制。
+- `event/range` 新增可选参数 `minPrice`（元，最小 0.01），仅过滤礼物（`gift`）类型事件，金额低于该值的礼物不返回；不传不限制。
 - 礼物事件落库时提取金额到实体字段，仓储层用范围条件过滤，`total` 为筛选后真实条数。
 - 全程 TDD，核心逻辑单元测试覆盖率 ≥ 80%。
 
@@ -33,10 +33,10 @@ type: Permanent
 
 **做：**
 
-- `contracts/bilibili-crawler.openapi.yaml`：`event/range` 新增 `min_price` 参数契约。
+- `contracts/bilibili-crawler.openapi.yaml`：`event/range` 新增 `minPrice` 参数契约。
 - `LiveEventRecord` 新增 `Price` 字段（long，金瓜子）；落库链路从 payload 提取礼物金额。
 - `LiveEventRepository.GetPageAsync` 增加金额下限过滤。
-- `BilibiliLiveController` 的 `event/range` 端点接收、校验 `min_price` 并透传。
+- `BilibiliLiveController` 的 `event/range` 端点接收、校验 `minPrice` 并透传。
 - 仓储层、参数处理与提取逻辑的测试补齐。
 
 **不做：**
@@ -52,7 +52,7 @@ type: Permanent
 ```mermaid
 graph TD
     Client[调用方] --> API[BilibiliLiveController<br/>event/range]
-    API -->|min_price 校验/换算| LER[LiveEventRepository]
+    API -->|minPrice 校验/换算| LER[LiveEventRepository]
     LER --> M[(MongoDB<br/>bilibili_live_event)]
     LES[LiveEventSource 弹幕长连接] -->|落库时提取 Price| LER
 ```
@@ -70,7 +70,7 @@ graph TD
 
 | 模块 | 职责 | 关键技术点 |
 |------|------|-----------|
-| `Controllers/BilibiliLiveController` | `min_price` 接收与校验，元 → 金瓜子换算 | `decimal?` 绑定；`< 0.01` → 400；`Ceiling(min_price × 1000)` 转 long |
+| `Controllers/BilibiliLiveController` | `minPrice` 接收与校验，元 → 金瓜子换算 | `decimal?` 绑定；`< 0.01` → 400；`Ceiling(minPrice × 1000)` 转 long |
 | `Live/GiftPriceExtractor`（新增） | 从礼物 payload JSON 提取金额（金瓜子） | `System.Text.Json` 读 `data.price`，仅 `coin_type=gold` 计金额 |
 | `Live/LiveEventSource` | 落库时调用提取器填充 `Price` | 仅 `type == "gift"` 时提取，其余类型 `Price = 0` |
 | `Persistence/LiveEventRepository` | 组合金额下限过滤 | `Ne(Type, "gift") \| Gte(Price, threshold)`，Count 与 Find 共用过滤条件 |
@@ -87,20 +87,20 @@ graph TD
   - Query 参数（仅列新增，既有 `page`/`pageSize`/`type`/`startedAt`/`endedAt` 不变）：
     | 参数 | 类型 | 必填 | 说明 |
     |------|------|------|------|
-    | `min_price` | number | 否 | 礼物金额下限（元），最小 0.01；仅作用于 `gift` 类型事件，含边界；不传不限制 |
+    | `minPrice` | number | 否 | 礼物金额下限（元），最小 0.01；仅作用于 `gift` 类型事件，含边界；不传不限制 |
 - **响应**：200 + 既有分页结构（`total`/`page`/`pageSize`/`items`），结构不变。
-- **过滤语义**：`min_price` 传入时，礼物事件需满足「金额 ≥ min_price」才返回；非礼物类型事件不受 `min_price` 影响，照常返回。
-- **错误**：`min_price < 0.01` 或无法解析为数值 → 400：
+- **过滤语义**：`minPrice` 传入时，礼物事件需满足「金额 ≥ minPrice」才返回；非礼物类型事件不受 `minPrice` 影响，照常返回。
+- **错误**：`minPrice < 0.01` 或无法解析为数值 → 400：
   ```json
-  { "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1", "title": "Bad Request", "status": 400, "detail": "min_price must be at least 0.01." }
+  { "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1", "title": "Bad Request", "status": 400, "detail": "minPrice must be at least 0.01." }
   ```
 
 #### 请求/响应示例
 
-- `GET /api/b/live/1727076670/event/range?type=gift&min_price=10&page=1&pageSize=20` → 200，仅含金额 ≥ 10 元的礼物事件，`total` 为筛选后真实条数。
-- `GET /api/b/live/1727076670/event/range?type=danmaku&type=gift&min_price=10` → 200，弹幕照常返回，礼物仅返回金额 ≥ 10 元部分。
-- `GET /api/b/live/1727076670/event/range?type=gift` （不传 `min_price`）→ 200，全部礼物事件，与现状一致。
-- `GET /api/b/live/1727076670/event/range?min_price=0.001` → 400。
+- `GET /api/b/live/1727076670/event/range?type=gift&minPrice=10&page=1&pageSize=20` → 200，仅含金额 ≥ 10 元的礼物事件，`total` 为筛选后真实条数。
+- `GET /api/b/live/1727076670/event/range?type=danmaku&type=gift&minPrice=10` → 200，弹幕照常返回，礼物仅返回金额 ≥ 10 元部分。
+- `GET /api/b/live/1727076670/event/range?type=gift` （不传 `minPrice`）→ 200，全部礼物事件，与现状一致。
+- `GET /api/b/live/1727076670/event/range?minPrice=0.001` → 400。
 
 ### 3.2 内部接口
 
@@ -128,7 +128,7 @@ static long ExtractGoldSeeds(string type, string payload);
 |------|------|------|
 | Price | long | 礼物金额（金瓜子，1 元 = 1000 金瓜子）；仅 `gift` 类型写入，其余类型与历史缺省记录视为 0 |
 
-- 历史数据不回填：缺省 `Price` 的既有记录按 0 处理，传入 `min_price` 时不返回（PRD 3.5 已明确）。
+- 历史数据不回填：缺省 `Price` 的既有记录按 0 处理，传入 `minPrice` 时不返回（PRD 3.5 已明确）。
 - 索引：复用既有 `RoomId asc + OccurredAt asc`，不新增索引（见 6.1 决策）。
 
 ### 4.2 缓存设计
@@ -146,9 +146,9 @@ sequenceDiagram
     participant R as LiveEventRepository
     participant M as MongoDB
 
-    C->>API: GET /event/range?type=gift&min_price=10&page=1&pageSize=20
-    API->>API: clamp page/pageSize；校验 min_price >= 0.01（否则 400）
-    API->>API: 换算 threshold = Ceiling(min_price × 1000) 金瓜子
+    C->>API: GET /event/range?type=gift&minPrice=10&page=1&pageSize=20
+    API->>API: clamp page/pageSize；校验 minPrice >= 0.01（否则 400）
+    API->>API: 换算 threshold = Ceiling(minPrice × 1000) 金瓜子
     API->>R: GetPageAsync(roomId, page, pageSize, types, startedAt, endedAt, threshold)
     R->>M: Count + Find(RoomId + In(Type) + OccurredAt range + (Type != gift OR Price >= threshold))
     M-->>R: (total, items)
@@ -167,8 +167,8 @@ sequenceDiagram
 
 #### 实现点 2: 参数校验与换算
 
-- **描述**: Controller 以 `[FromQuery] decimal? min_price` 接收（参数名按需求约定为蛇形 `min_price`）；`< 0.01m` → 400 `min_price must be at least 0.01.`；换算 `threshold = (long)Math.Ceiling(min_price.Value * 1000m)`，用 `decimal` 运算避免浮点误差；换算结果传入仓储。
-- **风险点**: OpenAPI 契约中该参数需与需求命名严格一致（`min_price`），不随既有 camelCase 参数风格改名。
+- **描述**: Controller 以 `[FromQuery] decimal? minPrice` 接收（camelCase，与既有 `pageSize`/`startedAt` 等参数风格一致）；`< 0.01m` → 400 `minPrice must be at least 0.01.`；换算 `threshold = (long)Math.Ceiling(minPrice.Value * 1000m)`，用 `decimal` 运算避免浮点误差；换算结果传入仓储。
+- **风险点**: OpenAPI 契约中该参数命名为 camelCase `minPrice`，与既有查询参数风格统一。
 
 #### 实现点 3: 仓储层金额过滤
 
@@ -184,7 +184,7 @@ sequenceDiagram
 | 金额存储形式 | 提取为独立字段（金瓜子 long） | 查询时 `$where`/聚合解析 payload JSON | A | JSON 字符串内数值无法走索引且解析代价高；独立字段过滤简单高效 |
 | 金额单位 | 存金瓜子（long） | 存元（decimal/double） | A | 源数据即金瓜子整数，避免浮点精度问题；换算集中在 Controller 单点 |
 | 历史数据处理 | 不回填，缺省按 0 | 启动时解析 payload 幂等回填 | A | PRD 已明确「历史缺金额信息视为 0」语义；回填需全量解析历史 payload，代价大于收益 |
-| min_price 作用范围 | 仅过滤 gift 类型，其他类型不受影响 | 传入 min_price 时强制只返回 gift | A | PRD 明确语义；与其他筛选条件正交叠加，行为可预期 |
+| minPrice 作用范围 | 仅过滤 gift 类型，其他类型不受影响 | 传入 minPrice 时强制只返回 gift | A | PRD 明确语义；与其他筛选条件正交叠加，行为可预期 |
 | 是否新增金额索引 | 复用既有 `RoomId+OccurredAt` | 新增 `RoomId+Type+Price` 复合索引 | A | 主谓词 `RoomId` 等值已大幅收敛扫描范围；单直播间单场事件量级（十万级）下范围过滤代价可接受，后续实测不达标再补 |
 | 提取时机 | 落库时提取 | 查询时提取 | A | 一次提取多次查询；查询路径零额外开销 |
 
@@ -193,7 +193,7 @@ sequenceDiagram
 | 类型 | 内容 | 说明 |
 |------|------|------|
 | 依赖 | 礼物事件原始 payload 含 `data.price`/`data.coin_type` | Mikibot 弹幕长连接 `SEND_GIFT`/`COMBO_SEND` 原始 JSON |
-| 约束 | 参数命名 `min_price`、最小 0.01、不传不限制 | 需求约定，不可更改 |
+| 约束 | 参数命名 `minPrice`、最小 0.01、不传不限制 | 需求约定，不可更改 |
 | 约束 | 契约先行 | 先更新 `contracts/bilibili-crawler.openapi.yaml` 再实现 |
 | 约束 | TDD，核心逻辑覆盖率 ≥ 80% | `docs/engineering/common-rules.md` |
 
@@ -202,7 +202,7 @@ sequenceDiagram
 ```
 servers/api/
 ├── Controllers/
-│   └── BilibiliLiveController.cs        # event/range 接收/校验 min_price，元→金瓜子换算
+│   └── BilibiliLiveController.cs        # event/range 接收/校验 minPrice，元→金瓜子换算
 ├── Live/
 │   ├── GiftPriceExtractor.cs            # 新增：从礼物 payload 提取金额（金瓜子）
 │   └── LiveEventSource.cs               # 落库时填充 Price
@@ -210,7 +210,7 @@ servers/api/
 │   ├── Entities/LiveEventRecord.cs      # 新增 Price 字段
 │   └── LiveEventRepository.cs           # GetPageAsync 增加金额下限过滤
 contracts/
-└── bilibili-crawler.openapi.yaml        # event/range 新增 min_price 参数契约
+└── bilibili-crawler.openapi.yaml        # event/range 新增 minPrice 参数契约
 tests/Z.Vtuber.Tests/                    # 提取逻辑/参数校验/组合过滤边界测试
 ```
 
@@ -226,9 +226,9 @@ tests/Z.Vtuber.Tests/                    # 提取逻辑/参数校验/组合过�
 | 类型 | 工具 | 覆盖范围 |
 |------|------|---------|
 | 单元测试（金额提取） | xUnit | 付费礼物提取正确、免费礼物（silver）→ 0、非 gift 类型 → 0、payload 解析失败 → 0 |
-| 单元测试（参数处理） | xUnit | `min_price` 元→金瓜子换算（含 Ceiling）、`< 0.01` → 400、边界 0.01 合法 |
-| 集成测试（仓储层） | xUnit + Testcontainers Mongo | 金额含边界过滤、min_price 与 type/时间叠加、非 gift 类型不受限、缺省 Price（历史记录）按 0 处理、total 正确、翻页不重不漏 |
-| API 测试 | z-test 工作流 | `type=gift&min_price` 筛选、不传 `min_price` 行为回归、`min_price < 0.01` → 400 |
+| 单元测试（参数处理） | xUnit | `minPrice` 元→金瓜子换算（含 Ceiling）、`< 0.01` → 400、边界 0.01 合法 |
+| 集成测试（仓储层） | xUnit + Testcontainers Mongo | 金额含边界过滤、minPrice 与 type/时间叠加、非 gift 类型不受限、缺省 Price（历史记录）按 0 处理、total 正确、翻页不重不漏 |
+| API 测试 | z-test 工作流 | `type=gift&minPrice` 筛选、不传 `minPrice` 行为回归、`minPrice < 0.01` → 400 |
 
 ## 9. 部署方案
 
@@ -246,7 +246,7 @@ tests/Z.Vtuber.Tests/                    # 提取逻辑/参数校验/组合过�
 ## 10. 验收标准
 
 - [ ] 技术方案评审通过
-- [ ] Contract 评审通过（`event/range` 新增 `min_price` 参数）
+- [ ] Contract 评审通过（`event/range` 新增 `minPrice` 参数）
 - [ ] 代码实现完成
 - [ ] 单元测试覆盖达标（≥80%）
 - [ ] API 测试通过（金额筛选 + 不传参数兼容性回归）
