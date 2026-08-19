@@ -195,6 +195,25 @@ paths:
                 $ref: "#/components/schemas/LiveEventPage"
         "400":
           description: 时间范围非法或 minPrice 非法（小于 0.01 或非数值）
+  /api/b/live/{roomId}/event/search:
+    get:
+      summary: 搜索直播间文字事件（弹幕/SC）
+      description: 在弹幕和醒目留言（SC）的纯文本内容中进行全文检索，按发生时间（occurredAt）降序分页返回匹配的事件。搜索范围仅限弹幕（danmaku）和醒目留言（super_chat）类型。
+      operationId: searchLiveEvents
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/StringCriteria"
+      responses:
+        "200":
+          description: 搜索结果分页（按 occurredAt 降序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveEventPage"
+        "400":
+          description: stringCriteria 非法（缺失、空串、纯空白、超过 200 字符）
 components:
   parameters:
     Mid:
@@ -263,6 +282,14 @@ components:
       schema:
         type: number
         minimum: 0.01
+    StringCriteria:
+      name: stringCriteria
+      in: query
+      required: true
+      description: 搜索关键词，在弹幕/SC 纯文本中全文检索；非空且非纯空白，最长 200 字符；缺失、为空、仅空白或超长返回 400。
+      schema:
+        type: string
+        maxLength: 200
   schemas:
     CookieAddRequest:
       type: object
