@@ -13,6 +13,7 @@ public class BilibiliLiveController(
     LiveStatusRepository liveStatusRepository,
     LiveEventRepository liveEventRepository,
     LiveSessionRepository liveSessionRepository,
+    LiveEventTextIndexRepository textIndexRepository,
     ILiveEventBus eventBus) : ControllerBase
 {
     [HttpGet("{roomId}/state/all")]
@@ -102,6 +103,45 @@ public class BilibiliLiveController(
         var types = NormalizeTypes(type);
         var (total, items) = await liveEventRepository.GetPageAsync(roomId, page, pageSize, types, startedAt, endedAt, minPriceGoldSeeds, ct);
         return Ok(new { total, page, pageSize, items = items.Select(ToEventDto) });
+    }
+
+    [HttpGet("{roomId}/event/search")]
+    public async Task<IActionResult> SearchEvents(
+        long roomId,
+        [FromQuery] string? stringCriteria = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        // 校验 stringCriteria：缺失、空串、纯空白或超过 200 字符 → 400
+        if (string.IsNullOrWhiteSpace(stringCriteria) || stringCriteria.Length > 200)
+        {
+            return BadRequest(new { error = "stringCriteria must be non-empty and at most 200 characters." });
+        }
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        // 搜索文本索引集合
+        var (total, textIndexRecords) = await textIndexRepository.SearchAsync(roomId, stringCriteria, page, pageSize, ct);
+
+        if (textIndexRecords.Count == 0)
+        {
+            return Ok(new { total, page, pageSize, items = Array.Empty<object>() });
+        }
+
+        // 获取对应的事件记录
+        var eventIds = textIndexRecords.Select(r => r.EventId).ToList();
+        var events = await liveEventRepository.GetByIdsAsync(eventIds, ct);
+        var eventDict = events.ToDictionary(e => e.Id);
+
+        // 按索引记录的 OccurredAt/Id 顺序还原排序
+        var sortedEvents = textIndexRecords
+            .Where(r => eventDict.ContainsKey(r.EventId))
+            .Select(r => eventDict[r.EventId])
+            .ToList();
+
+        return Ok(new { total, page, pageSize, items = sortedEvents.Select(ToEventDto) });
     }
 
     [HttpGet("{roomId}/event/subscribe")]

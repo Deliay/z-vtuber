@@ -21,6 +21,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
         new LiveStatusRepository(database),
         new LiveEventRepository(database),
         new LiveSessionRepository(database),
+        new LiveEventTextIndexRepository(database),
         new LiveEventBus());
 
     private static LiveSessionRecord Session(string liveId, DateTime startDate, bool isFinish = true) => new()
@@ -346,6 +347,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
             new LiveStatusRepository(fixture.Database),
             new LiveEventRepository(fixture.Database),
             new LiveSessionRepository(fixture.Database),
+            new LiveEventTextIndexRepository(fixture.Database),
             bus);
 
         var content = await RunSubscribeAsync(controller, bus, 123456, ["danmaku"],
@@ -367,6 +369,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
             new LiveStatusRepository(fixture.Database),
             new LiveEventRepository(fixture.Database),
             new LiveSessionRepository(fixture.Database),
+            new LiveEventTextIndexRepository(fixture.Database),
             bus);
 
         var content = await RunSubscribeAsync(controller, bus, 123456, null,

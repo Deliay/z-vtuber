@@ -13,6 +13,7 @@ public sealed class MongoCollectionNames
     public const string SpaceTimeline = "bilibili_user_space_timeline";
     public const string LiveSession = "bilibili_live_session";
     public const string Meta = "zvtuber_meta";
+    public const string LiveEventTextIndex = "bilibili_live_event_text_index";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -28,6 +29,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureLiveEventIndexesAsync(ct);
         await EnsureSpaceTimelineIndexesAsync(ct);
         await EnsureLiveSessionIndexesAsync(ct);
+        await EnsureLiveEventTextIndexAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -87,6 +89,34 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Ascending(e => e.Price)
             .Descending(e => e.OccurredAt);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(roomTypePriceTimeKeys), cancellationToken: ct);
+
+        // 新增索引：RoomId asc + OccurredAt desc + Type asc 复合索引，用于多 type 查询性能优化
+        var roomOccurredAtTypeKeys = Builders<LiveEventRecord>.IndexKeys
+            .Ascending(e => e.RoomId)
+            .Descending(e => e.OccurredAt)
+            .Ascending(e => e.Type);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(roomOccurredAtTypeKeys), cancellationToken: ct);
+    }
+
+    private async Task EnsureLiveEventTextIndexAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+
+        // 创建 { RoomId: 1, Text: "text" } 复合全文索引
+        var textIndexKeys = Builders<LiveEventTextIndexRecord>.IndexKeys
+            .Ascending(r => r.RoomId)
+            .Text(r => r.Text);
+        var textIndexOptions = new CreateIndexOptions { Name = "RoomId_Text_text" };
+        await collection.Indexes.CreateOneAsync(
+            new CreateIndexModel<LiveEventTextIndexRecord>(textIndexKeys, textIndexOptions),
+            cancellationToken: ct);
+
+        // 创建 EventId asc 唯一索引
+        var eventIdKeys = Builders<LiveEventTextIndexRecord>.IndexKeys.Ascending(r => r.EventId);
+        var eventIdOptions = new CreateIndexOptions { Unique = true };
+        await collection.Indexes.CreateOneAsync(
+            new CreateIndexModel<LiveEventTextIndexRecord>(eventIdKeys, eventIdOptions),
+            cancellationToken: ct);
     }
 
     private async Task EnsureSpaceTimelineIndexesAsync(CancellationToken ct)
@@ -246,6 +276,90 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         await meta.InsertOneAsync(new MetaRecord { Key = GiftPriceBackfillMigrationKey }, ct);
         logger.LogInformation("Gift price backfill completed and marked as applied.");
+    }
+
+    public const string LiveEventTextIndexBackfillMigrationKey = "live_event_text_index_backfill_v1";
+
+    public async Task BackfillLiveEventTextIndexAsync(CancellationToken ct = default)
+    {
+        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == LiveEventTextIndexBackfillMigrationKey)
+            .AnyAsync(ct);
+        if (markerExists)
+        {
+            logger.LogInformation("Live event text index backfill already applied; skipping.");
+            return;
+        }
+
+        const int batchSize = 500;
+        var eventCollection = database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var textIndexCollection = database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+
+        // 筛选弹幕和醒目留言事件
+        var filter = Builders<LiveEventRecord>.Filter.In(e => e.Type, new[] { "danmaku", "super_chat" });
+
+        long processed = batchSize;
+        do
+        {
+            var cursor = await eventCollection.Find(filter)
+                .Project<LiveEventRecord>(Builders<LiveEventRecord>.Projection
+                    .Include(r => r.Id)
+                    .Include(r => r.Type)
+                    .Include(r => r.Payload)
+                    .Include(r => r.RoomId)
+                    .Include(r => r.OccurredAt))
+                .Limit(batchSize)
+                .ToCursorAsync(ct);
+
+            var batch = await cursor.ToListAsync(ct);
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            var models = new List<WriteModel<LiveEventTextIndexRecord>>(batch.Count);
+            foreach (var record in batch)
+            {
+                var text = Live.LiveEventTextExtractor.ExtractText(record.Type, record.Payload);
+                if (text is null)
+                {
+                    continue;
+                }
+
+                var textIndexRecord = new LiveEventTextIndexRecord
+                {
+                    EventId = record.Id,
+                    RoomId = record.RoomId,
+                    Type = record.Type,
+                    Text = text,
+                    OccurredAt = record.OccurredAt
+                };
+
+                // 使用 upsert，唯一索引兜底幂等
+                var upsert = new ReplaceOneModel<LiveEventTextIndexRecord>(
+                    Builders<LiveEventTextIndexRecord>.Filter.Eq(r => r.EventId, record.Id),
+                    textIndexRecord)
+                {
+                    IsUpsert = true
+                };
+                models.Add(upsert);
+            }
+
+            if (models.Count == 0)
+            {
+                logger.LogInformation(
+                    "Backfill stopped: {Skipped} records in batch had no extractable text.", batch.Count);
+                break;
+            }
+
+            await textIndexCollection.BulkWriteAsync(models, cancellationToken: ct);
+            logger.LogInformation("Backfilled live event text index for {Count} records.", models.Count);
+            processed = batch.Count;
+        }
+        while (processed == batchSize);
+
+        await meta.InsertOneAsync(new MetaRecord { Key = LiveEventTextIndexBackfillMigrationKey }, ct);
+        logger.LogInformation("Live event text index backfill completed and marked as applied.");
     }
 }
 

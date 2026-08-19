@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Z.Vtuber.Persistence.Entities;
 
@@ -39,11 +40,26 @@ public sealed class LiveEventRepository(IMongoDatabase database)
         }
 
         var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);
+
+        var sort = Builders<LiveEventRecord>.Sort.Descending(e => e.OccurredAt);
         var items = await _collection.Find(filter)
-            .SortByDescending(e => e.OccurredAt)
+            .Sort(sort)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
             .ToListAsync(ct);
         return (total, items);
+    }
+
+    public async Task<IReadOnlyList<LiveEventRecord>> GetByIdsAsync(
+        IReadOnlyCollection<ObjectId> ids,
+        CancellationToken ct = default)
+    {
+        if (ids.Count == 0)
+        {
+            return Array.Empty<LiveEventRecord>();
+        }
+
+        var filter = Builders<LiveEventRecord>.Filter.In(e => e.Id, ids);
+        return await _collection.Find(filter).ToListAsync(ct);
     }
 }
