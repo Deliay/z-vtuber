@@ -519,4 +519,210 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
             Assert.True(type == "danmaku" || type == "gift");
         });
     }
+
+    [Fact]
+    public async Task SearchEvents_ReturnsMatchingResults()
+    {
+        var textIndexRepository = new LiveEventTextIndexRepository(fixture.Database);
+        var eventRepository = new LiveEventRepository(fixture.Database);
+
+        // 插入事件
+        var event1 = Event("danmaku", EventBaseDate.AddHours(1));
+        var event2 = Event("danmaku", EventBaseDate.AddHours(2));
+        await eventRepository.InsertAsync(event1);
+        await eventRepository.InsertAsync(event2);
+
+        // 插入文本索引
+        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        {
+            EventId = event1.Id,
+            RoomId = 123456,
+            Type = "danmaku",
+            Text = "Hello World",
+            OccurredAt = event1.OccurredAt,
+        });
+        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        {
+            EventId = event2.Id,
+            RoomId = 123456,
+            Type = "danmaku",
+            Text = "Goodbye World",
+            OccurredAt = event2.OccurredAt,
+        });
+
+        var json = Ok(await CreateController(fixture.Database).SearchEvents(123456, stringCriteria: "Hello"));
+
+        Assert.Equal(1, json.GetProperty("total").GetInt32());
+        var items = json.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Single(items);
+    }
+
+    [Fact]
+    public async Task SearchEvents_EmptyStringCriteria_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.SearchEvents(123456, stringCriteria: "");
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var json = JsonSerializer.SerializeToElement(badRequest.Value);
+        Assert.Contains("stringCriteria must be non-empty", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task SearchEvents_NullStringCriteria_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.SearchEvents(123456, stringCriteria: null);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var json = JsonSerializer.SerializeToElement(badRequest.Value);
+        Assert.Contains("stringCriteria must be non-empty", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task SearchEvents_WhitespaceStringCriteria_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.SearchEvents(123456, stringCriteria: "   ");
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var json = JsonSerializer.SerializeToElement(badRequest.Value);
+        Assert.Contains("stringCriteria must be non-empty", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task SearchEvents_StringCriteriaOver200Chars_ReturnsBadRequest()
+    {
+        var controller = CreateController(fixture.Database);
+        var longCriteria = new string('a', 201);
+
+        var result = await controller.SearchEvents(123456, stringCriteria: longCriteria);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var json = JsonSerializer.SerializeToElement(badRequest.Value);
+        Assert.Contains("at most 200 characters", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task SearchEvents_StringCriteriaExactly200Chars_IsValid()
+    {
+        var textIndexRepository = new LiveEventTextIndexRepository(fixture.Database);
+        var eventRepository = new LiveEventRepository(fixture.Database);
+
+        var event1 = Event("danmaku", EventBaseDate.AddHours(1));
+        await eventRepository.InsertAsync(event1);
+
+        var criteria200 = new string('a', 200);
+        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        {
+            EventId = event1.Id,
+            RoomId = 123456,
+            Type = "danmaku",
+            Text = criteria200,
+            OccurredAt = event1.OccurredAt,
+        });
+
+        var json = Ok(await CreateController(fixture.Database).SearchEvents(123456, stringCriteria: criteria200));
+
+        Assert.Equal(1, json.GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task SearchEvents_NoMatch_ReturnsEmptyWithTotalZero()
+    {
+        var textIndexRepository = new LiveEventTextIndexRepository(fixture.Database);
+        var eventRepository = new LiveEventRepository(fixture.Database);
+
+        var event1 = Event("danmaku", EventBaseDate.AddHours(1));
+        await eventRepository.InsertAsync(event1);
+
+        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        {
+            EventId = event1.Id,
+            RoomId = 123456,
+            Type = "danmaku",
+            Text = "Hello World",
+            OccurredAt = event1.OccurredAt,
+        });
+
+        var json = Ok(await CreateController(fixture.Database).SearchEvents(123456, stringCriteria: "NotExist"));
+
+        Assert.Equal(0, json.GetProperty("total").GetInt32());
+        Assert.Equal(0, json.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task SearchEvents_PageBeyondRange_ReturnsEmptyWithRealTotal()
+    {
+        var textIndexRepository = new LiveEventTextIndexRepository(fixture.Database);
+        var eventRepository = new LiveEventRepository(fixture.Database);
+
+        var event1 = Event("danmaku", EventBaseDate.AddHours(1));
+        await eventRepository.InsertAsync(event1);
+
+        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        {
+            EventId = event1.Id,
+            RoomId = 123456,
+            Type = "danmaku",
+            Text = "Hello World",
+            OccurredAt = event1.OccurredAt,
+        });
+
+        var json = Ok(await CreateController(fixture.Database).SearchEvents(123456, stringCriteria: "Hello", page: 5, pageSize: 20));
+
+        Assert.Equal(1, json.GetProperty("total").GetInt32());
+        Assert.Equal(0, json.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task SearchEvents_ResultsSortedByOccurredAtDesc()
+    {
+        var textIndexRepository = new LiveEventTextIndexRepository(fixture.Database);
+        var eventRepository = new LiveEventRepository(fixture.Database);
+
+        var event1 = Event("danmaku", EventBaseDate.AddHours(1));
+        var event2 = Event("danmaku", EventBaseDate.AddHours(3));
+        var event3 = Event("danmaku", EventBaseDate.AddHours(2));
+        await eventRepository.InsertAsync(event1);
+        await eventRepository.InsertAsync(event2);
+        await eventRepository.InsertAsync(event3);
+
+        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        {
+            EventId = event1.Id,
+            RoomId = 123456,
+            Type = "danmaku",
+            Text = "Hello World",
+            OccurredAt = event1.OccurredAt,
+        });
+        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        {
+            EventId = event2.Id,
+            RoomId = 123456,
+            Type = "danmaku",
+            Text = "Hello World",
+            OccurredAt = event2.OccurredAt,
+        });
+        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        {
+            EventId = event3.Id,
+            RoomId = 123456,
+            Type = "danmaku",
+            Text = "Hello World",
+            OccurredAt = event3.OccurredAt,
+        });
+
+        var json = Ok(await CreateController(fixture.Database).SearchEvents(123456, stringCriteria: "Hello"));
+
+        Assert.Equal(3, json.GetProperty("total").GetInt32());
+        var items = json.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Equal(3, items.Length);
+        Assert.Equal(EventBaseDate.AddHours(3), items[0].GetProperty("occurredAt").GetDateTime());
+        Assert.Equal(EventBaseDate.AddHours(2), items[1].GetProperty("occurredAt").GetDateTime());
+        Assert.Equal(EventBaseDate.AddHours(1), items[2].GetProperty("occurredAt").GetDateTime());
+    }
 }

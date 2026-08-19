@@ -296,22 +296,28 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var textIndexCollection = database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
 
         // 筛选弹幕和醒目留言事件
-        var filter = Builders<LiveEventRecord>.Filter.In(e => e.Type, new[] { "danmaku", "super_chat" });
+        var typeFilter = Builders<LiveEventRecord>.Filter.In(e => e.Type, new[] { "danmaku", "super_chat" });
 
-        long processed = batchSize;
-        do
+        // 使用基于 _id 的游标分页，避免死循环
+        MongoDB.Bson.ObjectId lastId = MongoDB.Bson.ObjectId.Empty;
+        long totalProcessed = 0;
+
+        while (true)
         {
-            var cursor = await eventCollection.Find(filter)
+            var idFilter = Builders<LiveEventRecord>.Filter.Gt(e => e.Id, lastId);
+            var combinedFilter = Builders<LiveEventRecord>.Filter.And(typeFilter, idFilter);
+
+            var batch = await eventCollection.Find(combinedFilter)
                 .Project<LiveEventRecord>(Builders<LiveEventRecord>.Projection
                     .Include(r => r.Id)
                     .Include(r => r.Type)
                     .Include(r => r.Payload)
                     .Include(r => r.RoomId)
                     .Include(r => r.OccurredAt))
+                .SortBy(e => e.Id)
                 .Limit(batchSize)
-                .ToCursorAsync(ct);
+                .ToListAsync(ct);
 
-            var batch = await cursor.ToListAsync(ct);
             if (batch.Count == 0)
             {
                 break;
@@ -328,6 +334,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
                 var textIndexRecord = new LiveEventTextIndexRecord
                 {
+                    Id = MongoDB.Bson.ObjectId.GenerateNewId(),
                     EventId = record.Id,
                     RoomId = record.RoomId,
                     Type = record.Type,
@@ -345,18 +352,23 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                 models.Add(upsert);
             }
 
-            if (models.Count == 0)
+            if (models.Count > 0)
             {
-                logger.LogInformation(
-                    "Backfill stopped: {Skipped} records in batch had no extractable text.", batch.Count);
-                break;
+                await textIndexCollection.BulkWriteAsync(models, cancellationToken: ct);
+                logger.LogInformation("Backfilled live event text index for {Count} records.", models.Count);
             }
 
-            await textIndexCollection.BulkWriteAsync(models, cancellationToken: ct);
-            logger.LogInformation("Backfilled live event text index for {Count} records.", models.Count);
-            processed = batch.Count;
+            lastId = batch[^1].Id;
+            totalProcessed += batch.Count;
+
+            // 如果本批不足 batchSize，说明已到末尾
+            if (batch.Count < batchSize)
+            {
+                break;
+            }
         }
-        while (processed == batchSize);
+
+        logger.LogInformation("Backfill total processed {Total} events.", totalProcessed);
 
         await meta.InsertOneAsync(new MetaRecord { Key = LiveEventTextIndexBackfillMigrationKey }, ct);
         logger.LogInformation("Live event text index backfill completed and marked as applied.");
