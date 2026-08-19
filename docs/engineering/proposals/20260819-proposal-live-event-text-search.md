@@ -7,8 +7,9 @@ type: Permanent
 
 **功能名称**: 直播文字事件搜索
 **关联 PRD**: `docs/product/draft/20260819-live-event-text-search-prd.md`
-**技术提案版本**: v1.0
+**技术提案版本**: v1.1
 **创建日期**: 2026-08-19
+**修订记录**: v1.1（2026-08-19）依据评审意见，通过内网已部署环境（`http://vtuber.internal.fffdan.com`）拉取真实弹幕/SC 数据验证纯文本提取路径，结论见 5.2 实现点 1 与 8.2
 **作者**: Deliay
 **feat-branch**: `prd/live-event-text-search`（需求总分支；实现分支另行切出）
 
@@ -218,7 +219,10 @@ sequenceDiagram
 #### 实现点 1: 纯文本提取
 
 - **描述**: `LiveEventTextExtractor` 用 `JsonDocument` 解析 payload：弹幕取 `info[1]`（`DANMU_MSG` 协议第二位为弹幕内容），SC 取 `data.message`；仅 `danmaku`/`super_chat` 类型处理，解析失败、字段缺失或文本为空白时返回 `null`（不写索引）。
-- **风险点**: Mikibot 透传的 `RawContent` 结构需在集成测试中用真实样本核对 `info` 数组形态（部分协议版本 `info` 为嵌套数组）；若结构偏差，提取器内单点修正即可。
+- **真实样本验证（v1.1 已验证）**: 通过内网已部署环境 `http://vtuber.internal.fffdan.com` 的 `GET /api/b/live/{roomId}/event/range` 拉取真实数据（直播间 `1727076670`，弹幕总量 14.5 万+、SC 总量 850+）抽样核对：
+  - 弹幕：`payload.info[1]` 为 string，即弹幕纯文本（样本：`"啊"`、`"。干丝本不是"菜"，只是吃包子烧麦的茶馆里……"`），提取路径成立；
+  - SC：`payload.data.message` 为 string，即 SC 纯文本（样本：`"我已出锅，感觉良好"`、`"好香啊，我也想吃虾了……"`），提取路径成立；`data.message_trans` 多为空串，不作为提取源。
+- **风险点**: 已消除——提取路径经真实样本验证；实现期仍需以单元测试覆盖字段缺失/类型异常等退化样本。
 
 #### 实现点 2: 全文搜索与 join 分页
 
@@ -247,7 +251,8 @@ sequenceDiagram
 
 | 类型 | 内容 | 说明 |
 |------|------|------|
-| 依赖 | 弹幕/SC 原始 payload 含 `info[1]` / `data.message` | Mikibot 弹幕长连接原始 JSON |
+| 依赖 | 弹幕/SC 原始 payload 含 `info[1]` / `data.message` | Mikibot 弹幕长连接原始 JSON；已经内网环境真实数据验证（见 5.2 实现点 1） |
+| 依赖 | 内网已部署环境 `http://vtuber.internal.fffdan.com` | 可拉取真实弹幕/SC 数据（如直播间 `1727076670`），用于方案验证与测试样本来源 |
 | 约束 | 搜索入参 `roomId + stringCriteria`，stringCriteria ≤ 200 字符 | 需求约定，不可更改 |
 | 约束 | MongoDB 每集合仅允许一个 text 索引 | 全文索引字段固定为 `Text`，后续扩展需重建索引 |
 | 约束 | 契约先行 | 先更新 `contracts/bilibili-crawler.openapi.yaml` 再实现 |
@@ -283,10 +288,11 @@ tests/Z.Vtuber.Tests/                          # 提取/校验/搜索/索引计�
 
 | 类型 | 工具 | 覆盖范围 |
 |------|------|---------|
-| 单元测试（文本提取） | xUnit | 弹幕取 `info[1]` 正确、SC 取 `data.message` 正确、非文字类型 → null、解析失败 → null、空白文本 → null |
+| 单元测试（文本提取） | xUnit | 弹幕取 `info[1]` 正确、SC 取 `data.message` 正确、非文字类型 → null、解析失败 → null、空白文本 → null；测试样本取自内网环境真实 payload（见 6.2 依赖） |
 | 单元测试（参数校验） | xUnit | stringCriteria 空/纯空白/超 200 → 400；边界 200 合法 |
 | 集成测试（仓储层） | xUnit + Testcontainers Mongo | 全文搜索命中/无命中、RoomId 隔离、分页不重不漏、total 真实、EventId 唯一约束、join 后时间倒序、多 type 查询 explain 无 SORT 阶段 |
 | 集成测试（回填） | xUnit + Testcontainers Mongo | 历史弹幕/SC 回填完整、重复执行幂等（Meta 标记） |
+| 真实数据验证 | 内网已部署环境 | 提取逻辑开发完成后，用 `http://vtuber.internal.fffdan.com` 的 `event/range` 拉取真实弹幕/SC payload 作为提取器测试样本，核对提取结果与预期文本一致（提取路径已于方案期验证，见 5.2 实现点 1） |
 | API 测试 | z-test 工作流 | `event/search` 命中搜索、翻页、空关键词 400；`event/range` 多 type 行为回归 |
 
 ## 9. 部署方案
