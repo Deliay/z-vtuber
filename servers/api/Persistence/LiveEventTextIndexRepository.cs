@@ -1,0 +1,41 @@
+using MongoDB.Driver;
+using Z.Vtuber.Persistence.Entities;
+
+namespace Z.Vtuber.Persistence;
+
+public sealed class LiveEventTextIndexRepository(IMongoDatabase database)
+{
+    private IMongoCollection<LiveEventTextIndexRecord> Collection =>
+        database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+
+    public async Task InsertAsync(LiveEventTextIndexRecord record, CancellationToken ct = default)
+    {
+        await Collection.InsertOneAsync(record, cancellationToken: ct);
+    }
+
+    public async Task<(long total, List<LiveEventTextIndexRecord> items)> SearchAsync(
+        long roomId,
+        string criteria,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        var filter = Builders<LiveEventTextIndexRecord>.Filter.And(
+            Builders<LiveEventTextIndexRecord>.Filter.Eq(r => r.RoomId, roomId),
+            Builders<LiveEventTextIndexRecord>.Filter.Text(criteria));
+
+        var total = await Collection.CountDocumentsAsync(filter, cancellationToken: ct);
+
+        var sort = Builders<LiveEventTextIndexRecord>.Sort
+            .Descending(r => r.OccurredAt)
+            .Descending(r => r.Id);
+
+        var items = await Collection.Find(filter)
+            .Sort(sort)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .ToListAsync(ct);
+
+        return (total, items);
+    }
+}

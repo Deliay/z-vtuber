@@ -283,4 +283,173 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
         var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
         Assert.Equal(150, record.Price);
     }
+
+    [Fact]
+    public async Task BackfillLiveEventTextIndex_PopulatesTextIndex_FromDanmaku()
+    {
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await eventCollection.InsertOneAsync(new LiveEventRecord
+        {
+            Id = eventId,
+            RoomId = 123456,
+            Type = "danmaku",
+            Payload = """{"info":["18","Hello World","123456"]}""",
+            OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillLiveEventTextIndexAsync();
+
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
+        Assert.Equal(1, count);
+
+        var record = await textIndexCollection.Find(FilterDefinition<LiveEventTextIndexRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal("Hello World", record.Text);
+        Assert.Equal("danmaku", record.Type);
+        Assert.Equal(123456, record.RoomId);
+    }
+
+    [Fact]
+    public async Task BackfillLiveEventTextIndex_PopulatesTextIndex_FromSuperChat()
+    {
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await eventCollection.InsertOneAsync(new LiveEventRecord
+        {
+            Id = eventId,
+            RoomId = 123456,
+            Type = "super_chat",
+            Payload = """{"data":{"message":"SC Message","price":30}}""",
+            OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillLiveEventTextIndexAsync();
+
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
+        Assert.Equal(1, count);
+
+        var record = await textIndexCollection.Find(FilterDefinition<LiveEventTextIndexRecord>.Empty).FirstOrDefaultAsync();
+        Assert.Equal("SC Message", record.Text);
+        Assert.Equal("super_chat", record.Type);
+    }
+
+    [Fact]
+    public async Task BackfillLiveEventTextIndex_SkipsNonTextType()
+    {
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await eventCollection.InsertOneAsync(new LiveEventRecord
+        {
+            Id = eventId,
+            RoomId = 123456,
+            Type = "gift",
+            Payload = """{"data":{"price":100}}""",
+            OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillLiveEventTextIndexAsync();
+
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    public async Task BackfillLiveEventTextIndex_SkipsRecordsWithNullText()
+    {
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await eventCollection.InsertOneAsync(new LiveEventRecord
+        {
+            Id = eventId,
+            RoomId = 123456,
+            Type = "danmaku",
+            Payload = """{"info":["18",null,"123456"]}""",
+            OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillLiveEventTextIndexAsync();
+
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    public async Task BackfillLiveEventTextIndex_IsIdempotent()
+    {
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await eventCollection.InsertOneAsync(new LiveEventRecord
+        {
+            Id = eventId,
+            RoomId = 123456,
+            Type = "danmaku",
+            Payload = """{"info":["18","Hello World","123456"]}""",
+            OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillLiveEventTextIndexAsync();
+        await initializer.BackfillLiveEventTextIndexAsync();
+
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
+        Assert.Equal(1, count);
+    }
+
+    [Fact]
+    public async Task BackfillLiveEventTextIndex_Marker_PreventsRerun()
+    {
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        await meta.InsertOneAsync(new MetaRecord { Key = MongoDbInitializer.LiveEventTextIndexBackfillMigrationKey });
+
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await eventCollection.InsertOneAsync(new LiveEventRecord
+        {
+            Id = eventId,
+            RoomId = 123456,
+            Type = "danmaku",
+            Payload = """{"info":["18","Hello World","123456"]}""",
+            OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillLiveEventTextIndexAsync();
+
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    public async Task BackfillLiveEventTextIndex_ProcessesLargeBatch()
+    {
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var docs = Enumerable.Range(0, 600)
+            .Select(i => new LiveEventRecord
+            {
+                Id = MongoDB.Bson.ObjectId.GenerateNewId(),
+                RoomId = 123456,
+                Type = "danmaku",
+                Payload = $$"""{"info":["18","Message {{i}}","123456"]}""",
+                OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc).AddMinutes(i),
+            })
+            .ToList();
+        await eventCollection.InsertManyAsync(docs);
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillLiveEventTextIndexAsync();
+
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
+        Assert.Equal(600, count);
+    }
 }

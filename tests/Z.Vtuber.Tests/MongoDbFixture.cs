@@ -34,6 +34,7 @@ public sealed class MongoDbFixture : IAsyncLifetime
             MongoCollectionNames.SpaceTimeline,
             MongoCollectionNames.LiveSession,
             MongoCollectionNames.Meta,
+            MongoCollectionNames.LiveEventTextIndex,
         };
 
         foreach (var name in names)

@@ -26,6 +26,7 @@ builder.Services.AddSingleton<LiveStatusRepository>();
 builder.Services.AddSingleton<LiveEventRepository>();
 builder.Services.AddSingleton<SpaceTimelineRepository>();
 builder.Services.AddSingleton<LiveSessionRepository>();
+builder.Services.AddSingleton<LiveEventTextIndexRepository>();
 builder.Services.AddSingleton<MongoDbInitializer>();
 
 builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
@@ -53,6 +54,7 @@ using (var scope = app.Services.CreateScope())
     await initializer.EnsureIndexesAsync();
     await initializer.BackfillSpaceTimelinePubTsAsync();
     await initializer.BackfillGiftPriceAsync();
+    await initializer.BackfillLiveEventTextIndexAsync();
 }
 
 if (app.Environment.IsDevelopment())

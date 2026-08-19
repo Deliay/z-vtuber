@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Z.Vtuber.Persistence.Entities;
 
@@ -39,11 +40,35 @@ public sealed class LiveEventRepository(IMongoDatabase database)
         }
 
         var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);
-        var items = await _collection.Find(filter)
-            .SortByDescending(e => e.OccurredAt)
+
+        var sort = Builders<LiveEventRecord>.Sort.Descending(e => e.OccurredAt);
+        
+        // 多 type 查询时附加索引 hint 以确保性能
+        var findOptions = new FindOptions();
+        if (types is { Count: > 1 })
+        {
+            // 使用索引名称 hint：RoomId_1_OccurredAt_-1_Type_1
+            findOptions.Hint = "RoomId_1_OccurredAt_-1_Type_1";
+        }
+
+        var items = await _collection.Find(filter, findOptions)
+            .Sort(sort)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
             .ToListAsync(ct);
         return (total, items);
+    }
+
+    public async Task<IReadOnlyList<LiveEventRecord>> GetByIdsAsync(
+        IReadOnlyCollection<ObjectId> ids,
+        CancellationToken ct = default)
+    {
+        if (ids.Count == 0)
+        {
+            return Array.Empty<LiveEventRecord>();
+        }
+
+        var filter = Builders<LiveEventRecord>.Filter.In(e => e.Id, ids);
+        return await _collection.Find(filter).ToListAsync(ct);
     }
 }

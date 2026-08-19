@@ -12,6 +12,7 @@ public sealed class LiveEventSource(
     ICookiePoolService cookiePool,
     DanmakuClientFactory factory,
     LiveEventRepository eventRepository,
+    LiveEventTextIndexRepository textIndexRepository,
     ILiveEventBus bus,
     ILiveSessionTracker sessionTracker,
     ILogger<LiveEventSource> logger) : BackgroundService
@@ -123,7 +124,7 @@ public sealed class LiveEventSource(
                         continue;
                     }
 
-                    await eventRepository.InsertAsync(new LiveEventRecord
+                    var liveEventRecord = new LiveEventRecord
                     {
                         RoomId = liveEvent.RoomId,
                         LiveSessionId = liveEvent.LiveSessionId,
@@ -131,7 +132,37 @@ public sealed class LiveEventSource(
                         Payload = liveEvent.Payload,
                         OccurredAt = liveEvent.OccurredAt,
                         Price = GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
-                    }, ct);
+                    };
+
+                    await eventRepository.InsertAsync(liveEventRecord, ct);
+
+                    // 文本索引写入：弹幕/SC 事件提取文本并写入索引集合
+                    try
+                    {
+                        var text = LiveEventTextExtractor.ExtractText(liveEvent.Type, liveEvent.Payload);
+                        if (text is not null)
+                        {
+                            var textIndexRecord = new Persistence.Entities.LiveEventTextIndexRecord
+                            {
+                                EventId = liveEventRecord.Id,
+                                RoomId = liveEvent.RoomId,
+                                Type = liveEvent.Type,
+                                Text = text,
+                                OccurredAt = liveEvent.OccurredAt
+                            };
+                            await textIndexRepository.InsertAsync(textIndexRecord, ct);
+                        }
+                    }
+                    catch (MongoDB.Driver.MongoWriteException ex) when (ex.WriteError.Code == 11000)
+                    {
+                        // 唯一键冲突（EventId 已存在），仅记日志不阻断
+                        logger.LogDebug(ex, "Text index record for event {EventId} already exists; skipping.", liveEventRecord.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        // 提取/写索引异常不阻断总线发布与 SSE
+                        logger.LogWarning(ex, "Failed to write text index for event {EventId}; continuing.", liveEventRecord.Id);
+                    }
 
                     bus.TryPublish(roomId, liveEvent);
                 }
