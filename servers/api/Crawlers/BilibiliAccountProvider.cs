@@ -26,7 +26,11 @@ public sealed class BilibiliAccountProvider(BilibiliCrawlerOptions options) : IB
     private static async Task<IServiceProvider> BuildProviderAsync(string cookie, BilibiliCrawlerOptions options)
     {
         var services = new ServiceCollection();
-        services.AddSingleton(new HttpClient { Timeout = TimeSpan.FromSeconds(options.HttpTimeoutSeconds) });
+        // 挂入 RiskControlHandler：直连通道命中风控时抛 RiskControlException，供装饰器降级
+        services.AddSingleton(new HttpClient(new RiskControlHandler(new HttpClientHandler()))
+        {
+            Timeout = TimeSpan.FromSeconds(options.HttpTimeoutSeconds)
+        });
         services.AddSingleton(new CookieJar(cookie));
         services.AddBilibiliCrawlers();
 

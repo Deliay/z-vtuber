@@ -35,7 +35,21 @@ builder.Services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
 builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
 
 builder.Services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
-builder.Services.AddSingleton<IBiliApiClient, BiliApiClient>();
+builder.Services.AddSingleton<BiliApiClient>();
+// 拟真通道：HttpMessageHandler 不可由容器自动解析，工厂注册并挂入 RiskControlHandler
+builder.Services.AddSingleton(sp => new BrowserishBiliApiClient(
+    new RiskControlHandler(new HttpClientHandler()),
+    sp.GetRequiredService<BilibiliCrawlerOptions>()));
+// IBiliApiClient 解析为装饰器：直连/拟真以具体类型注入，避免自引用循环依赖
+builder.Services.AddSingleton<IBiliApiClient>(sp => new ResilientBiliApiClient(
+    sp.GetRequiredService<BiliApiClient>(),
+    sp.GetRequiredService<BrowserishBiliApiClient>(),
+    sp.GetRequiredService<BilibiliCrawlerOptions>(),
+    Microsoft.Extensions.Options.Options.Create(sp.GetRequiredService<BilibiliCrawlerOptions>()),
+    sp.GetRequiredService<ICookiePoolService>(),
+    sp.GetRequiredService<ICrawlBackoffRegistry>(),
+    sp.GetRequiredService<ILogger<ResilientBiliApiClient>>()));
+builder.Services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
 builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventBus, LiveEventBus>();
 builder.Services.AddSingleton<CrawlLockProvider>();

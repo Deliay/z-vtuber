@@ -68,4 +68,66 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
 
         await Assert.ThrowsAsync<NoAvailableCookieException>(() => service.NextAsync());
     }
+
+    [Fact]
+    public async Task CooldownCookie_IsNotAssignedByNext()
+    {
+        var service = CreateService();
+        await service.AddAsync("cookie-a");
+        await service.AddAsync("cookie-b");
+        await service.MarkCooldownAsync("cookie-a", TimeSpan.FromMinutes(30));
+
+        var next = await service.NextAsync();
+        Assert.Equal("cookie-b", next.Cookie);
+    }
+
+    [Fact]
+    public async Task CooldownCookie_BecomesAvailableAfterExpiry()
+    {
+        var service = CreateService();
+        await service.AddAsync("cookie-a");
+        await service.AddAsync("cookie-b");
+
+        // set cooldown to 1 second from now, then wait
+        await service.MarkCooldownAsync("cookie-a", TimeSpan.FromSeconds(1));
+        var during = await service.NextAsync();
+        Assert.Equal("cookie-b", during.Cookie);
+
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        var after = await service.NextAsync();
+        Assert.Equal("cookie-a", after.Cookie);
+    }
+
+    [Fact]
+    public async Task LegacyDocument_WithoutCooldownUntil_IsIncludedInRotation()
+    {
+        var service = CreateService();
+        await service.AddAsync("cookie-a");
+        await service.AddAsync("cookie-b");
+
+        // Simulate legacy document: directly set CooldownUntil to null via raw update
+        var collection = fixture.Database.GetCollection<MongoDB.Bson.BsonDocument>(
+            Persistence.MongoCollectionNames.Cookies);
+        var filter = new MongoDB.Bson.BsonDocument("cookie", "cookie-a");
+        var update = new MongoDB.Bson.BsonDocument("$set",
+            new MongoDB.Bson.BsonDocument("cooldownUntil",
+                MongoDB.Bson.BsonNull.Value));
+        await collection.UpdateOneAsync(filter, update);
+
+        var next = await service.NextAsync();
+        Assert.Equal("cookie-a", next.Cookie);
+    }
+
+    [Fact]
+    public async Task GetActiveAsync_ExcludesCooldownCookies()
+    {
+        var service = CreateService();
+        await service.AddAsync("cookie-a");
+        await service.AddAsync("cookie-b");
+        await service.MarkCooldownAsync("cookie-a", TimeSpan.FromMinutes(30));
+
+        var active = await service.GetActiveAsync();
+        Assert.Single(active);
+        Assert.Equal("cookie-b", active[0].Cookie);
+    }
 }

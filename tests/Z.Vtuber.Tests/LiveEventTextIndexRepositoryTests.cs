@@ -70,14 +70,53 @@ public class LiveEventTextIndexRepositoryTests(MongoDbFixture fixture) : IAsyncL
     }
 
     [Fact]
-    public async Task Search_ChineseKeywordSubstringMatch()
+    public async Task Search_ChineseSubstringMatch()
     {
         var repository = new LiveEventTextIndexRepository(fixture.Database);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
-        // 使用英文关键词验证搜索功能，中文分词行为由 MongoDB 决定
-        await repository.InsertAsync(TextIndex(eventId, 123456, "danmaku", "Hello Chinese Test", BaseDate));
+        await repository.InsertAsync(TextIndex(eventId, 123456, "danmaku", "今天天气不错适合出门", BaseDate));
 
-        var (total, items) = await repository.SearchAsync(123456, "Chinese", 1, 10);
+        var (total, items) = await repository.SearchAsync(123456, "天气", 1, 10);
+
+        Assert.Equal(1, total);
+        Assert.Single(items);
+        Assert.Equal("今天天气不错适合出门", items[0].Text);
+    }
+
+    [Fact]
+    public async Task Search_ChineseFullTextMatch()
+    {
+        var repository = new LiveEventTextIndexRepository(fixture.Database);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await repository.InsertAsync(TextIndex(eventId, 123456, "danmaku", "你好世界", BaseDate));
+
+        var (total, items) = await repository.SearchAsync(123456, "你好世界", 1, 10);
+
+        Assert.Equal(1, total);
+        Assert.Single(items);
+    }
+
+    [Fact]
+    public async Task Search_ChineseNoMatch()
+    {
+        var repository = new LiveEventTextIndexRepository(fixture.Database);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await repository.InsertAsync(TextIndex(eventId, 123456, "danmaku", "今天天气不错", BaseDate));
+
+        var (total, items) = await repository.SearchAsync(123456, "不存在", 1, 10);
+
+        Assert.Equal(0, total);
+        Assert.Empty(items);
+    }
+
+    [Fact]
+    public async Task Search_CaseInsensitive()
+    {
+        var repository = new LiveEventTextIndexRepository(fixture.Database);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await repository.InsertAsync(TextIndex(eventId, 123456, "danmaku", "Hello World", BaseDate));
+
+        var (total, items) = await repository.SearchAsync(123456, "hello", 1, 10);
 
         Assert.Equal(1, total);
         Assert.Single(items);
@@ -147,23 +186,39 @@ public class LiveEventTextIndexRepositoryTests(MongoDbFixture fixture) : IAsyncL
     {
         var repository = new LiveEventTextIndexRepository(fixture.Database);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
-        await repository.InsertAsync(TextIndex(eventId, 123456, "danmaku", "Hello World Test", BaseDate));
+        await repository.InsertAsync(TextIndex(eventId, 123456, "danmaku", "Price is $100.00", BaseDate));
 
-        // 使用简单的关键词进行搜索，避免特殊字符问题
-        var (total, items) = await repository.SearchAsync(123456, "World", 1, 10);
+        // Regex special characters should be escaped, not treated as regex syntax
+        var (total, items) = await repository.SearchAsync(123456, "$100", 1, 10);
+
+        Assert.Equal(1, total);
+        Assert.Single(items);
+        Assert.Equal("Price is $100.00", items[0].Text);
+    }
+
+    [Fact]
+    public async Task Search_RegexEscapeDotAndStar()
+    {
+        var repository = new LiveEventTextIndexRepository(fixture.Database);
+        var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
+        await repository.InsertAsync(TextIndex(eventId, 123456, "danmaku", "file.txt", BaseDate));
+
+        // Dots and stars should be escaped, not treated as regex wildcards
+        var (total, items) = await repository.SearchAsync(123456, "file.txt", 1, 10);
 
         Assert.Equal(1, total);
         Assert.Single(items);
     }
 
     [Fact]
-    public async Task Search_WhitespaceKeyword_ReturnsEmpty()
+    public async Task Search_EmptyKeyword_ReturnsEmpty()
     {
         var repository = new LiveEventTextIndexRepository(fixture.Database);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await repository.InsertAsync(TextIndex(eventId, 123456, "danmaku", "Hello World", BaseDate));
 
-        // MongoDB $text search 不支持纯空白关键词，应该返回空
+        // Empty/whitespace criteria should be caught by controller validation,
+        // but the repository itself should handle it gracefully
         var (total, items) = await repository.SearchAsync(123456, "   ", 1, 10);
 
         Assert.Equal(0, total);
