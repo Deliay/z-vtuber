@@ -33,6 +33,24 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
+    public async Task DropOldSubscriptionIndexAsync(CancellationToken ct = default)
+    {
+        var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+        await DropIndexIfExistsAsync(collection, "Mid_1", ct);
+        logger.LogInformation("Dropped old Mid_1 subscription index if it existed.");
+    }
+
+    public async Task EnsureSubscriptionCompositeIndexAsync(CancellationToken ct = default)
+    {
+        var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+        var keys = Builders<SubscriptionRecord>.IndexKeys
+            .Ascending(s => s.Mid)
+            .Ascending(s => s.Type);
+        var options = new CreateIndexOptions { Unique = true, Name = "Mid_1_Type_1" };
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<SubscriptionRecord>(keys, options), cancellationToken: ct);
+        logger.LogInformation("Ensured (Mid, Type) composite unique index on subscriptions.");
+    }
+
     private Task EnsureCookiesIndexesAsync(CancellationToken ct)
     {
         var collection = database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
@@ -430,10 +448,8 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         const int batchSize = 500;
         var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
 
-        // 查找所有无 Type 字段或 Type 为空的存量文档
-        var noTypeFilter = Builders<SubscriptionRecord>.Filter.Or(
-            Builders<SubscriptionRecord>.Filter.Not(Builders<SubscriptionRecord>.Filter.Exists(s => s.Type)),
-            Builders<SubscriptionRecord>.Filter.Eq(s => s.Type, default(SubscriptionType)));
+        // 查找所有无 Type 字段的存量文档（迁移后所有文档都有 Type 字段，天然幂等）
+        var noTypeFilter = Builders<SubscriptionRecord>.Filter.Not(Builders<SubscriptionRecord>.Filter.Exists(s => s.Type));
 
         long totalProcessed = 0;
 

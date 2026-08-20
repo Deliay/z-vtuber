@@ -1,4 +1,5 @@
 using MongoDB.Driver;
+using System.Text.Json.Serialization;
 using Z.Vtuber.Configuration;
 using Z.Vtuber.Crawlers;
 using Z.Vtuber.Jobs;
@@ -8,7 +9,12 @@ using Z.Vtuber.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+    {
+        o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        o.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    });
 builder.Services.AddOpenApi();
 
 builder.AddMongoDBClient("mongo");
@@ -66,11 +72,18 @@ using (var scope = app.Services.CreateScope())
 {
     var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
 
-    // Phase 4.2: 启动顺序调整
-    // 1. 先删旧 Mid 唯一索引（EnsureIndexesAsync 内部会删除旧索引并创建复合唯一索引）
-    // 2. 执行存量迁移（在索引重建之前，避免唯一索引冲突）
-    await initializer.EnsureIndexesAsync();
+    // Phase 4.2: 启动顺序固定为「删旧 Mid 唯一索引 → 迁移 → 建 (Mid,Type) 复合唯一索引」
+    // 1. 先删旧 Mid 唯一索引（避免迁移插入同 Mid 第二条记录时冲突）
+    await initializer.DropOldSubscriptionIndexAsync();
+
+    // 2. 执行存量迁移（在复合唯一索引建立之前，避免与唯一索引竞争）
     await initializer.MigrateSubscriptionTypeSplitAsync();
+
+    // 3. 建 (Mid, Type) 复合唯一索引
+    await initializer.EnsureSubscriptionCompositeIndexAsync();
+
+    // 4. 其他索引与迁移
+    await initializer.EnsureIndexesAsync();
     await initializer.BackfillSpaceTimelinePubTsAsync();
     await initializer.BackfillGiftPriceAsync();
     await initializer.BackfillLiveEventTextIndexAsync();
