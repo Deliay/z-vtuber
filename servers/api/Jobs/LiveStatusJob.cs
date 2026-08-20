@@ -129,6 +129,10 @@ public sealed class LiveStatusJob : PeriodicJobBase
         {
             _logger.LogWarning("Live status crawl skipped for room {RoomId}: no active cookie.", roomId);
         }
+        catch (CrawlBackoffActiveException ex)
+        {
+            _logger.LogInformation(ex, "Live status crawl skipped for room {RoomId}: backoff active.", roomId);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Live status crawl failed for room {RoomId}.", roomId);

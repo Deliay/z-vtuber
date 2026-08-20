@@ -32,6 +32,10 @@ public sealed class CookieProbeJob(
                     throw new InvalidOperationException("nav returned mid=0");
                 }
             }
+            catch (CrawlBackoffActiveException ex)
+            {
+                logger.LogInformation(ex, "Cookie probe skipped for cookie (id={Id}): backoff active.", record.Id);
+            }
             catch (Exception ex)
             {
                 await cookiePool.MarkCooldownAsync(record.Cookie, TimeSpan.FromMinutes(options.CooldownMinutes), ct);
