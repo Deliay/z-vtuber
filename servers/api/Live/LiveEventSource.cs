@@ -139,15 +139,18 @@ public sealed class LiveEventSource(
                     // 文本索引写入：弹幕/SC 事件提取文本并写入索引集合
                     try
                     {
-                        var text = LiveEventTextExtractor.ExtractText(liveEvent.Type, liveEvent.Payload);
-                        if (text is not null)
+                        var extraction = LiveEventTextExtractor.Extract(liveEvent.Type, liveEvent.Payload);
+                        if (extraction is not null)
                         {
                             var textIndexRecord = new Persistence.Entities.LiveEventTextIndexRecord
                             {
                                 EventId = liveEventRecord.Id,
                                 RoomId = liveEvent.RoomId,
                                 Type = liveEvent.Type,
-                                Text = text,
+                                Text = extraction.Text,
+                                SenderName = extraction.SenderName,
+                                SenderUid = extraction.SenderUid,
+                                SenderMedal = extraction.SenderMedal,
                                 OccurredAt = liveEvent.OccurredAt
                             };
                             await textIndexRepository.InsertAsync(textIndexRecord, ct);
