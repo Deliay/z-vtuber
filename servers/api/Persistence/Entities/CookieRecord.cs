@@ -17,6 +17,9 @@ public sealed class CookieRecord
 
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime? LastUsedAt { get; set; }
+
+    [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+    public DateTime? CooldownUntil { get; set; }
 }
 
 public static class CookieStatus

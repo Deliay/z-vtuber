@@ -85,6 +85,11 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
             {
                 page = await _bili.GetSpaceDynamicsAsync(cookie, mid, offset, ct);
             }
+            catch (CrawlBackoffActiveException ex)
+            {
+                _logger.LogInformation(ex, "Space timeline crawl skipped for mid {Mid}: backoff active.", mid);
+                return;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Space timeline fetch failed for mid {Mid} at offset {Offset}.", mid, offset);

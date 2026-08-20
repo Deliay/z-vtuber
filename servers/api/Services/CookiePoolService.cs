@@ -10,6 +10,7 @@ public interface ICookiePoolService
     Task<CookieRecord> NextAsync(CancellationToken ct = default);
     Task MarkOfflineAsync(string cookie, CancellationToken ct = default);
     Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default);
+    Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default);
 }
 
 public sealed class NoAvailableCookieException : InvalidOperationException
@@ -52,7 +53,11 @@ public sealed class CookiePoolService(IMongoDatabase database) : ICookiePoolServ
     public async Task<CookieRecord> NextAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
-        var filter = Builders<CookieRecord>.Filter.Eq(c => c.Status, CookieStatus.Active);
+        var filter = Builders<CookieRecord>.Filter.And(
+            Builders<CookieRecord>.Filter.Eq(c => c.Status, CookieStatus.Active),
+            Builders<CookieRecord>.Filter.Or(
+                Builders<CookieRecord>.Filter.Eq(c => c.CooldownUntil, null),
+                Builders<CookieRecord>.Filter.Lte(c => c.CooldownUntil, now)));
         var update = Builders<CookieRecord>.Update.Set(c => c.LastUsedAt, now);
         var sort = Builders<CookieRecord>.Sort.Ascending(c => c.LastUsedAt);
 
@@ -80,7 +85,20 @@ public sealed class CookiePoolService(IMongoDatabase database) : ICookiePoolServ
 
     public async Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
     {
-        var filter = Builders<CookieRecord>.Filter.Eq(c => c.Status, CookieStatus.Active);
+        var now = DateTime.UtcNow;
+        var filter = Builders<CookieRecord>.Filter.And(
+            Builders<CookieRecord>.Filter.Eq(c => c.Status, CookieStatus.Active),
+            Builders<CookieRecord>.Filter.Or(
+                Builders<CookieRecord>.Filter.Eq(c => c.CooldownUntil, null),
+                Builders<CookieRecord>.Filter.Lte(c => c.CooldownUntil, now)));
         return await _collection.Find(filter).ToListAsync(ct);
+    }
+
+    public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default)
+    {
+        var filter = Builders<CookieRecord>.Filter.Eq(c => c.Cookie, cookie);
+        var update = Builders<CookieRecord>.Update
+            .Set(c => c.CooldownUntil, DateTime.UtcNow + duration);
+        return _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
     }
 }
