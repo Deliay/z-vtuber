@@ -129,12 +129,12 @@ public class LiveEventTextExtractorTests
     }
 
     [Fact]
-    public void ExtractText_ReturnsText_WhenTextIsEmptyString()
+    public void ExtractText_ReturnsNull_WhenTextIsEmptyString()
     {
-        // 空字符串不算空白，应该返回
+        // 空字符串弹幕不应写入索引，返回 null
         var payload = """{"info":["18","","123456"]}""";
         var result = LiveEventTextExtractor.ExtractText("danmaku", payload);
-        Assert.Equal("", result);
+        Assert.Null(result);
     }
 
     [Fact]

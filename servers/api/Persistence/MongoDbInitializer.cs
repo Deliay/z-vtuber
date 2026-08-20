@@ -90,23 +90,26 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Descending(e => e.OccurredAt);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(roomTypePriceTimeKeys), cancellationToken: ct);
 
-        // 新增索引：RoomId asc + OccurredAt desc + Type asc 复合索引，用于多 type 查询性能优化
-        var roomOccurredAtTypeKeys = Builders<LiveEventRecord>.IndexKeys
+        // 新增索引：RoomId asc + Type asc + OccurredAt asc 复合索引，用于多 type 升序查询性能优化
+        var roomTypeOccurredAtAscKeys = Builders<LiveEventRecord>.IndexKeys
             .Ascending(e => e.RoomId)
-            .Descending(e => e.OccurredAt)
-            .Ascending(e => e.Type);
-        await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(roomOccurredAtTypeKeys), cancellationToken: ct);
+            .Ascending(e => e.Type)
+            .Ascending(e => e.OccurredAt);
+        var roomTypeOccurredAtAscOptions = new CreateIndexOptions { Name = "RoomId_1_Type_1_OccurredAt_1" };
+        await collection.Indexes.CreateOneAsync(
+            new CreateIndexModel<LiveEventRecord>(roomTypeOccurredAtAscKeys, roomTypeOccurredAtAscOptions),
+            cancellationToken: ct);
     }
 
     private async Task EnsureLiveEventTextIndexAsync(CancellationToken ct)
     {
         var collection = database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
 
-        // 创建 { RoomId: 1, Text: "text" } 复合全文索引
+        // 创建 { RoomId: 1, Text: 1 } 复合索引，用于 regex 子串匹配查询
         var textIndexKeys = Builders<LiveEventTextIndexRecord>.IndexKeys
             .Ascending(r => r.RoomId)
-            .Text(r => r.Text);
-        var textIndexOptions = new CreateIndexOptions { Name = "RoomId_Text_text" };
+            .Ascending(r => r.Text);
+        var textIndexOptions = new CreateIndexOptions { Name = "RoomId_Text_1" };
         await collection.Indexes.CreateOneAsync(
             new CreateIndexModel<LiveEventTextIndexRecord>(textIndexKeys, textIndexOptions),
             cancellationToken: ct);
@@ -216,7 +219,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         }
         while (processed == batchSize);
 
-        await meta.InsertOneAsync(new MetaRecord { Key = SpaceTimelinePubTsMigrationKey }, ct);
+        await meta.InsertOneAsync(new MetaRecord { Key = SpaceTimelinePubTsMigrationKey }, options: null, ct);
         logger.LogInformation("Space timeline PubTs backfill completed and marked as applied.");
     }
 
@@ -236,24 +239,27 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         const int batchSize = 500;
         var collection = database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
 
-        var filter = Builders<LiveEventRecord>.Filter.And(
-            Builders<LiveEventRecord>.Filter.Eq(e => e.Type, "gift"),
-            Builders<LiveEventRecord>.Filter.Or(
-                Builders<LiveEventRecord>.Filter.Not(Builders<LiveEventRecord>.Filter.Exists(e => e.Price)),
-                Builders<LiveEventRecord>.Filter.Eq(e => e.Price, 0L)));
+        // 仅匹配 Price 字段不存在的 gift 记录（Price==0 已在 v1/v2 迁移中处理）
+        var typeFilter = Builders<LiveEventRecord>.Filter.Eq(e => e.Type, "gift");
+        var noPriceFilter = Builders<LiveEventRecord>.Filter.Not(Builders<LiveEventRecord>.Filter.Exists(e => e.Price));
 
-        long processed = batchSize;
-        do
+        MongoDB.Bson.ObjectId lastId = MongoDB.Bson.ObjectId.Empty;
+        long totalProcessed = 0;
+
+        while (true)
         {
-            var cursor = await collection.Find(filter)
+            var idFilter = Builders<LiveEventRecord>.Filter.Gt(e => e.Id, lastId);
+            var combinedFilter = Builders<LiveEventRecord>.Filter.And(typeFilter, noPriceFilter, idFilter);
+
+            var batch = await collection.Find(combinedFilter)
                 .Project<LiveEventRecord>(Builders<LiveEventRecord>.Projection
                     .Include(r => r.Id)
                     .Include(r => r.Type)
                     .Include(r => r.Payload))
+                .SortBy(e => e.Id)
                 .Limit(batchSize)
-                .ToCursorAsync(ct);
+                .ToListAsync(ct);
 
-            var batch = await cursor.ToListAsync(ct);
             if (batch.Count == 0)
             {
                 break;
@@ -270,11 +276,19 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
             await collection.BulkWriteAsync(models, cancellationToken: ct);
             logger.LogInformation("Backfilled gift price for {Count} records.", models.Count);
-            processed = batch.Count;
-        }
-        while (processed == batchSize);
 
-        await meta.InsertOneAsync(new MetaRecord { Key = GiftPriceBackfillMigrationKey }, ct);
+            lastId = batch[^1].Id;
+            totalProcessed += batch.Count;
+
+            if (batch.Count < batchSize)
+            {
+                break;
+            }
+        }
+
+        logger.LogInformation("Gift price backfill total processed {Total} records.", totalProcessed);
+
+        await meta.InsertOneAsync(new MetaRecord { Key = GiftPriceBackfillMigrationKey }, options: null, ct);
         logger.LogInformation("Gift price backfill completed and marked as applied.");
     }
 
@@ -370,7 +384,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         logger.LogInformation("Backfill total processed {Total} events.", totalProcessed);
 
-        await meta.InsertOneAsync(new MetaRecord { Key = LiveEventTextIndexBackfillMigrationKey }, ct);
+        await meta.InsertOneAsync(new MetaRecord { Key = LiveEventTextIndexBackfillMigrationKey }, options: null, ct);
         logger.LogInformation("Live event text index backfill completed and marked as applied.");
     }
 }

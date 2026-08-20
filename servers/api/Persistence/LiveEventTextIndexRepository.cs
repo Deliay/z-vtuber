@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Z.Vtuber.Persistence.Entities;
 
@@ -20,9 +22,11 @@ public sealed class LiveEventTextIndexRepository(IMongoDatabase database)
         int pageSize,
         CancellationToken ct = default)
     {
+        var escapedCriteria = Regex.Escape(criteria);
+
         var filter = Builders<LiveEventTextIndexRecord>.Filter.And(
             Builders<LiveEventTextIndexRecord>.Filter.Eq(r => r.RoomId, roomId),
-            Builders<LiveEventTextIndexRecord>.Filter.Text(criteria));
+            Builders<LiveEventTextIndexRecord>.Filter.Regex(r => r.Text, new BsonRegularExpression(escapedCriteria, "i")));
 
         var total = await Collection.CountDocumentsAsync(filter, cancellationToken: ct);
 

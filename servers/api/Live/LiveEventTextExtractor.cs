@@ -42,7 +42,11 @@ public static class LiveEventTextExtractor
                 }
             }
 
-            // 如果文本为 null 则返回 null，空字符串返回空字符串
+            if (string.IsNullOrEmpty(text))
+            {
+                return null;
+            }
+
             return text;
         }
         catch (JsonException)
