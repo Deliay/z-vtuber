@@ -65,7 +65,12 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
+
+    // Phase 4.2: 启动顺序调整
+    // 1. 先删旧 Mid 唯一索引（EnsureIndexesAsync 内部会删除旧索引并创建复合唯一索引）
+    // 2. 执行存量迁移（在索引重建之前，避免唯一索引冲突）
     await initializer.EnsureIndexesAsync();
+    await initializer.MigrateSubscriptionTypeSplitAsync();
     await initializer.BackfillSpaceTimelinePubTsAsync();
     await initializer.BackfillGiftPriceAsync();
     await initializer.BackfillLiveEventTextIndexAsync();

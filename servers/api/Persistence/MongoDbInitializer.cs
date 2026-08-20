@@ -45,8 +45,15 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
     private async Task EnsureSubscriptionsIndexesAsync(CancellationToken ct)
     {
         var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
-        var keys = Builders<SubscriptionRecord>.IndexKeys.Ascending(s => s.Mid);
-        var options = new CreateIndexOptions { Unique = true };
+
+        // 删除旧的 Mid 单字段唯一索引（如果存在）
+        await DropIndexIfExistsAsync(collection, "Mid_1", ct);
+
+        // 创建 (Mid, Type) 复合唯一索引
+        var keys = Builders<SubscriptionRecord>.IndexKeys
+            .Ascending(s => s.Mid)
+            .Ascending(s => s.Type);
+        var options = new CreateIndexOptions { Unique = true, Name = "Mid_1_Type_1" };
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<SubscriptionRecord>(keys, options), cancellationToken: ct);
     }
 
@@ -405,6 +412,73 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         await meta.InsertOneAsync(new MetaRecord { Key = LiveEventTextIndexBackfillMigrationKey }, options: null, ct);
         logger.LogInformation("Live event text index backfill completed and marked as applied.");
+    }
+
+    public const string SubscriptionTypeSplitMigrationKey = "subscription_type_split_v1";
+
+    public async Task MigrateSubscriptionTypeSplitAsync(CancellationToken ct = default)
+    {
+        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == SubscriptionTypeSplitMigrationKey)
+            .AnyAsync(ct);
+        if (markerExists)
+        {
+            logger.LogInformation("Subscription type split migration already applied; skipping.");
+            return;
+        }
+
+        const int batchSize = 500;
+        var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+
+        // 查找所有无 Type 字段或 Type 为空的存量文档
+        var noTypeFilter = Builders<SubscriptionRecord>.Filter.Or(
+            Builders<SubscriptionRecord>.Filter.Not(Builders<SubscriptionRecord>.Filter.Exists(s => s.Type)),
+            Builders<SubscriptionRecord>.Filter.Eq(s => s.Type, default(SubscriptionType)));
+
+        long totalProcessed = 0;
+
+        while (true)
+        {
+            var batch = await collection.Find(noTypeFilter)
+                .Limit(batchSize)
+                .ToListAsync(ct);
+
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            var models = new List<WriteModel<SubscriptionRecord>>(batch.Count);
+            foreach (var record in batch)
+            {
+                // 1. 更新原记录为 dynamic 类型
+                models.Add(new UpdateOneModel<SubscriptionRecord>(
+                    Builders<SubscriptionRecord>.Filter.Eq(s => s.Id, record.Id),
+                    Builders<SubscriptionRecord>.Update.Set(s => s.Type, SubscriptionType.Dynamic)));
+
+                // 2. 插入 danmaku 类型的第二条记录
+                models.Add(new InsertOneModel<SubscriptionRecord>(new SubscriptionRecord
+                {
+                    Mid = record.Mid,
+                    Type = SubscriptionType.Danmaku,
+                    SubscribedAt = record.SubscribedAt
+                }));
+            }
+
+            await collection.BulkWriteAsync(models, cancellationToken: ct);
+            logger.LogInformation("Subscription type split: processed {Count} records.", batch.Count);
+            totalProcessed += batch.Count;
+
+            if (batch.Count < batchSize)
+            {
+                break;
+            }
+        }
+
+        logger.LogInformation("Subscription type split migration total processed {Total} records.", totalProcessed);
+
+        await meta.InsertOneAsync(new MetaRecord { Key = SubscriptionTypeSplitMigrationKey }, options: null, ct);
+        logger.LogInformation("Subscription type split migration completed and marked as applied.");
     }
 }
 

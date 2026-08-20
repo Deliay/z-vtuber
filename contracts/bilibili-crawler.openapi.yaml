@@ -63,16 +63,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/SubscriptionItem"
         "400":
-          description: mid 非法
+          description: mid 非法或 type 缺失/非法（合法取值：danmaku, dynamic）
   /api/b/subscription/{mid}:
     delete:
       summary: 取消订阅
       operationId: unsubscribe
       parameters:
         - $ref: "#/components/parameters/Mid"
+        - name: type
+          in: query
+          required: true
+          description: 订阅类型（danmaku 或 dynamic），缺失或非法返回 400。
+          schema:
+            type: string
+            enum: [danmaku, dynamic]
       responses:
         "204":
           description: 取消成功
+        "400":
+          description: type 缺失或非法（合法取值：danmaku, dynamic）
         "404":
           description: 未订阅
   /api/b/user/{mid}:
@@ -323,17 +332,25 @@ components:
             $ref: "#/components/schemas/CookieItem"
     SubscribeRequest:
       type: object
-      required: [mid]
+      required: [mid, type]
       properties:
         mid:
           type: integer
           format: int64
+        type:
+          type: string
+          enum: [danmaku, dynamic]
+          description: 订阅类型（danmaku 弹幕 / dynamic 动态），必填。
     SubscriptionItem:
       type: object
       properties:
         mid:
           type: integer
           format: int64
+        type:
+          type: string
+          enum: [danmaku, dynamic]
+          description: 订阅类型
         subscribedAt:
           type: string
           format: date-time
