@@ -131,7 +131,7 @@ public sealed class LiveEventSource(
                         Type = liveEvent.Type,
                         Payload = liveEvent.Payload,
                         OccurredAt = liveEvent.OccurredAt,
-                        Price = GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
+                        Price = liveEvent.Price ?? GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
                     };
 
                     await eventRepository.InsertAsync(liveEventRecord, ct);

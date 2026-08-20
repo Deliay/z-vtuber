@@ -88,8 +88,8 @@ public class LiveEventRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
             1, 1, 100, startedAt: BaseDate.AddHours(2), endedAt: BaseDate.AddHours(3));
 
         Assert.Equal(2, total);
-        Assert.Equal(BaseDate.AddHours(2), items[0].OccurredAt);
-        Assert.Equal(BaseDate.AddHours(3), items[1].OccurredAt);
+        Assert.Equal(BaseDate.AddHours(3), items[0].OccurredAt);
+        Assert.Equal(BaseDate.AddHours(2), items[1].OccurredAt);
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public class LiveEventRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
 
         var all = page1.Concat(page2).Concat(page3).Select(i => i.OccurredAt).ToArray();
         Assert.Equal(5, all.Distinct().Count());
-        Assert.Equal(all.OrderBy(t => t).ToArray(), all);
+        Assert.Equal(all.OrderByDescending(t => t).ToArray(), all);
     }
 
     [Fact]
@@ -291,7 +291,7 @@ public class LiveEventRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
 
         var all = page1.Concat(page2).Concat(page3).Select(i => i.OccurredAt).ToArray();
         Assert.Equal(5, all.Distinct().Count());
-        Assert.Equal(all.OrderBy(t => t).ToArray(), all);
+        Assert.Equal(all.OrderByDescending(t => t).ToArray(), all);
     }
 
     [Fact]

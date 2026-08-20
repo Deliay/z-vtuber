@@ -90,18 +90,18 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Descending(e => e.OccurredAt);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(roomTypePriceTimeKeys), cancellationToken: ct);
 
-        // 新增索引：RoomId asc + Type asc + OccurredAt asc 复合索引，用于多 type 升序查询性能优化
-        var roomTypeOccurredAtAscKeys = Builders<LiveEventRecord>.IndexKeys
+        // 多 type 查询复合索引：RoomId asc + OccurredAt desc + Type asc（显式命名，供查询 hint 引用）
+        var roomOccurredAtTypeKeys = Builders<LiveEventRecord>.IndexKeys
             .Ascending(e => e.RoomId)
-            .Ascending(e => e.Type)
-            .Ascending(e => e.OccurredAt);
-        var roomTypeOccurredAtAscOptions = new CreateIndexOptions { Name = "RoomId_1_Type_1_OccurredAt_1" };
+            .Descending(e => e.OccurredAt)
+            .Ascending(e => e.Type);
+        var roomOccurredAtTypeOptions = new CreateIndexOptions { Name = "RoomId_1_OccurredAt_-1_Type_1" };
         await collection.Indexes.CreateOneAsync(
-            new CreateIndexModel<LiveEventRecord>(roomTypeOccurredAtAscKeys, roomTypeOccurredAtAscOptions),
+            new CreateIndexModel<LiveEventRecord>(roomOccurredAtTypeKeys, roomOccurredAtTypeOptions),
             cancellationToken: ct);
 
-        // 清理旧版索引：排序方向调整前的多 type 查询索引，已无任何查询使用
-        await DropIndexIfExistsAsync(collection, "RoomId_1_OccurredAt_-1_Type_1", ct);
+        // 清理旧版索引：72cab58 误将排序回退为升序时创建的升序索引（降序为 6e23b69 显式需求）
+        await DropIndexIfExistsAsync(collection, "RoomId_1_Type_1_OccurredAt_1", ct);
     }
 
     private async Task EnsureLiveEventTextIndexAsync(CancellationToken ct)

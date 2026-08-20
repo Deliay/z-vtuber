@@ -515,20 +515,21 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
     [Fact]
     public async Task EnsureIndexes_DropsLegacyLiveEventIndex()
     {
-        // 模拟旧版本部署残留的索引：排序方向调整前的多 type 查询索引
+        // 模拟 72cab58 误将排序回退为升序时创建的升序索引（降序为 6e23b69 显式需求）
         var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(
             Builders<LiveEventRecord>.IndexKeys
                 .Ascending(e => e.RoomId)
-                .Descending(e => e.OccurredAt)
-                .Ascending(e => e.Type)));
+                .Ascending(e => e.Type)
+                .Ascending(e => e.OccurredAt),
+            new CreateIndexOptions { Name = "RoomId_1_Type_1_OccurredAt_1" }));
 
         var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
         await initializer.EnsureIndexesAsync();
 
         var names = await ListIndexNamesAsync(collection);
-        Assert.DoesNotContain("RoomId_1_OccurredAt_-1_Type_1", names);
-        Assert.Contains("RoomId_1_Type_1_OccurredAt_1", names);
+        Assert.DoesNotContain("RoomId_1_Type_1_OccurredAt_1", names);
+        Assert.Contains("RoomId_1_OccurredAt_-1_Type_1", names);
     }
 
     private static async Task<List<string>> ListIndexNamesAsync<T>(IMongoCollection<T> collection)

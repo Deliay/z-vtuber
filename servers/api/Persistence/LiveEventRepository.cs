@@ -34,21 +34,21 @@ public sealed class LiveEventRepository(IMongoDatabase database)
         }
         if (minPriceGoldSeeds.HasValue)
         {
-            var notGiftFilter = Builders<LiveEventRecord>.Filter.Ne(e => e.Type, "gift");
+            var notGiftFilter = Builders<LiveEventRecord>.Filter.Nin(e => e.Type, new[] { "gift", "gift_v2" });
             var priceFilter = Builders<LiveEventRecord>.Filter.Gte(e => e.Price, minPriceGoldSeeds.Value);
             filter &= notGiftFilter | priceFilter;
         }
 
         var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);
 
-        var sort = Builders<LiveEventRecord>.Sort.Ascending(e => e.OccurredAt);
+        var sort = Builders<LiveEventRecord>.Sort.Descending(e => e.OccurredAt);
 
         // 多 type 查询时附加索引 hint 以确保性能
         var findOptions = new FindOptions();
         if (types is { Count: > 1 })
         {
-            // 使用索引名称 hint：RoomId_1_Type_1_OccurredAt_1
-            findOptions.Hint = "RoomId_1_Type_1_OccurredAt_1";
+            // 使用索引名称 hint：RoomId_1_OccurredAt_-1_Type_1
+            findOptions.Hint = "RoomId_1_OccurredAt_-1_Type_1";
         }
 
         var items = await _collection.Find(filter, findOptions)

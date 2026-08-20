@@ -176,7 +176,7 @@ paths:
   /api/b/live/{roomId}/event/range:
     get:
       summary: 分页查询直播间事件
-      description: 按发生时间（occurredAt）升序分页查询直播间事件，可按事件类型（type）与可选时间范围（startedAt/endedAt，含起止边界）筛选；支持按礼物金额下限（minPrice）筛选，仅作用于 gift 类型事件；startedAt 晚于 endedAt 或 minPrice 非法时返回 400。
+      description: 按发生时间（occurredAt）降序分页查询直播间事件，可按事件类型（type）与可选时间范围（startedAt/endedAt，含起止边界）筛选；支持按礼物金额下限（minPrice）筛选，仅作用于 gift 类型事件；startedAt 晚于 endedAt 或 minPrice 非法时返回 400。
       operationId: listLiveEventsRange
       parameters:
         - $ref: "#/components/parameters/RoomId"
@@ -188,7 +188,7 @@ paths:
         - $ref: "#/components/parameters/MinPrice"
       responses:
         "200":
-          description: 直播间事件分页（按 occurredAt 升序）
+          description: 直播间事件分页（按 occurredAt 降序）
           content:
             application/json:
               schema:

@@ -35,9 +35,11 @@
 
 ### P2 event/range 排序升序→降序
 
-**根因**: 实现将 `SortBy(OccurredAt)` 改为 `SortDescending(OccurredAt)`，与 release 分支和既有 PRD 不一致，提案依据不实。
+> **更正（2026-08-20）**：本条依据不成立，予以撤销。降序是显式需求提交 6e23b69「feat: event/range 按 occurredAt 降序查询」（经 PR #15 合入 main，来源分支 `feat/event-range-desc`），main 代码与契约均为降序；本条仅对比了已停滞的 `release` 分支（仍为升序）得出错误结论。按本条「修复」（72cab58 回退升序）即回归来源，实际处理见 `docs/engineering/plans/20260820-plan-bilibili-412-fix.md` Phase 0.3（恢复降序）。
 
-**方案**: `LiveEventRepository.GetPageAsync` 排序回退为 `Sort.Ascending(e => e.OccurredAt)`，索引 hint 同步调整。
+**根因**: ~~实现将 `SortBy(OccurredAt)` 改为 `SortDescending(OccurredAt)`，与 release 分支和既有 PRD 不一致，提案依据不实。~~（撤销，见上方更正）
+
+**方案**: ~~`LiveEventRepository.GetPageAsync` 排序回退为 `Sort.Ascending(e => e.OccurredAt)`，索引 hint 同步调整。~~（撤销，见上方更正）
 
 **影响文件**:
 - `servers/api/Persistence/LiveEventRepository.cs:44`
@@ -60,7 +62,7 @@
 ### R1 旧索引清理迁移
 
 - `EnsureLiveEventTextIndexAsync` 幂等 drop 旧索引：`RoomId_Text_text`（$text 方案全文索引）、`RoomId_Text_1`（普通 Text 索引，无法服务 regex 与排序）
-- `EnsureLiveEventIndexesAsync` 幂等 drop 旧索引 `RoomId_1_OccurredAt_-1_Type_1`（排序方向调整前的多 type 查询索引）
+- `EnsureLiveEventIndexesAsync` 幂等 drop 旧索引 `RoomId_1_Type_1_OccurredAt_1`（72cab58 误将排序回退为升序时创建的升序索引；降序索引 `RoomId_1_OccurredAt_-1_Type_1` 恢复为显式命名创建，见 P2 更正与 Phase 0.3）
 - 新增 `DropIndexIfExistsAsync` 辅助方法（先 list 后 drop，不存在则跳过）
 
 ### R2 搜索排序索引
