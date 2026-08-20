@@ -99,19 +99,24 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await collection.Indexes.CreateOneAsync(
             new CreateIndexModel<LiveEventRecord>(roomTypeOccurredAtAscKeys, roomTypeOccurredAtAscOptions),
             cancellationToken: ct);
+
+        // 清理旧版索引：排序方向调整前的多 type 查询索引，已无任何查询使用
+        await DropIndexIfExistsAsync(collection, "RoomId_1_OccurredAt_-1_Type_1", ct);
     }
 
     private async Task EnsureLiveEventTextIndexAsync(CancellationToken ct)
     {
         var collection = database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
 
-        // 创建 { RoomId: 1, Text: 1 } 复合索引，用于 regex 子串匹配查询
-        var textIndexKeys = Builders<LiveEventTextIndexRecord>.IndexKeys
+        // 创建 { RoomId: 1, OccurredAt: -1, Id: -1 } 复合索引：RoomId 等值收敛后按排序键顺序扫描，
+        // regex 子串匹配作残余过滤，skip/limit 可提前终止，避免内存排序（32MB 上限风险）
+        var searchIndexKeys = Builders<LiveEventTextIndexRecord>.IndexKeys
             .Ascending(r => r.RoomId)
-            .Ascending(r => r.Text);
-        var textIndexOptions = new CreateIndexOptions { Name = "RoomId_Text_1" };
+            .Descending(r => r.OccurredAt)
+            .Descending(r => r.Id);
+        var searchIndexOptions = new CreateIndexOptions { Name = LiveEventTextIndexRepository.SearchIndexName };
         await collection.Indexes.CreateOneAsync(
-            new CreateIndexModel<LiveEventTextIndexRecord>(textIndexKeys, textIndexOptions),
+            new CreateIndexModel<LiveEventTextIndexRecord>(searchIndexKeys, searchIndexOptions),
             cancellationToken: ct);
 
         // 创建 EventId asc 唯一索引
@@ -120,6 +125,20 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await collection.Indexes.CreateOneAsync(
             new CreateIndexModel<LiveEventTextIndexRecord>(eventIdKeys, eventIdOptions),
             cancellationToken: ct);
+
+        // 清理旧版索引：$text 方案的全文索引，以及无法服务 regex 与排序的普通 Text 索引
+        await DropIndexIfExistsAsync(collection, "RoomId_Text_text", ct);
+        await DropIndexIfExistsAsync(collection, "RoomId_Text_1", ct);
+    }
+
+    private static async Task DropIndexIfExistsAsync<T>(IMongoCollection<T> collection, string name, CancellationToken ct)
+    {
+        using var cursor = await collection.Indexes.ListAsync(ct);
+        var indexes = await cursor.ToListAsync(ct);
+        if (indexes.Any(i => i["name"].AsString == name))
+        {
+            await collection.Indexes.DropOneAsync(name, ct);
+        }
     }
 
     private async Task EnsureSpaceTimelineIndexesAsync(CancellationToken ct)

@@ -479,4 +479,62 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(600, count);
     }
+
+    [Fact]
+    public async Task EnsureIndexes_CreatesSearchIndex_OnTextIndexCollection()
+    {
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+
+        var collection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var names = await ListIndexNamesAsync(collection);
+        Assert.Contains(LiveEventTextIndexRepository.SearchIndexName, names);
+    }
+
+    [Fact]
+    public async Task EnsureIndexes_DropsLegacyTextIndexes()
+    {
+        // 模拟旧版本部署残留的索引：$text 全文索引与普通 Text 索引
+        var collection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventTextIndexRecord>(
+            Builders<LiveEventTextIndexRecord>.IndexKeys.Ascending(r => r.RoomId).Text(r => r.Text),
+            new CreateIndexOptions { Name = "RoomId_Text_text" }));
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventTextIndexRecord>(
+            Builders<LiveEventTextIndexRecord>.IndexKeys.Ascending(r => r.RoomId).Ascending(r => r.Text),
+            new CreateIndexOptions { Name = "RoomId_Text_1" }));
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+
+        var names = await ListIndexNamesAsync(collection);
+        Assert.DoesNotContain("RoomId_Text_text", names);
+        Assert.DoesNotContain("RoomId_Text_1", names);
+        Assert.Contains(LiveEventTextIndexRepository.SearchIndexName, names);
+    }
+
+    [Fact]
+    public async Task EnsureIndexes_DropsLegacyLiveEventIndex()
+    {
+        // 模拟旧版本部署残留的索引：排序方向调整前的多 type 查询索引
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(
+            Builders<LiveEventRecord>.IndexKeys
+                .Ascending(e => e.RoomId)
+                .Descending(e => e.OccurredAt)
+                .Ascending(e => e.Type)));
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+
+        var names = await ListIndexNamesAsync(collection);
+        Assert.DoesNotContain("RoomId_1_OccurredAt_-1_Type_1", names);
+        Assert.Contains("RoomId_1_Type_1_OccurredAt_1", names);
+    }
+
+    private static async Task<List<string>> ListIndexNamesAsync<T>(IMongoCollection<T> collection)
+    {
+        using var cursor = await collection.Indexes.ListAsync();
+        var indexes = await cursor.ToListAsync();
+        return indexes.Select(i => i["name"].AsString).ToList();
+    }
 }

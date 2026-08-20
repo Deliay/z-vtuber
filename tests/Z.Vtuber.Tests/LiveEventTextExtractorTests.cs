@@ -123,7 +123,8 @@ public class LiveEventTextExtractorTests
     [Fact]
     public void ExtractText_ReturnsNull_WhenTextIsWhitespace()
     {
-        var payload = """{"info":["18","   ","123456"]""";
+        // 纯空白弹幕不应写入索引，返回 null
+        var payload = """{"info":["18","   ","123456"]}""";
         var result = LiveEventTextExtractor.ExtractText("danmaku", payload);
         Assert.Null(result);
     }

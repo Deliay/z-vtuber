@@ -42,7 +42,7 @@ public static class LiveEventTextExtractor
                 }
             }
 
-            if (string.IsNullOrEmpty(text))
+            if (string.IsNullOrWhiteSpace(text))
             {
                 return null;
             }

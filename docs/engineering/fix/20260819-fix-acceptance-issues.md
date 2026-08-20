@@ -52,3 +52,23 @@
 - 新文件末尾换行符：`LiveEventTextExtractor.cs`、`LiveEventTextIndexRecord.cs`、`LiveEventTextIndexRepository.cs`
 - CS0618 警告：`MongoDbInitializer.cs:277,373` 使用 `InsertOneAsync(record, options: null, ct)` 替代过时重载
 - 空字符串弹幕过滤：`LiveEventTextExtractor.ExtractText` 在 `string.IsNullOrWhiteSpace` 检查中同时过滤空字符串，或在写入端过滤
+
+## Review 追加修复（2026-08-20）
+
+针对 PR #31 review 意见（见 PR comment）的追加修复：
+
+### R1 旧索引清理迁移
+
+- `EnsureLiveEventTextIndexAsync` 幂等 drop 旧索引：`RoomId_Text_text`（$text 方案全文索引）、`RoomId_Text_1`（普通 Text 索引，无法服务 regex 与排序）
+- `EnsureLiveEventIndexesAsync` 幂等 drop 旧索引 `RoomId_1_OccurredAt_-1_Type_1`（排序方向调整前的多 type 查询索引）
+- 新增 `DropIndexIfExistsAsync` 辅助方法（先 list 后 drop，不存在则跳过）
+
+### R2 搜索排序索引
+
+- 文本索引集合的查询索引由 `{RoomId:1, Text:1}` 改为 `{RoomId:1, OccurredAt:-1, Id:-1}`（名称 `RoomId_1_OccurredAt_-1_Id_-1`，常量化于 `LiveEventTextIndexRepository.SearchIndexName`）：RoomId 等值收敛后按排序键顺序扫描，regex 作残余过滤，skip/limit 可提前终止，避免内存排序 32MB 上限风险
+- `SearchAsync` 的 Find 附加该索引 hint（与 `LiveEventRepository.GetPageAsync` 的 hint 模式一致）
+
+### R3 杂项
+
+- `LiveEventTextExtractor.ExtractText` 改为 `IsNullOrWhiteSpace` 过滤（与本文档 P4 节方案对齐），并修正既有测试 `ExtractText_ReturnsNull_WhenTextIsWhitespace` 的 payload（原 payload 为非法 JSON，经 catch 分支返回 null，未真正覆盖空白路径）
+- 契约 `event/search` 与 `stringCriteria` 描述同步为「不区分大小写的子串匹配」

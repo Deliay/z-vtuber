@@ -7,6 +7,10 @@ namespace Z.Vtuber.Persistence;
 
 public sealed class LiveEventTextIndexRepository(IMongoDatabase database)
 {
+    // 搜索索引名称，与 MongoDbInitializer 中创建的一致：
+    // { RoomId: 1, OccurredAt: -1, Id: -1 }，RoomId 等值收敛 + 有序扫描，regex 作残余过滤
+    public const string SearchIndexName = "RoomId_1_OccurredAt_-1_Id_-1";
+
     private IMongoCollection<LiveEventTextIndexRecord> Collection =>
         database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
 
@@ -34,7 +38,7 @@ public sealed class LiveEventTextIndexRepository(IMongoDatabase database)
             .Descending(r => r.OccurredAt)
             .Descending(r => r.Id);
 
-        var items = await Collection.Find(filter)
+        var items = await Collection.Find(filter, new FindOptions { Hint = SearchIndexName })
             .Sort(sort)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
