@@ -4,6 +4,11 @@ namespace Z.Vtuber.Crawlers;
 
 public sealed class RiskControlHandler : DelegatingHandler
 {
+    public RiskControlHandler(HttpMessageHandler innerHandler)
+        : base(innerHandler)
+    {
+    }
+
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
