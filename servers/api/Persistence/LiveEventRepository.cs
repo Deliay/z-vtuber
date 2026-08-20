@@ -34,7 +34,7 @@ public sealed class LiveEventRepository(IMongoDatabase database)
         }
         if (minPriceGoldSeeds.HasValue)
         {
-            var notGiftFilter = Builders<LiveEventRecord>.Filter.Ne(e => e.Type, "gift");
+            var notGiftFilter = Builders<LiveEventRecord>.Filter.Nin(e => e.Type, new[] { "gift", "gift_v2" });
             var priceFilter = Builders<LiveEventRecord>.Filter.Gte(e => e.Price, minPriceGoldSeeds.Value);
             filter &= notGiftFilter | priceFilter;
         }
