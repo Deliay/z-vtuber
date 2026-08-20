@@ -48,7 +48,7 @@ public sealed class LiveEventSource(
         var roomIds = new HashSet<long>();
         try
         {
-            var mids = await subscription.GetMidsAsync(ct);
+            var mids = await subscription.GetMidsAsync(SubscriptionType.Danmaku, ct);
             foreach (var mid in mids)
             {
                 var roomId = await accountRepository.GetLatestRoomIdByMidAsync(mid, ct);

@@ -51,7 +51,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
 
     internal override async Task RunOnceAsync(CancellationToken ct)
     {
-        var mids = await _subscription.GetMidsAsync(ct);
+        var mids = await _subscription.GetMidsAsync(SubscriptionType.Danmaku, ct);
         foreach (var mid in mids)
         {
             var roomId = await _accountRepository.GetLatestRoomIdByMidAsync(mid, ct);
@@ -64,7 +64,13 @@ public sealed class LiveStatusJob : PeriodicJobBase
         }
     }
 
-    private void OnSubscribed(long mid) => _ = CrawlLiveImmediatelyAsync(mid);
+    private void OnSubscribed(long mid, SubscriptionType type)
+    {
+        if (type == SubscriptionType.Danmaku)
+        {
+            _ = CrawlLiveImmediatelyAsync(mid);
+        }
+    }
 
     private async Task CrawlLiveImmediatelyAsync(long mid)
     {

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Z.Vtuber.Persistence.Entities;
 using Z.Vtuber.Services;
 
 namespace Z.Vtuber.Controllers;
@@ -11,7 +12,7 @@ public class BilibiliSubscriptionController(ISubscriptionService subscription) :
     public async Task<IActionResult> List(CancellationToken ct)
     {
         var subscriptions = await subscription.GetAllAsync(ct);
-        var items = subscriptions.Select(s => new SubscriptionItemDto(s.Mid, s.SubscribedAt)).ToList();
+        var items = subscriptions.Select(s => new SubscriptionItemDto(s.Mid, s.Type, s.SubscribedAt)).ToList();
         return Ok(new { items });
     }
 
@@ -23,18 +24,32 @@ public class BilibiliSubscriptionController(ISubscriptionService subscription) :
             return BadRequest(new { error = "mid must be a positive integer." });
         }
 
-        await subscription.SubscribeAsync(request.Mid, ct);
-        return Ok(new SubscriptionItemDto(request.Mid, null));
+        if (string.IsNullOrEmpty(request.Type)
+            || !Enum.TryParse<SubscriptionType>(request.Type, ignoreCase: true, out var type)
+            || !Enum.IsDefined(type))
+        {
+            return BadRequest(new { error = "type is required and must be one of: danmaku, dynamic." });
+        }
+
+        await subscription.SubscribeAsync(request.Mid, type, ct);
+        return Ok(new SubscriptionItemDto(request.Mid, type, null));
     }
 
     [HttpDelete("{mid}")]
-    public async Task<IActionResult> Unsubscribe(long mid, CancellationToken ct)
+    public async Task<IActionResult> Unsubscribe(long mid, [FromQuery] string type, CancellationToken ct)
     {
-        var removed = await subscription.UnsubscribeAsync(mid, ct);
+        if (string.IsNullOrEmpty(type)
+            || !Enum.TryParse<SubscriptionType>(type, ignoreCase: true, out var subscriptionType)
+            || !Enum.IsDefined(subscriptionType))
+        {
+            return BadRequest(new { error = "type is required and must be one of: danmaku, dynamic." });
+        }
+
+        var removed = await subscription.UnsubscribeAsync(mid, subscriptionType, ct);
         return removed ? NoContent() : NotFound();
     }
 }
 
-public sealed record SubscribeRequest(long Mid);
+public sealed record SubscribeRequest(long Mid, string? Type);
 
-public sealed record SubscriptionItemDto(long Mid, DateTime? SubscribedAt);
+public sealed record SubscriptionItemDto(long Mid, SubscriptionType Type, DateTime? SubscribedAt);

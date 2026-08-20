@@ -23,7 +23,12 @@ public class LiveStatusJobTests(MongoDbFixture fixture) : IAsyncLifetime
     private async Task SeedAsync(long roomId)
     {
         var subscriptions = fixture.Database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
-        await subscriptions.InsertOneAsync(new SubscriptionRecord { Mid = Mid, SubscribedAt = DateTime.UtcNow });
+        await subscriptions.InsertOneAsync(new SubscriptionRecord
+        {
+            Mid = Mid,
+            Type = SubscriptionType.Danmaku,
+            SubscribedAt = DateTime.UtcNow
+        });
 
         var accounts = fixture.Database.GetCollection<AccountBasicInfoRecord>(MongoCollectionNames.AccountBasicInfo);
         await accounts.InsertOneAsync(new AccountBasicInfoRecord
