@@ -87,6 +87,7 @@ using (var scope = app.Services.CreateScope())
     await initializer.BackfillSpaceTimelinePubTsAsync();
     await initializer.BackfillGiftPriceAsync();
     await initializer.BackfillLiveEventTextIndexAsync();
+    await initializer.BackfillLiveEventSenderAsync();
 }
 
 if (app.Environment.IsDevelopment())
