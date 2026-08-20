@@ -42,7 +42,7 @@ public sealed class LiveEventRepository(IMongoDatabase database)
         var total = await _collection.CountDocumentsAsync(filter, cancellationToken: ct);
 
         var sort = Builders<LiveEventRecord>.Sort.Descending(e => e.OccurredAt);
-        
+
         // 多 type 查询时附加索引 hint 以确保性能
         var findOptions = new FindOptions();
         if (types is { Count: > 1 })
