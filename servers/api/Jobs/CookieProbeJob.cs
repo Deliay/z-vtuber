@@ -17,11 +17,11 @@ public sealed class CookieProbeJob(
         var cookies = await cookiePool.GetActiveAsync(ct);
         if (cookies.Count == 0)
         {
-            logger.LogWarning("No active cookies; crawling paused until a valid cookie is added.");
+            logger.LogWarning("No active cookies (all cooldown or offline); crawling paused until a valid cookie is added.");
             return;
         }
 
-        var offline = 0;
+        var cooldown = 0;
         foreach (var record in cookies)
         {
             try
@@ -34,15 +34,15 @@ public sealed class CookieProbeJob(
             }
             catch (Exception ex)
             {
-                await cookiePool.MarkOfflineAsync(record.Cookie, ct);
-                offline++;
-                logger.LogWarning(ex, "Cookie (id={Id}) marked offline.", record.Id);
+                await cookiePool.MarkCooldownAsync(record.Cookie, TimeSpan.FromMinutes(options.CooldownMinutes), ct);
+                cooldown++;
+                logger.LogWarning(ex, "Cookie (id={Id}) marked cooldown for {Minutes} minutes.", record.Id, options.CooldownMinutes);
             }
         }
 
-        if (offline == cookies.Count)
+        if (cooldown == cookies.Count)
         {
-            logger.LogError("All cookies are offline; crawling is paused.");
+            logger.LogWarning("All active cookies are now on cooldown; crawling is paused.");
         }
     }
 }

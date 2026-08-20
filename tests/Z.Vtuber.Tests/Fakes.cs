@@ -42,6 +42,8 @@ public sealed class FakeCookiePoolService : ICookiePoolService
 
     public Task MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.CompletedTask;
 
+    public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
+
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<CookieRecord>>([new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active }]);
 }
