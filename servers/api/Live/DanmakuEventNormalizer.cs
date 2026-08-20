@@ -1,15 +1,25 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Mikibot.Crawler.WebsocketCrawler.Data.Commands;
+using Mikibot.Crawler.WebsocketCrawler.Data.Commands.KnownCommand.ProtoCommand;
 
 namespace Z.Vtuber.Live;
 
 public static class DanmakuEventNormalizer
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
     private static readonly IReadOnlyDictionary<KnownCommands, string> TypeMapping =
         new Dictionary<KnownCommands, string>
         {
             [KnownCommands.DANMU_MSG] = "danmaku",
             [KnownCommands.SEND_GIFT] = "gift",
             [KnownCommands.COMBO_SEND] = "gift",
+            [KnownCommands.SEND_GIFT_V2] = "gift_v2",
             [KnownCommands.SUPER_CHAT_MESSAGE] = "super_chat",
             [KnownCommands.GUARD_BUY] = "guard_buy",
             [KnownCommands.INTERACT_WORD] = "interact",
@@ -46,6 +56,21 @@ public static class DanmakuEventNormalizer
         var type = TypeMapping.TryGetValue(command.Command, out var mapped)
             ? mapped
             : command.Command.ToString().ToLowerInvariant();
+
+        if (type == "gift_v2" && command is CommandBase<SendGiftV2> v2Cmd)
+        {
+            var poco = v2Cmd.Data.Parse();
+            var payload = new { data = poco, raw = rawContent };
+            var json = JsonSerializer.Serialize(payload, SerializerOptions);
+
+            long? price = poco.GiftList?.DiscountPrice;
+            if (price is > 0 && poco.GiftList?.CoinType != "gold")
+            {
+                price = 0;
+            }
+
+            return new LiveEvent(roomId, type, liveSessionId, occurredAt, json, price);
+        }
 
         return new LiveEvent(roomId, type, liveSessionId, occurredAt, rawContent);
     }
