@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Z.Vtuber.Jobs;
 using Z.Vtuber.Persistence;
+using Z.Vtuber.Persistence.Entities;
 using Z.Vtuber.Services;
 
 namespace Z.Vtuber.Tests;
@@ -26,9 +27,9 @@ public class SubscriptionOnboardingTests(MongoDbFixture fixture) : IAsyncLifetim
         var crawler = new AccountInfoCrawler(bili, accountRepository, liveSessionRepository, new CrawlLockProvider(), NullLogger<AccountInfoCrawler>.Instance);
 
         Task? crawlTask = null;
-        subscription.Subscribed += mid => crawlTask = crawler.CrawlAsync(mid);
+        subscription.Subscribed += (mid, type) => crawlTask = crawler.CrawlAsync(mid);
 
-        await subscription.SubscribeAsync(1150976664);
+        await subscription.SubscribeAsync(1150976664, SubscriptionType.Dynamic);
 
         Assert.NotNull(crawlTask);
         await crawlTask;
@@ -43,10 +44,10 @@ public class SubscriptionOnboardingTests(MongoDbFixture fixture) : IAsyncLifetim
     {
         var subscription = new SubscriptionService(fixture.Database);
         var crawls = 0;
-        subscription.Subscribed += _ => crawls++;
+        subscription.Subscribed += (_, _) => crawls++;
 
-        await subscription.SubscribeAsync(1150976664);
-        await subscription.SubscribeAsync(1150976664);
+        await subscription.SubscribeAsync(1150976664, SubscriptionType.Dynamic);
+        await subscription.SubscribeAsync(1150976664, SubscriptionType.Dynamic);
 
         Assert.Equal(1, crawls);
     }
