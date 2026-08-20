@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Z.Vtuber.Persistence.Entities;
 using Z.Vtuber.Services;
 
@@ -97,5 +99,25 @@ public class SubscriptionServiceTests(MongoDbFixture fixture) : IAsyncLifetime
 
         Assert.Empty(dynamicMids);
         Assert.Equal([1150976664L], danmakuMids);
+    }
+
+    [Fact]
+    public void SubscriptionType_SerializesToCamelCase()
+    {
+        var options = new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+        };
+
+        var dynamicJson = JsonSerializer.Serialize(SubscriptionType.Dynamic, options);
+        var danmakuJson = JsonSerializer.Serialize(SubscriptionType.Danmaku, options);
+
+        // JsonSerializer.Serialize wraps strings in quotes
+        Assert.Equal("\"dynamic\"", dynamicJson);
+        Assert.Equal("\"danmaku\"", danmakuJson);
+
+        // Verify the actual content matches contract
+        Assert.Equal("dynamic", dynamicJson.Trim('"'));
+        Assert.Equal("danmaku", danmakuJson.Trim('"'));
     }
 }
