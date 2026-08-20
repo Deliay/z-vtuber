@@ -35,7 +35,10 @@ builder.Services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
 builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
 
 builder.Services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
-builder.Services.AddSingleton<IBiliApiClient, BiliApiClient>();
+builder.Services.AddSingleton<BiliApiClient>();
+builder.Services.AddSingleton<BrowserishBiliApiClient>();
+builder.Services.AddSingleton<IBiliApiClient, ResilientBiliApiClient>();
+builder.Services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
 builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventBus, LiveEventBus>();
 builder.Services.AddSingleton<CrawlLockProvider>();
