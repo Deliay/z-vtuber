@@ -489,9 +489,14 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                     continue;
                 }
 
+                // 先查找现有记录以保留其 _id
+                var existingRecord = await textIndexCollection
+                    .Find(r => r.EventId == record.Id)
+                    .FirstOrDefaultAsync(ct);
+
                 var textIndexRecord = new LiveEventTextIndexRecord
                 {
-                    Id = MongoDB.Bson.ObjectId.GenerateNewId(),
+                    Id = existingRecord?.Id ?? MongoDB.Bson.ObjectId.GenerateNewId(),
                     EventId = record.Id,
                     RoomId = record.RoomId,
                     Type = record.Type,
