@@ -93,7 +93,7 @@ public sealed class ResilientBiliApiClientTests
         var opts = DefaultOptions();
         opts.FetchMode = BiliFetchMode.Direct;
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             new SpyCookiePoolService(), new CrawlBackoffRegistry(Options.Create(opts)),
             NullLogger<ResilientBiliApiClient>.Instance);
 
@@ -111,7 +111,7 @@ public sealed class ResilientBiliApiClientTests
         var opts = DefaultOptions();
         opts.FetchMode = BiliFetchMode.Browser;
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             new SpyCookiePoolService(), new CrawlBackoffRegistry(Options.Create(opts)),
             NullLogger<ResilientBiliApiClient>.Instance);
 
@@ -129,7 +129,7 @@ public sealed class ResilientBiliApiClientTests
         var opts = DefaultOptions();
         var registry = new CrawlBackoffRegistry(Options.Create(opts));
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             new SpyCookiePoolService(), registry,
             NullLogger<ResilientBiliApiClient>.Instance);
 
@@ -158,7 +158,7 @@ public sealed class ResilientBiliApiClientTests
         };
         var opts = DefaultOptions();
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             new SpyCookiePoolService(), new CrawlBackoffRegistry(Options.Create(opts)),
             NullLogger<ResilientBiliApiClient>.Instance);
 
@@ -181,11 +181,14 @@ public sealed class ResilientBiliApiClientTests
         var cookiePool = new SpyCookiePoolService();
         var opts = DefaultOptions();
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             cookiePool, new CrawlBackoffRegistry(Options.Create(opts)),
             NullLogger<ResilientBiliApiClient>.Instance);
 
         await sut.GetLiveRoomInfoAsync("cookie12345678", 123);
+
+        // 等待异步操作完成
+        await Task.Delay(100);
 
         Assert.Single(cookiePool.CooldownCalls);
         Assert.Equal(TimeSpan.FromMinutes(opts.CooldownMinutes), cookiePool.CooldownCalls[0].Duration);
@@ -200,7 +203,7 @@ public sealed class ResilientBiliApiClientTests
         var registry = new CrawlBackoffRegistry(Options.Create(opts));
         registry.ReportRiskControl("live:123");
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             new SpyCookiePoolService(), registry,
             NullLogger<ResilientBiliApiClient>.Instance);
 
@@ -227,7 +230,7 @@ public sealed class ResilientBiliApiClientTests
         var opts = DefaultOptions();
         opts.ChannelRecoverSuccessCount = 3;
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             new SpyCookiePoolService(), new CrawlBackoffRegistry(Options.Create(opts)),
             NullLogger<ResilientBiliApiClient>.Instance);
 
@@ -265,7 +268,7 @@ public sealed class ResilientBiliApiClientTests
         var opts = DefaultOptions();
         opts.FetchMode = BiliFetchMode.Direct;
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             new SpyCookiePoolService(), new CrawlBackoffRegistry(Options.Create(opts)),
             NullLogger<ResilientBiliApiClient>.Instance);
 
@@ -289,7 +292,7 @@ public sealed class ResilientBiliApiClientTests
         var opts = DefaultOptions();
         opts.FetchMode = BiliFetchMode.Browser;
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             new SpyCookiePoolService(), new CrawlBackoffRegistry(Options.Create(opts)),
             NullLogger<ResilientBiliApiClient>.Instance);
 
@@ -315,7 +318,7 @@ public sealed class ResilientBiliApiClientTests
         var opts = DefaultOptions();
         opts.FetchMode = BiliFetchMode.Browser;
         var sut = new ResilientBiliApiClient(
-            direct, browser, opts, Options.Create(opts),
+            direct, browser, opts,
             new SpyCookiePoolService(), new CrawlBackoffRegistry(Options.Create(opts)),
             NullLogger<ResilientBiliApiClient>.Instance);
 

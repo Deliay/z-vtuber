@@ -63,16 +63,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/SubscriptionItem"
         "400":
-          description: mid 非法
+          description: mid 非法或 type 缺失/非法（合法取值：danmaku, dynamic）
   /api/b/subscription/{mid}:
     delete:
       summary: 取消订阅
       operationId: unsubscribe
       parameters:
         - $ref: "#/components/parameters/Mid"
+        - name: type
+          in: query
+          required: true
+          description: 订阅类型（danmaku 或 dynamic），缺失或非法返回 400。
+          schema:
+            type: string
+            enum: [danmaku, dynamic]
       responses:
         "204":
           description: 取消成功
+        "400":
+          description: type 缺失或非法（合法取值：danmaku, dynamic）
         "404":
           description: 未订阅
   /api/b/user/{mid}:
@@ -176,7 +185,7 @@ paths:
   /api/b/live/{roomId}/event/range:
     get:
       summary: 分页查询直播间事件
-      description: 按发生时间（occurredAt）降序分页查询直播间事件，可按事件类型（type）与可选时间范围（startedAt/endedAt，含起止边界）筛选；支持按礼物金额下限（minPrice）筛选，仅作用于 gift 类型事件；startedAt 晚于 endedAt 或 minPrice 非法时返回 400。
+      description: 按发生时间（occurredAt）降序分页查询直播间事件，可按事件类型（type）与可选时间范围（startedAt/endedAt，含起止边界）筛选；支持按礼物金额下限（minPrice）筛选，仅作用于 gift/gift_v2 礼物类事件；startedAt 晚于 endedAt 或 minPrice 非法时返回 400。
       operationId: listLiveEventsRange
       parameters:
         - $ref: "#/components/parameters/RoomId"
@@ -198,7 +207,7 @@ paths:
   /api/b/live/{roomId}/event/search:
     get:
       summary: 搜索直播间文字事件（弹幕/SC）
-      description: 在弹幕和醒目留言（SC）的纯文本内容中进行不区分大小写的子串匹配，按发生时间（occurredAt）降序分页返回匹配的事件。搜索范围仅限弹幕（danmaku）和醒目留言（super_chat）类型。
+      description: 在弹幕和醒目留言（SC）的纯文本内容、发送者用户名、粉丝牌名称中进行不区分大小写的子串匹配；纯数字关键词额外按发送者 UID 精确匹配，任一命中即返回。按发生时间（occurredAt）降序分页返回匹配的事件。搜索范围仅限弹幕（danmaku）和醒目留言（super_chat）类型。
       operationId: searchLiveEvents
       parameters:
         - $ref: "#/components/parameters/RoomId"
@@ -278,7 +287,7 @@ components:
       name: minPrice
       in: query
       required: false
-      description: 礼物金额下限（元），最小 0.01，含边界；仅作用于 gift 类型事件，其他类型不受影响；不传不限制；小于 0.01 或大于 9000000000000000 或非数值返回 400。
+      description: 礼物金额下限（元），最小 0.01，含边界；仅作用于 gift/gift_v2 礼物类事件，其他类型不受影响；不传不限制；小于 0.01 或大于 9000000000000000 或非数值返回 400。
       schema:
         type: number
         minimum: 0.01
@@ -287,7 +296,7 @@ components:
       name: stringCriteria
       in: query
       required: true
-      description: 搜索关键词，在弹幕/SC 纯文本中做不区分大小写的子串匹配；非空且非纯空白，最长 200 字符；缺失、为空、仅空白或超长返回 400。
+      description: 搜索关键词，在弹幕/SC 的纯文本、发送者用户名、粉丝牌名称中做不区分大小写子串匹配，任一命中即返回；纯数字关键词额外按发送者 UID 精确匹配；非空且非纯空白，最长 200 字符；缺失、为空、仅空白或超长返回 400。
       schema:
         type: string
         maxLength: 200
@@ -323,17 +332,25 @@ components:
             $ref: "#/components/schemas/CookieItem"
     SubscribeRequest:
       type: object
-      required: [mid]
+      required: [mid, type]
       properties:
         mid:
           type: integer
           format: int64
+        type:
+          type: string
+          enum: [danmaku, dynamic]
+          description: 订阅类型（danmaku 弹幕 / dynamic 动态），必填。
     SubscriptionItem:
       type: object
       properties:
         mid:
           type: integer
           format: int64
+        type:
+          type: string
+          enum: [danmaku, dynamic]
+          description: 订阅类型
         subscribedAt:
           type: string
           format: date-time

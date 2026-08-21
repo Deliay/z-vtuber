@@ -32,7 +32,7 @@ public sealed class BilibiliAccountProvider(BilibiliCrawlerOptions options) : IB
             Timeout = TimeSpan.FromSeconds(options.HttpTimeoutSeconds)
         });
         services.AddSingleton(new CookieJar(cookie));
-        services.AddBilibiliCrawlers();
+        services.AddBilibiliCrawlers(addHttpClient: false);
 
         var provider = services.BuildServiceProvider();
         var account = provider.GetRequiredService<BilibiliAccount>();

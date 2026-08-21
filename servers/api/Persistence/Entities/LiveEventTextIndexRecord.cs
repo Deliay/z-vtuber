@@ -17,6 +17,13 @@ public sealed class LiveEventTextIndexRecord
 
     public string Text { get; set; } = string.Empty;
 
+    public string SenderName { get; set; } = string.Empty;
+
+    [BsonRepresentation(BsonType.Int64)]
+    public long SenderUid { get; set; }
+
+    public string SenderMedal { get; set; } = string.Empty;
+
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime OccurredAt { get; set; }
 }
