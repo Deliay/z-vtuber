@@ -117,19 +117,55 @@ public class SubscriptionTypeSplitMigrationTests(MongoDbFixture fixture) : IAsyn
     }
 
     [Fact]
-    public async Task Migrate_Marker_PreventsRerun()
+    public async Task Migrate_MarkerWithUnmigratedRecords_ExecutesMigration()
     {
         var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
         await meta.InsertOneAsync(new MetaRecord { Key = MongoDbInitializer.SubscriptionTypeSplitMigrationKey });
 
+        // 插入一条无 Type 的记录（模拟回滚场景）
         await InsertLegacyRecordAsync(1001, DateTime.UtcNow);
 
         var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
         await initializer.MigrateSubscriptionTypeSplitAsync();
 
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.Subscriptions);
-        var count = await collection.CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty);
-        Assert.Equal(1, count); // 未迁移，因为 marker 已存在
+        // 即使 marker 存在，如果有未迁移的记录，迁移也会执行（回滚场景）
+        var collection = fixture.Database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+        var count = await collection.CountDocumentsAsync(FilterDefinition<SubscriptionRecord>.Empty);
+        Assert.Equal(2, count); // 1001 Dynamic + 1001 Danmaku
+    }
+
+    [Fact]
+    public async Task Migrate_PreservesExistingDanmakuId_WhenDanmakuRecordAlreadyExists()
+    {
+        var subscribedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var danmakuCollection = fixture.Database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+
+        // 1. 预置一条已存在的 danmaku 记录（模拟旧版本已生成的弹幕订阅）
+        var existingDanmakuId = ObjectId.GenerateNewId();
+        await danmakuCollection.InsertOneAsync(new SubscriptionRecord
+        {
+            Id = existingDanmakuId,
+            Mid = 2001,
+            Type = SubscriptionType.Danmaku,
+            SubscribedAt = subscribedAt
+        });
+
+        // 2. 插入一条无 Type 的存量记录（同 Mid）
+        await InsertLegacyRecordAsync(2001, subscribedAt);
+
+        // 3. 执行迁移 —— 不应抛出 immutable _id 异常（code 66）
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.MigrateSubscriptionTypeSplitAsync();
+
+        // 4. 断言：最终恰有 Dynamic + Danmaku 两条
+        var collection = fixture.Database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+        var dynamic2001 = await collection.Find(s => s.Mid == 2001 && s.Type == SubscriptionType.Dynamic).FirstOrDefaultAsync();
+        var danmaku2001 = await collection.Find(s => s.Mid == 2001 && s.Type == SubscriptionType.Danmaku).FirstOrDefaultAsync();
+        Assert.NotNull(dynamic2001);
+        Assert.NotNull(danmaku2001);
+
+        // 5. 断言：danmaku 记录的 _id 与原始预置记录一致（复用而非重新生成）
+        Assert.Equal(existingDanmakuId, danmaku2001.Id);
     }
 
     [Fact]

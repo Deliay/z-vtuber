@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Mikibot.Crawler.Http.Bilibili;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Configuration;
 
@@ -11,14 +12,16 @@ public sealed class BrowserishBiliApiClient : IBiliApiClient, IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly BilibiliCrawlerOptions _options;
-    private readonly Random _random = new();
+    private readonly IBilibiliAccountProvider _accountProvider;
+    private readonly Random _random = Random.Shared;
     private bool _warmedUp;
     private readonly SemaphoreSlim _warmupLock = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    public BrowserishBiliApiClient(HttpMessageHandler handler, BilibiliCrawlerOptions options)
+    public BrowserishBiliApiClient(HttpMessageHandler handler, BilibiliCrawlerOptions options, IBilibiliAccountProvider accountProvider)
     {
         _options = options;
+        _accountProvider = accountProvider;
         _httpClient = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(options.HttpTimeoutSeconds)
@@ -105,7 +108,14 @@ public sealed class BrowserishBiliApiClient : IBiliApiClient, IDisposable
         await EnsureWarmupAsync(ct);
         await DelayAsync(ct);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.bilibili.com/x/nav/wbi");
+        var account = await _accountProvider.GetProviderAsync(cookie, ct);
+        var biliAccount = account.GetRequiredService<BilibiliAccount>();
+        
+        // Use wbi signature for nav request
+        var signedUrl = biliAccount.Sign([]);
+        var url = $"https://api.bilibili.com/x/web-interface/nav?{signedUrl}";
+        
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Add("Cookie", cookie);
 
         using var response = await _httpClient.SendAsync(request, ct);
@@ -125,9 +135,20 @@ public sealed class BrowserishBiliApiClient : IBiliApiClient, IDisposable
         await EnsureWarmupAsync(ct);
         await DelayAsync(ct);
 
-        var url = $"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid={mid}&platform=web";
+        var account = await _accountProvider.GetProviderAsync(cookie, ct);
+        var biliAccount = account.GetRequiredService<BilibiliAccount>();
+        
+        // Build parameters for wbi signature
+        var parameters = new List<KeyValuePair<string, string>>
+        {
+            new("host_mid", mid.ToString()),
+            new("platform", "web")
+        };
         if (!string.IsNullOrEmpty(offset))
-            url += $"&offset={offset}";
+            parameters.Add(new("offset", offset));
+        
+        var signedUrl = biliAccount.Sign(parameters);
+        var url = $"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?{signedUrl}";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Add("Cookie", cookie);

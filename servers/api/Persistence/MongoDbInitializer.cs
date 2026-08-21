@@ -381,6 +381,13 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                 break;
             }
 
+            // 批量查询现有记录以保留 _id（避免 immutable _id 错误）
+            var eventIds = batch.Select(r => r.Id).ToList();
+            var existingRecords = await textIndexCollection
+                .Find(r => eventIds.Contains(r.EventId))
+                .ToListAsync(ct);
+            var existingDict = existingRecords.ToDictionary(r => r.EventId, r => r.Id);
+
             var models = new List<WriteModel<LiveEventTextIndexRecord>>(batch.Count);
             foreach (var record in batch)
             {
@@ -392,7 +399,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
                 var textIndexRecord = new LiveEventTextIndexRecord
                 {
-                    Id = MongoDB.Bson.ObjectId.GenerateNewId(),
+                    Id = existingDict.TryGetValue(record.Id, out var existingId) ? existingId : MongoDB.Bson.ObjectId.GenerateNewId(),
                     EventId = record.Id,
                     RoomId = record.RoomId,
                     Type = record.Type,
@@ -480,6 +487,13 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                 break;
             }
 
+            // 批量查询现有记录以保留 _id（消除 N+1 查询）
+            var eventIds = batch.Select(r => r.Id).ToList();
+            var existingRecords = await textIndexCollection
+                .Find(r => eventIds.Contains(r.EventId))
+                .ToListAsync(ct);
+            var existingDict = existingRecords.ToDictionary(r => r.EventId, r => r.Id);
+
             var models = new List<WriteModel<LiveEventTextIndexRecord>>(batch.Count);
             foreach (var record in batch)
             {
@@ -489,14 +503,9 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                     continue;
                 }
 
-                // 先查找现有记录以保留其 _id
-                var existingRecord = await textIndexCollection
-                    .Find(r => r.EventId == record.Id)
-                    .FirstOrDefaultAsync(ct);
-
                 var textIndexRecord = new LiveEventTextIndexRecord
                 {
-                    Id = existingRecord?.Id ?? MongoDB.Bson.ObjectId.GenerateNewId(),
+                    Id = existingDict.TryGetValue(record.Id, out var existingId) ? existingId : MongoDB.Bson.ObjectId.GenerateNewId(),
                     EventId = record.Id,
                     RoomId = record.RoomId,
                     Type = record.Type,
@@ -546,17 +555,19 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
         var markerExists = await meta.Find(r => r.Key == SubscriptionTypeSplitMigrationKey)
             .AnyAsync(ct);
-        if (markerExists)
+        
+        // 即使 marker 存在，也需要检查是否有未迁移的记录（回滚场景）
+        var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+        var noTypeFilter = Builders<SubscriptionRecord>.Filter.Not(Builders<SubscriptionRecord>.Filter.Exists(s => s.Type));
+        var hasUnmigrated = await collection.Find(noTypeFilter).AnyAsync(ct);
+        
+        if (markerExists && !hasUnmigrated)
         {
             logger.LogInformation("Subscription type split migration already applied; skipping.");
             return;
         }
 
         const int batchSize = 500;
-        var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
-
-        // 查找所有无 Type 字段的存量文档（迁移后所有文档都有 Type 字段，天然幂等）
-        var noTypeFilter = Builders<SubscriptionRecord>.Filter.Not(Builders<SubscriptionRecord>.Filter.Exists(s => s.Type));
 
         long totalProcessed = 0;
 
@@ -571,6 +582,14 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                 break;
             }
 
+            // 批量查询已存在的 danmaku 记录以复用 _id（避免 immutable _id 错误）
+            var mids = batch.Select(r => r.Mid).ToList();
+            var existingDanmakuFilter = Builders<SubscriptionRecord>.Filter.And(
+                Builders<SubscriptionRecord>.Filter.In(s => s.Mid, mids),
+                Builders<SubscriptionRecord>.Filter.Eq(s => s.Type, SubscriptionType.Danmaku));
+            var existingDanmakuRecords = await collection.Find(existingDanmakuFilter).ToListAsync(ct);
+            var existingDanmakuDict = existingDanmakuRecords.ToDictionary(r => r.Mid, r => r.Id);
+
             var models = new List<WriteModel<SubscriptionRecord>>(batch.Count);
             foreach (var record in batch)
             {
@@ -579,13 +598,19 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                     Builders<SubscriptionRecord>.Filter.Eq(s => s.Id, record.Id),
                     Builders<SubscriptionRecord>.Update.Set(s => s.Type, SubscriptionType.Dynamic)));
 
-                // 2. 插入 danmaku 类型的第二条记录
-                models.Add(new InsertOneModel<SubscriptionRecord>(new SubscriptionRecord
-                {
-                    Mid = record.Mid,
-                    Type = SubscriptionType.Danmaku,
-                    SubscribedAt = record.SubscribedAt
-                }));
+                // 2. 插入或更新 danmaku 类型的第二条记录（使用 upsert 避免崩溃缝隙）
+                var danmakuFilter = Builders<SubscriptionRecord>.Filter.And(
+                    Builders<SubscriptionRecord>.Filter.Eq(s => s.Mid, record.Mid),
+                    Builders<SubscriptionRecord>.Filter.Eq(s => s.Type, SubscriptionType.Danmaku));
+                models.Add(new ReplaceOneModel<SubscriptionRecord>(
+                    danmakuFilter,
+                    new SubscriptionRecord
+                    {
+                        Id = existingDanmakuDict.TryGetValue(record.Mid, out var existingId) ? existingId : MongoDB.Bson.ObjectId.GenerateNewId(),
+                        Mid = record.Mid,
+                        Type = SubscriptionType.Danmaku,
+                        SubscribedAt = record.SubscribedAt
+                    }) { IsUpsert = true });
             }
 
             await collection.BulkWriteAsync(models, cancellationToken: ct);
@@ -600,7 +625,9 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         logger.LogInformation("Subscription type split migration total processed {Total} records.", totalProcessed);
 
-        await meta.InsertOneAsync(new MetaRecord { Key = SubscriptionTypeSplitMigrationKey }, options: null, ct);
+        // 使用 upsert 避免重复键错误（回滚场景）
+        var markerFilter = Builders<MetaRecord>.Filter.Eq(r => r.Key, SubscriptionTypeSplitMigrationKey);
+        await meta.ReplaceOneAsync(markerFilter, new MetaRecord { Key = SubscriptionTypeSplitMigrationKey }, new ReplaceOptions { IsUpsert = true }, ct);
         logger.LogInformation("Subscription type split migration completed and marked as applied.");
     }
 }
