@@ -24,6 +24,7 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         IBiliApiClient direct,
         IBiliApiClient browser,
         BilibiliCrawlerOptions options,
+        IOptions<BilibiliCrawlerOptions> optionsSnapshot,
         ICookiePoolService cookiePool,
         ICrawlBackoffRegistry backoff,
         ILogger<ResilientBiliApiClient> logger)
@@ -76,7 +77,7 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
                 catch (RiskControlException ex)
                 {
                     _logger.LogWarning(ex, "Risk control on direct channel for {Target}", target);
-                    _ = ReportRiskControl(target, cookie, ex);
+                    ReportRiskControl(target, cookie, ex);
                     throw;
                 }
 
@@ -91,7 +92,7 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
                 catch (RiskControlException ex)
                 {
                     _logger.LogWarning(ex, "Risk control on browser channel for {Target}", target);
-                    _ = ReportRiskControl(target, cookie, ex);
+                    ReportRiskControl(target, cookie, ex);
                     throw;
                 }
 
@@ -127,7 +128,7 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         catch (RiskControlException ex)
         {
             _logger.LogWarning(ex, "Risk control on direct channel for {Target}, degrading to browser", target);
-            _ = ReportRiskControl(target, cookie, ex);
+            ReportRiskControl(target, cookie, ex);
             state.Channel = Channel.Browser;
             state.ConsecutiveBrowserSuccesses = 0;
             return await ExecuteBrowserWithRecoveryAsync(target, cookie, browserFunc, state);
@@ -159,22 +160,15 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         catch (RiskControlException ex)
         {
             _logger.LogWarning(ex, "Risk control on browser channel for {Target}", target);
-            _ = ReportRiskControl(target, cookie, ex);
+            ReportRiskControl(target, cookie, ex);
             throw;
         }
     }
 
-    private async Task ReportRiskControl(string target, string cookie, RiskControlException ex)
+    private void ReportRiskControl(string target, string cookie, RiskControlException ex)
     {
         _backoff.ReportRiskControl(target);
-        try
-        {
-            await _cookiePool.MarkCooldownAsync(cookie, TimeSpan.FromMinutes(_options.CooldownMinutes));
-        }
-        catch (Exception ex2)
-        {
-            _logger.LogError(ex2, "Failed to mark cookie cooldown for {Target}", target);
-        }
+        _ = _cookiePool.MarkCooldownAsync(cookie, TimeSpan.FromMinutes(_options.CooldownMinutes));
         _logger.LogWarning("Risk control reported for {Target}, cookie {CookieTag} marked cooldown {Minutes}min",
             target, ShortHash(cookie), _options.CooldownMinutes);
     }

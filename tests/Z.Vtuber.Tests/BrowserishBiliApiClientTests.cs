@@ -1,10 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using Mikibot.Crawler.Http;
-using Mikibot.Crawler.Http.Bilibili;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Configuration;
 using Z.Vtuber.Crawlers;
@@ -24,37 +21,6 @@ public sealed class BrowserishBiliApiClientTests
         BrowserMaxDelaySeconds = 0,
         HttpTimeoutSeconds = 5
     };
-
-    private IBilibiliAccountProvider CreateMockAccountProvider()
-    {
-        // 返回一个模拟的 IBilibiliAccountProvider，避免调用真实的 B 站 API
-        return new MockBilibiliAccountProvider();
-    }
-
-    private sealed class MockBilibiliAccountProvider : IBilibiliAccountProvider
-    {
-        public async Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default)
-        {
-            var services = new ServiceCollection();
-            
-            // 创建一个模拟的 HttpClient 来返回有效的 nav 响应
-            var mockHandler = new MockHttpMessageHandler(_ =>
-                Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("""{"code":0,"data":{"mid":12345,"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}""")
-                }));
-            var httpClient = new HttpClient(mockHandler);
-            
-            var crawler = new Mikibot.Crawler.Http.Bilibili.BiliBasicInfoCrawler(httpClient, new CookieJar(cookie));
-            var account = new BilibiliAccount(crawler);
-            
-            // 初始化 BilibiliAccount
-            await account.InitializeAsync(ct);
-            
-            services.AddSingleton(account);
-            return services.BuildServiceProvider();
-        }
-    }
 
     [Fact]
     public async Task GetLiveRoomInfoAsync_SendsCorrectRequest()
@@ -92,7 +58,7 @@ public sealed class BrowserishBiliApiClientTests
             };
         });
 
-        var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
+        var client = new BrowserishBiliApiClient(handler, _options);
 
         // Act
         var result = await client.GetLiveRoomInfoAsync(TestCookie, TestRoomId);
@@ -119,9 +85,8 @@ public sealed class BrowserishBiliApiClientTests
 
         var handler = new MockHttpMessageHandler(async request =>
         {
-            // 预热请求
-            if (request.RequestUri?.ToString().Contains("www.bilibili.com") == true &&
-                !request.RequestUri.ToString().Contains("api."))
+            if (request.RequestUri?.ToString().Contains("bilibili.com") == true &&
+                !request.RequestUri.ToString().Contains("x/nav"))
             {
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -129,15 +94,14 @@ public sealed class BrowserishBiliApiClientTests
                 };
             }
 
-            // Nav 请求
-            Assert.Contains("x/web-interface/nav", request.RequestUri?.ToString());
+            Assert.Contains("x/nav/wbi", request.RequestUri?.ToString());
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(responseJson)
             };
         });
 
-        var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
+        var client = new BrowserishBiliApiClient(handler, _options);
 
         // Act
         var result = await client.GetNavInfoV2Async(TestCookie);
@@ -188,7 +152,7 @@ public sealed class BrowserishBiliApiClientTests
             };
         });
 
-        var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
+        var client = new BrowserishBiliApiClient(handler, _options);
 
         // Act
         var result = await client.GetSpaceDynamicsAsync(TestCookie, TestMid, "test-offset");
@@ -215,7 +179,7 @@ public sealed class BrowserishBiliApiClientTests
             };
         });
 
-        var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
+        var client = new BrowserishBiliApiClient(handler, _options);
 
         // Act
         var result = await client.GetAccountInfoDataAsync(TestCookie, TestMid);
@@ -248,7 +212,7 @@ public sealed class BrowserishBiliApiClientTests
             };
         });
 
-        var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
+        var client = new BrowserishBiliApiClient(handler, _options);
 
         // Act
         await client.GetLiveRoomInfoAsync(TestCookie, 1);
@@ -262,7 +226,7 @@ public sealed class BrowserishBiliApiClientTests
     public void Constructor_SetsDefaultHeaders()
     {
         // Arrange & Act
-        var client = new BrowserishBiliApiClient(new MockHttpMessageHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))), _options, CreateMockAccountProvider());
+        var client = new BrowserishBiliApiClient(new MockHttpMessageHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))), _options);
 
         // Assert
         var defaultHeaders = client.HttpClient.DefaultRequestHeaders;
@@ -291,7 +255,7 @@ public sealed class BrowserishBiliApiClientTests
             };
         });
 
-        var client = new BrowserishBiliApiClient(handler, options, CreateMockAccountProvider());
+        var client = new BrowserishBiliApiClient(handler, options);
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         // Act

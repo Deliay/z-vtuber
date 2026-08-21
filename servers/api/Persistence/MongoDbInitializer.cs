@@ -33,24 +33,6 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
-    public async Task DropOldSubscriptionIndexAsync(CancellationToken ct = default)
-    {
-        var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
-        await DropIndexIfExistsAsync(collection, "Mid_1", ct);
-        logger.LogInformation("Dropped old Mid_1 subscription index if it existed.");
-    }
-
-    public async Task EnsureSubscriptionCompositeIndexAsync(CancellationToken ct = default)
-    {
-        var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
-        var keys = Builders<SubscriptionRecord>.IndexKeys
-            .Ascending(s => s.Mid)
-            .Ascending(s => s.Type);
-        var options = new CreateIndexOptions { Unique = true, Name = "Mid_1_Type_1" };
-        await collection.Indexes.CreateOneAsync(new CreateIndexModel<SubscriptionRecord>(keys, options), cancellationToken: ct);
-        logger.LogInformation("Ensured (Mid, Type) composite unique index on subscriptions.");
-    }
-
     private Task EnsureCookiesIndexesAsync(CancellationToken ct)
     {
         var collection = database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
@@ -63,15 +45,8 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
     private async Task EnsureSubscriptionsIndexesAsync(CancellationToken ct)
     {
         var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
-
-        // 删除旧的 Mid 单字段唯一索引（如果存在）
-        await DropIndexIfExistsAsync(collection, "Mid_1", ct);
-
-        // 创建 (Mid, Type) 复合唯一索引
-        var keys = Builders<SubscriptionRecord>.IndexKeys
-            .Ascending(s => s.Mid)
-            .Ascending(s => s.Type);
-        var options = new CreateIndexOptions { Unique = true, Name = "Mid_1_Type_1" };
+        var keys = Builders<SubscriptionRecord>.IndexKeys.Ascending(s => s.Mid);
+        var options = new CreateIndexOptions { Unique = true };
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<SubscriptionRecord>(keys, options), cancellationToken: ct);
     }
 
@@ -381,32 +356,22 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                 break;
             }
 
-            // 批量查询现有记录以保留 _id（避免 immutable _id 错误）
-            var eventIds = batch.Select(r => r.Id).ToList();
-            var existingRecords = await textIndexCollection
-                .Find(r => eventIds.Contains(r.EventId))
-                .ToListAsync(ct);
-            var existingDict = existingRecords.ToDictionary(r => r.EventId, r => r.Id);
-
             var models = new List<WriteModel<LiveEventTextIndexRecord>>(batch.Count);
             foreach (var record in batch)
             {
-                var extraction = Live.LiveEventTextExtractor.Extract(record.Type, record.Payload);
-                if (extraction is null)
+                var text = Live.LiveEventTextExtractor.ExtractText(record.Type, record.Payload);
+                if (text is null)
                 {
                     continue;
                 }
 
                 var textIndexRecord = new LiveEventTextIndexRecord
                 {
-                    Id = existingDict.TryGetValue(record.Id, out var existingId) ? existingId : MongoDB.Bson.ObjectId.GenerateNewId(),
+                    Id = MongoDB.Bson.ObjectId.GenerateNewId(),
                     EventId = record.Id,
                     RoomId = record.RoomId,
                     Type = record.Type,
-                    Text = extraction.Text,
-                    SenderName = extraction.SenderName,
-                    SenderUid = extraction.SenderUid,
-                    SenderMedal = extraction.SenderMedal,
+                    Text = text,
                     OccurredAt = record.OccurredAt
                 };
 
@@ -440,195 +405,6 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         await meta.InsertOneAsync(new MetaRecord { Key = LiveEventTextIndexBackfillMigrationKey }, options: null, ct);
         logger.LogInformation("Live event text index backfill completed and marked as applied.");
-    }
-
-    public const string LiveEventSenderBackfillMigrationKey = "live_event_text_index_sender_backfill_v1";
-
-    public async Task BackfillLiveEventSenderAsync(CancellationToken ct = default)
-    {
-        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        var markerExists = await meta.Find(r => r.Key == LiveEventSenderBackfillMigrationKey)
-            .AnyAsync(ct);
-        if (markerExists)
-        {
-            logger.LogInformation("Live event sender backfill already applied; skipping.");
-            return;
-        }
-
-        const int batchSize = 500;
-        var eventCollection = database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
-        var textIndexCollection = database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
-
-        // 筛选弹幕和醒目留言事件
-        var typeFilter = Builders<LiveEventRecord>.Filter.In(e => e.Type, new[] { "danmaku", "super_chat" });
-
-        // 使用基于 _id 的游标分页，避免死循环
-        MongoDB.Bson.ObjectId lastId = MongoDB.Bson.ObjectId.Empty;
-        long totalProcessed = 0;
-
-        while (true)
-        {
-            var idFilter = Builders<LiveEventRecord>.Filter.Gt(e => e.Id, lastId);
-            var combinedFilter = Builders<LiveEventRecord>.Filter.And(typeFilter, idFilter);
-
-            var batch = await eventCollection.Find(combinedFilter)
-                .Project<LiveEventRecord>(Builders<LiveEventRecord>.Projection
-                    .Include(r => r.Id)
-                    .Include(r => r.Type)
-                    .Include(r => r.Payload)
-                    .Include(r => r.RoomId)
-                    .Include(r => r.OccurredAt))
-                .SortBy(e => e.Id)
-                .Limit(batchSize)
-                .ToListAsync(ct);
-
-            if (batch.Count == 0)
-            {
-                break;
-            }
-
-            // 批量查询现有记录以保留 _id（消除 N+1 查询）
-            var eventIds = batch.Select(r => r.Id).ToList();
-            var existingRecords = await textIndexCollection
-                .Find(r => eventIds.Contains(r.EventId))
-                .ToListAsync(ct);
-            var existingDict = existingRecords.ToDictionary(r => r.EventId, r => r.Id);
-
-            var models = new List<WriteModel<LiveEventTextIndexRecord>>(batch.Count);
-            foreach (var record in batch)
-            {
-                var extraction = Live.LiveEventTextExtractor.Extract(record.Type, record.Payload);
-                if (extraction is null)
-                {
-                    continue;
-                }
-
-                var textIndexRecord = new LiveEventTextIndexRecord
-                {
-                    Id = existingDict.TryGetValue(record.Id, out var existingId) ? existingId : MongoDB.Bson.ObjectId.GenerateNewId(),
-                    EventId = record.Id,
-                    RoomId = record.RoomId,
-                    Type = record.Type,
-                    Text = extraction.Text,
-                    SenderName = extraction.SenderName,
-                    SenderUid = extraction.SenderUid,
-                    SenderMedal = extraction.SenderMedal,
-                    OccurredAt = record.OccurredAt
-                };
-
-                // 使用 upsert，唯一索引兜底幂等
-                var upsert = new ReplaceOneModel<LiveEventTextIndexRecord>(
-                    Builders<LiveEventTextIndexRecord>.Filter.Eq(r => r.EventId, record.Id),
-                    textIndexRecord)
-                {
-                    IsUpsert = true
-                };
-                models.Add(upsert);
-            }
-
-            if (models.Count > 0)
-            {
-                await textIndexCollection.BulkWriteAsync(models, cancellationToken: ct);
-                logger.LogInformation("Backfilled live event sender for {Count} records.", models.Count);
-            }
-
-            lastId = batch[^1].Id;
-            totalProcessed += batch.Count;
-
-            // 如果本批不足 batchSize，说明已到末尾
-            if (batch.Count < batchSize)
-            {
-                break;
-            }
-        }
-
-        logger.LogInformation("Live event sender backfill total processed {Total} events.", totalProcessed);
-
-        await meta.InsertOneAsync(new MetaRecord { Key = LiveEventSenderBackfillMigrationKey }, options: null, ct);
-        logger.LogInformation("Live event sender backfill completed and marked as applied.");
-    }
-
-    public const string SubscriptionTypeSplitMigrationKey = "subscription_type_split_v1";
-
-    public async Task MigrateSubscriptionTypeSplitAsync(CancellationToken ct = default)
-    {
-        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        var markerExists = await meta.Find(r => r.Key == SubscriptionTypeSplitMigrationKey)
-            .AnyAsync(ct);
-        
-        // 即使 marker 存在，也需要检查是否有未迁移的记录（回滚场景）
-        var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
-        var noTypeFilter = Builders<SubscriptionRecord>.Filter.Not(Builders<SubscriptionRecord>.Filter.Exists(s => s.Type));
-        var hasUnmigrated = await collection.Find(noTypeFilter).AnyAsync(ct);
-        
-        if (markerExists && !hasUnmigrated)
-        {
-            logger.LogInformation("Subscription type split migration already applied; skipping.");
-            return;
-        }
-
-        const int batchSize = 500;
-
-        long totalProcessed = 0;
-
-        while (true)
-        {
-            var batch = await collection.Find(noTypeFilter)
-                .Limit(batchSize)
-                .ToListAsync(ct);
-
-            if (batch.Count == 0)
-            {
-                break;
-            }
-
-            // 批量查询已存在的 danmaku 记录以复用 _id（避免 immutable _id 错误）
-            var mids = batch.Select(r => r.Mid).ToList();
-            var existingDanmakuFilter = Builders<SubscriptionRecord>.Filter.And(
-                Builders<SubscriptionRecord>.Filter.In(s => s.Mid, mids),
-                Builders<SubscriptionRecord>.Filter.Eq(s => s.Type, SubscriptionType.Danmaku));
-            var existingDanmakuRecords = await collection.Find(existingDanmakuFilter).ToListAsync(ct);
-            var existingDanmakuDict = existingDanmakuRecords.ToDictionary(r => r.Mid, r => r.Id);
-
-            var models = new List<WriteModel<SubscriptionRecord>>(batch.Count);
-            foreach (var record in batch)
-            {
-                // 1. 更新原记录为 dynamic 类型
-                models.Add(new UpdateOneModel<SubscriptionRecord>(
-                    Builders<SubscriptionRecord>.Filter.Eq(s => s.Id, record.Id),
-                    Builders<SubscriptionRecord>.Update.Set(s => s.Type, SubscriptionType.Dynamic)));
-
-                // 2. 插入或更新 danmaku 类型的第二条记录（使用 upsert 避免崩溃缝隙）
-                var danmakuFilter = Builders<SubscriptionRecord>.Filter.And(
-                    Builders<SubscriptionRecord>.Filter.Eq(s => s.Mid, record.Mid),
-                    Builders<SubscriptionRecord>.Filter.Eq(s => s.Type, SubscriptionType.Danmaku));
-                models.Add(new ReplaceOneModel<SubscriptionRecord>(
-                    danmakuFilter,
-                    new SubscriptionRecord
-                    {
-                        Id = existingDanmakuDict.TryGetValue(record.Mid, out var existingId) ? existingId : MongoDB.Bson.ObjectId.GenerateNewId(),
-                        Mid = record.Mid,
-                        Type = SubscriptionType.Danmaku,
-                        SubscribedAt = record.SubscribedAt
-                    }) { IsUpsert = true });
-            }
-
-            await collection.BulkWriteAsync(models, cancellationToken: ct);
-            logger.LogInformation("Subscription type split: processed {Count} records.", batch.Count);
-            totalProcessed += batch.Count;
-
-            if (batch.Count < batchSize)
-            {
-                break;
-            }
-        }
-
-        logger.LogInformation("Subscription type split migration total processed {Total} records.", totalProcessed);
-
-        // 使用 upsert 避免重复键错误（回滚场景）
-        var markerFilter = Builders<MetaRecord>.Filter.Eq(r => r.Key, SubscriptionTypeSplitMigrationKey);
-        await meta.ReplaceOneAsync(markerFilter, new MetaRecord { Key = SubscriptionTypeSplitMigrationKey }, new ReplaceOptions { IsUpsert = true }, ct);
-        logger.LogInformation("Subscription type split migration completed and marked as applied.");
     }
 }
 

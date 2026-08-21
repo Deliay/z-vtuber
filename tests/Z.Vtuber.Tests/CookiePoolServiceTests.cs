@@ -88,12 +88,12 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
         await service.AddAsync("cookie-a");
         await service.AddAsync("cookie-b");
 
-        // cooldown 1s, delay 2s to avoid BSON 毫秒精度 + 调度抖动竞态
+        // set cooldown to 1 second from now, then wait
         await service.MarkCooldownAsync("cookie-a", TimeSpan.FromSeconds(1));
         var during = await service.NextAsync();
         Assert.Equal("cookie-b", during.Cookie);
 
-        await Task.Delay(TimeSpan.FromSeconds(2));
+        await Task.Delay(TimeSpan.FromSeconds(1));
         var after = await service.NextAsync();
         Assert.Equal("cookie-a", after.Cookie);
     }

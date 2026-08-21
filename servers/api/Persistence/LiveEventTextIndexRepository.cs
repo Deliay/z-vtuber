@@ -27,25 +27,10 @@ public sealed class LiveEventTextIndexRepository(IMongoDatabase database)
         CancellationToken ct = default)
     {
         var escapedCriteria = Regex.Escape(criteria);
-        var regex = new BsonRegularExpression(escapedCriteria, "i");
-
-        // 构建 $or 过滤器：Text/SenderName/SenderMedal regex 匹配
-        var orFilters = new List<FilterDefinition<LiveEventTextIndexRecord>>
-        {
-            Builders<LiveEventTextIndexRecord>.Filter.Regex(r => r.Text, regex),
-            Builders<LiveEventTextIndexRecord>.Filter.Regex(r => r.SenderName, regex),
-            Builders<LiveEventTextIndexRecord>.Filter.Regex(r => r.SenderMedal, regex)
-        };
-
-        // 纯数字关键词追加 SenderUid 精确匹配
-        if (TryParseUid(criteria, out var uid))
-        {
-            orFilters.Add(Builders<LiveEventTextIndexRecord>.Filter.Eq(r => r.SenderUid, uid));
-        }
 
         var filter = Builders<LiveEventTextIndexRecord>.Filter.And(
             Builders<LiveEventTextIndexRecord>.Filter.Eq(r => r.RoomId, roomId),
-            Builders<LiveEventTextIndexRecord>.Filter.Or(orFilters));
+            Builders<LiveEventTextIndexRecord>.Filter.Regex(r => r.Text, new BsonRegularExpression(escapedCriteria, "i")));
 
         var total = await Collection.CountDocumentsAsync(filter, cancellationToken: ct);
 
@@ -60,25 +45,5 @@ public sealed class LiveEventTextIndexRepository(IMongoDatabase database)
             .ToListAsync(ct);
 
         return (total, items);
-    }
-
-    internal static bool TryParseUid(string criteria, out long uid)
-    {
-        uid = 0;
-        if (string.IsNullOrWhiteSpace(criteria))
-        {
-            return false;
-        }
-
-        // 检查是否全部为 ASCII 数字
-        foreach (var c in criteria)
-        {
-            if (c < '0' || c > '9')
-            {
-                return false;
-            }
-        }
-
-        return long.TryParse(criteria, out uid);
     }
 }

@@ -39,20 +39,14 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
 
     internal override async Task RunOnceAsync(CancellationToken ct)
     {
-        var mids = await _subscription.GetMidsAsync(SubscriptionType.Dynamic, ct);
+        var mids = await _subscription.GetMidsAsync(ct);
         foreach (var mid in mids)
         {
             await CrawlLockedAsync(mid, ct);
         }
     }
 
-    private void OnSubscribed(long mid, SubscriptionType type)
-    {
-        if (type == SubscriptionType.Dynamic)
-        {
-            _ = CrawlLockedAsync(mid, CancellationToken.None);
-        }
-    }
+    private void OnSubscribed(long mid) => _ = CrawlLockedAsync(mid, CancellationToken.None);
 
     private async Task CrawlLockedAsync(long mid, CancellationToken ct)
     {

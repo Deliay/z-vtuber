@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Z.Vtuber.Persistence.Entities;
 using Z.Vtuber.Services;
 
 namespace Z.Vtuber.Controllers;
@@ -12,7 +11,7 @@ public class BilibiliSubscriptionController(ISubscriptionService subscription) :
     public async Task<IActionResult> List(CancellationToken ct)
     {
         var subscriptions = await subscription.GetAllAsync(ct);
-        var items = subscriptions.Select(s => new SubscriptionItemDto(s.Mid, s.Type, s.SubscribedAt)).ToList();
+        var items = subscriptions.Select(s => new SubscriptionItemDto(s.Mid, s.SubscribedAt)).ToList();
         return Ok(new { items });
     }
 
@@ -24,52 +23,18 @@ public class BilibiliSubscriptionController(ISubscriptionService subscription) :
             return BadRequest(new { error = "mid must be a positive integer." });
         }
 
-        if (string.IsNullOrEmpty(request.Type))
-        {
-            return BadRequest(new { error = "type is required and must be one of: danmaku, dynamic." });
-        }
-
-        // 拒绝纯数字字符串（契约不允许）
-        if (request.Type.All(char.IsDigit))
-        {
-            return BadRequest(new { error = "type must be one of: danmaku, dynamic." });
-        }
-
-        if (!Enum.TryParse<SubscriptionType>(request.Type, ignoreCase: true, out var type)
-            || !Enum.IsDefined(type))
-        {
-            return BadRequest(new { error = "type must be one of: danmaku, dynamic." });
-        }
-
-        await subscription.SubscribeAsync(request.Mid, type, ct);
-        return Ok(new SubscriptionItemDto(request.Mid, type, null));
+        await subscription.SubscribeAsync(request.Mid, ct);
+        return Ok(new SubscriptionItemDto(request.Mid, null));
     }
 
     [HttpDelete("{mid}")]
-    public async Task<IActionResult> Unsubscribe(long mid, [FromQuery] string type, CancellationToken ct)
+    public async Task<IActionResult> Unsubscribe(long mid, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(type))
-        {
-            return BadRequest(new { error = "type is required and must be one of: danmaku, dynamic." });
-        }
-
-        // 拒绝纯数字字符串（契约不允许）
-        if (type.All(char.IsDigit))
-        {
-            return BadRequest(new { error = "type must be one of: danmaku, dynamic." });
-        }
-
-        if (!Enum.TryParse<SubscriptionType>(type, ignoreCase: true, out var subscriptionType)
-            || !Enum.IsDefined(subscriptionType))
-        {
-            return BadRequest(new { error = "type must be one of: danmaku, dynamic." });
-        }
-
-        var removed = await subscription.UnsubscribeAsync(mid, subscriptionType, ct);
+        var removed = await subscription.UnsubscribeAsync(mid, ct);
         return removed ? NoContent() : NotFound();
     }
 }
 
-public sealed record SubscribeRequest(long Mid, string? Type);
+public sealed record SubscribeRequest(long Mid);
 
-public sealed record SubscriptionItemDto(long Mid, SubscriptionType Type, DateTime? SubscribedAt);
+public sealed record SubscriptionItemDto(long Mid, DateTime? SubscribedAt);

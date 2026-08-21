@@ -48,7 +48,7 @@ public sealed class LiveEventSource(
         var roomIds = new HashSet<long>();
         try
         {
-            var mids = await subscription.GetMidsAsync(SubscriptionType.Danmaku, ct);
+            var mids = await subscription.GetMidsAsync(ct);
             foreach (var mid in mids)
             {
                 var roomId = await accountRepository.GetLatestRoomIdByMidAsync(mid, ct);
@@ -139,18 +139,15 @@ public sealed class LiveEventSource(
                     // 文本索引写入：弹幕/SC 事件提取文本并写入索引集合
                     try
                     {
-                        var extraction = LiveEventTextExtractor.Extract(liveEvent.Type, liveEvent.Payload);
-                        if (extraction is not null)
+                        var text = LiveEventTextExtractor.ExtractText(liveEvent.Type, liveEvent.Payload);
+                        if (text is not null)
                         {
                             var textIndexRecord = new Persistence.Entities.LiveEventTextIndexRecord
                             {
                                 EventId = liveEventRecord.Id,
                                 RoomId = liveEvent.RoomId,
                                 Type = liveEvent.Type,
-                                Text = extraction.Text,
-                                SenderName = extraction.SenderName,
-                                SenderUid = extraction.SenderUid,
-                                SenderMedal = extraction.SenderMedal,
+                                Text = text,
                                 OccurredAt = liveEvent.OccurredAt
                             };
                             await textIndexRepository.InsertAsync(textIndexRecord, ct);

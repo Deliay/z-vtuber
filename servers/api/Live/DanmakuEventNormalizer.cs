@@ -59,25 +59,17 @@ public static class DanmakuEventNormalizer
 
         if (type == "gift_v2" && command is CommandBase<SendGiftV2> v2Cmd)
         {
-            try
-            {
-                var poco = v2Cmd.Data.Parse();
-                var payload = new { data = poco, raw = rawContent };
-                var json = JsonSerializer.Serialize(payload, SerializerOptions);
+            var poco = v2Cmd.Data.Parse();
+            var payload = new { data = poco, raw = rawContent };
+            var json = JsonSerializer.Serialize(payload, SerializerOptions);
 
-                long? price = poco.GiftList?.DiscountPrice;
-                if (price is > 0 && poco.GiftList?.CoinType != "gold")
-                {
-                    price = 0;
-                }
-
-                return new LiveEvent(roomId, type, liveSessionId, occurredAt, json, price);
-            }
-            catch (Exception)
+            long? price = poco.GiftList?.DiscountPrice;
+            if (price is > 0 && poco.GiftList?.CoinType != "gold")
             {
-                // gift_v2 解析失败时降级为原始 payload
-                return new LiveEvent(roomId, type, liveSessionId, occurredAt, rawContent);
+                price = 0;
             }
+
+            return new LiveEvent(roomId, type, liveSessionId, occurredAt, json, price);
         }
 
         return new LiveEvent(roomId, type, liveSessionId, occurredAt, rawContent);

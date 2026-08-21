@@ -36,20 +36,11 @@ public sealed class CookieProbeJob(
             {
                 logger.LogInformation(ex, "Cookie probe skipped for cookie (id={Id}): backoff active.", record.Id);
             }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (RiskControlException ex)
+            catch (Exception ex)
             {
                 await cookiePool.MarkCooldownAsync(record.Cookie, TimeSpan.FromMinutes(options.CooldownMinutes), ct);
                 cooldown++;
-                logger.LogWarning(ex, "Cookie (id={Id}) marked cooldown for {Minutes} minutes due to risk control.", record.Id, options.CooldownMinutes);
-            }
-            catch (Exception ex)
-            {
-                await cookiePool.MarkOfflineAsync(record.Cookie, ct);
-                logger.LogWarning(ex, "Cookie (id={Id}) marked offline due to probe failure.", record.Id);
+                logger.LogWarning(ex, "Cookie (id={Id}) marked cooldown for {Minutes} minutes.", record.Id, options.CooldownMinutes);
             }
         }
 
