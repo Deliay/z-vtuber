@@ -1,3 +1,15 @@
+worker_processes 1;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    sendfile on;
+
 server {
     listen 80;
     server_name localhost;
@@ -21,4 +33,5 @@ server {
         expires 1y;
         add_header Cache-Control "public, immutable";
     }
+}
 }
