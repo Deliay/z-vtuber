@@ -19,7 +19,7 @@ export function SubscriptionPage() {
   const [error, setError] = useState<string | null>(null)
 
   const [mid, setMid] = useState('')
-  const [type, setType] = useState<'danmaku' | 'dynamic'>('danmaku')
+  const [type, setType] = useState<'danmaku' | 'dynamic' | ''>('')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -46,9 +46,19 @@ export function SubscriptionPage() {
     e.preventDefault()
     setSubmitError(null)
 
-    const midNum = parseInt(mid, 10)
-    if (!mid || isNaN(midNum) || midNum <= 0) {
-      setSubmitError('请输入有效的主播 ID')
+    if (!type) {
+      setSubmitError('请选择订阅类型')
+      return
+    }
+
+    if (!mid || !/^\d+$/.test(mid)) {
+      setSubmitError('请输入有效的主播 ID（纯数字）')
+      return
+    }
+
+    const midNum = Number(mid)
+    if (midNum <= 0) {
+      setSubmitError('主播 ID 必须为正整数')
       return
     }
 
@@ -56,7 +66,7 @@ export function SubscriptionPage() {
       setSubmitting(true)
       await subscribe({ mid: midNum, type })
       setMid('')
-      setType('danmaku')
+      setType('')
       await fetchSubscriptions()
     } catch (err: any) {
       if (err.status === 400 && err.serverMessage) {
@@ -105,10 +115,11 @@ export function SubscriptionPage() {
           <select
             value={type}
             onChange={(e) =>
-              setType(e.target.value as 'danmaku' | 'dynamic')
+              setType(e.target.value as 'danmaku' | 'dynamic' | '')
             }
             style={{ padding: '0.5rem' }}
           >
+            <option value="">请选择类型</option>
             <option value="danmaku">弹幕</option>
             <option value="dynamic">动态</option>
           </select>
