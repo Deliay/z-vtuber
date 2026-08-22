@@ -28,7 +28,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: apps/web
           file: apps/web/Dockerfile
           tags: |
             ${{ secrets.DOCKER_ENDPOINT }}/zero-tools/z-vtuber-backdoor-web:${{ github.sha }}
