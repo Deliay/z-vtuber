@@ -31,7 +31,7 @@ export function SubscriptionPage() {
       setError(null)
       const data = await listSubscriptions()
       setSubscriptions(data)
-    } catch (err) {
+    } catch {
       setError('服务不可用')
     } finally {
       setLoading(false)

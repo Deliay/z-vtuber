@@ -8,7 +8,7 @@ import {
 } from './client'
 
 const mockFetch = vi.fn()
-global.fetch = mockFetch
+vi.stubGlobal('fetch', mockFetch)
 
 describe('API Client', () => {
   beforeEach(() => {

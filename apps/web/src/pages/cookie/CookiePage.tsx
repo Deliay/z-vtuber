@@ -30,7 +30,7 @@ export function CookiePage() {
       setError(null)
       const data = await listCookies()
       setCookies(data)
-    } catch (err) {
+    } catch {
       setError('服务不可用')
     } finally {
       setLoading(false)

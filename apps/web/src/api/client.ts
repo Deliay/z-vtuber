@@ -1,4 +1,4 @@
-import type { components, operations } from './schema'
+import type { components } from './schema'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api'
 
