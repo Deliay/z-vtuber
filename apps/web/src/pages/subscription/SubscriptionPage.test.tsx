@@ -64,14 +64,45 @@ describe('SubscriptionPage', () => {
     })
   })
 
-  it('should validate mid input before submission', async () => {
+  it('should validate type selection before submission', async () => {
     render(<SubscriptionPage />)
 
     const submitButton = screen.getByText('新增订阅')
     fireEvent.click(submitButton)
 
     await waitFor(() => {
-      expect(screen.getByText('请输入有效的主播 ID')).toBeInTheDocument()
+      expect(screen.getByText('请选择订阅类型')).toBeInTheDocument()
+    })
+  })
+
+  it('should validate mid input before submission', async () => {
+    render(<SubscriptionPage />)
+
+    const typeSelect = screen.getByDisplayValue('请选择类型')
+    fireEvent.change(typeSelect, { target: { value: 'danmaku' } })
+
+    const submitButton = screen.getByText('新增订阅')
+    fireEvent.click(submitButton)
+
+    await waitFor(() => {
+      expect(screen.getByText('请输入有效的主播 ID（纯数字）')).toBeInTheDocument()
+    })
+  })
+
+  it('should reject non-numeric mid input', async () => {
+    render(<SubscriptionPage />)
+
+    const typeSelect = screen.getByDisplayValue('请选择类型')
+    fireEvent.change(typeSelect, { target: { value: 'danmaku' } })
+
+    const midInput = screen.getByPlaceholderText('主播 ID (mid)')
+    fireEvent.change(midInput, { target: { value: '123abc' } })
+
+    const submitButton = screen.getByText('新增订阅')
+    fireEvent.click(submitButton)
+
+    await waitFor(() => {
+      expect(screen.getByText('请输入有效的主播 ID（纯数字）')).toBeInTheDocument()
     })
   })
 
@@ -97,6 +128,9 @@ describe('SubscriptionPage', () => {
       expect(screen.getByText('暂无订阅')).toBeInTheDocument()
     })
 
+    const typeSelect = screen.getByDisplayValue('请选择类型')
+    fireEvent.change(typeSelect, { target: { value: 'danmaku' } })
+
     const midInput = screen.getByPlaceholderText('主播 ID (mid)')
     fireEvent.change(midInput, { target: { value: '789' } })
 
@@ -116,6 +150,9 @@ describe('SubscriptionPage', () => {
     mockSubscribe.mockRejectedValue(error)
 
     render(<SubscriptionPage />)
+
+    const typeSelect = screen.getByDisplayValue('请选择类型')
+    fireEvent.change(typeSelect, { target: { value: 'danmaku' } })
 
     const midInput = screen.getByPlaceholderText('主播 ID (mid)')
     fireEvent.change(midInput, { target: { value: '123' } })
