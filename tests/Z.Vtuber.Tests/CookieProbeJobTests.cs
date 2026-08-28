@@ -4,6 +4,7 @@ using MongoDB.Bson;
 using Z.Vtuber.Configuration;
 using Z.Vtuber.Crawlers;
 using Z.Vtuber.Jobs;
+using Z.Vtuber.Persistence;
 using Z.Vtuber.Persistence.Entities;
 using Z.Vtuber.Services;
 
@@ -11,6 +12,27 @@ namespace Z.Vtuber.Tests;
 
 public sealed class CookieProbeJobTests
 {
+    private sealed class MockCookieAccountInfoRepository : ICookieAccountInfoRepository
+    {
+        public List<CookieAccountInfoRecord> Upserts { get; } = [];
+        public bool ThrowOnUpsert { get; set; }
+
+        public Task UpsertAsync(CookieAccountInfoRecord record, CancellationToken ct = default)
+        {
+            if (ThrowOnUpsert)
+            {
+                throw new InvalidOperationException("db down");
+            }
+
+            Upserts.Add(record);
+            return Task.CompletedTask;
+        }
+
+        public Task<Dictionary<ObjectId, CookieAccountInfoRecord>> GetByCookieIdsAsync(
+            IReadOnlyCollection<ObjectId> cookieIds, CancellationToken ct = default)
+            => Task.FromResult(new Dictionary<ObjectId, CookieAccountInfoRecord>());
+    }
+
     private sealed class MockBiliApiClient : IBiliApiClient
     {
         public Func<string, CancellationToken, Task<NavInfo>>? NavInfoFunc { get; set; }
@@ -79,7 +101,7 @@ public sealed class CookieProbeJobTests
         {
             ActiveCookies = [new CookieRecord { Id = ObjectId.GenerateNewId(), Cookie = "cookie1", Status = CookieStatus.Active }]
         };
-        var job = new CookieProbeJob(bili, cookiePool, DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
+        var job = new CookieProbeJob(bili, cookiePool, new MockCookieAccountInfoRepository(), DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -99,7 +121,7 @@ public sealed class CookieProbeJobTests
         {
             ActiveCookies = [new CookieRecord { Id = ObjectId.GenerateNewId(), Cookie = "cookie1", Status = CookieStatus.Active }]
         };
-        var job = new CookieProbeJob(bili, cookiePool, DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
+        var job = new CookieProbeJob(bili, cookiePool, new MockCookieAccountInfoRepository(), DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -120,7 +142,7 @@ public sealed class CookieProbeJobTests
         {
             ActiveCookies = [new CookieRecord { Id = ObjectId.GenerateNewId(), Cookie = "cookie1", Status = CookieStatus.Active }]
         };
-        var job = new CookieProbeJob(bili, cookiePool, DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
+        var job = new CookieProbeJob(bili, cookiePool, new MockCookieAccountInfoRepository(), DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => job.RunOnceAsync(CancellationToken.None));
@@ -137,7 +159,7 @@ public sealed class CookieProbeJobTests
         {
             ActiveCookies = [new CookieRecord { Id = ObjectId.GenerateNewId(), Cookie = "cookie1", Status = CookieStatus.Active }]
         };
-        var job = new CookieProbeJob(bili, cookiePool, DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
+        var job = new CookieProbeJob(bili, cookiePool, new MockCookieAccountInfoRepository(), DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -156,11 +178,98 @@ public sealed class CookieProbeJobTests
         {
             ActiveCookies = [new CookieRecord { Id = ObjectId.GenerateNewId(), Cookie = "cookie1", Status = CookieStatus.Active }]
         };
-        var job = new CookieProbeJob(bili, cookiePool, DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
+        var job = new CookieProbeJob(bili, cookiePool, new MockCookieAccountInfoRepository(), DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
 
         await job.RunOnceAsync(CancellationToken.None);
 
         Assert.Empty(cookiePool.CooldownCalls);
         Assert.Empty(cookiePool.OfflineCalls);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_SuccessfulProbe_UpsertsAccountInfoWithNameMapping()
+    {
+        var cookieId = ObjectId.GenerateNewId();
+        var nav = new NavInfo { Mid = 12345, Name = "小明" };
+        var bili = new MockBiliApiClient { NavInfoFunc = (_, _) => Task.FromResult(nav) };
+        var cookiePool = new MockCookiePoolService
+        {
+            ActiveCookies = [new CookieRecord { Id = cookieId, Cookie = "cookie1", Status = CookieStatus.Active }]
+        };
+        var repo = new MockCookieAccountInfoRepository();
+        var job = new CookieProbeJob(bili, cookiePool, repo, DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Single(repo.Upserts);
+        Assert.Equal(cookieId, repo.Upserts[0].CookieId);
+        Assert.Equal(12345, repo.Upserts[0].Mid);
+        Assert.Equal("小明", repo.Upserts[0].Uname);
+        Assert.NotEqual(default, repo.Upserts[0].FetchedAt);
+        Assert.Empty(cookiePool.CooldownCalls);
+        Assert.Empty(cookiePool.OfflineCalls);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PersistFailure_DoesNotAffectStateMachine()
+    {
+        var cookieId = ObjectId.GenerateNewId();
+        var bili = new MockBiliApiClient
+        {
+            NavInfoFunc = (_, _) => Task.FromResult(new NavInfo { Mid = 12345, Name = "小明" })
+        };
+        var cookiePool = new MockCookiePoolService
+        {
+            ActiveCookies = [new CookieRecord { Id = cookieId, Cookie = "cookie1", Status = CookieStatus.Active }]
+        };
+        var repo = new MockCookieAccountInfoRepository { ThrowOnUpsert = true };
+        var job = new CookieProbeJob(bili, cookiePool, repo, DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Empty(cookiePool.CooldownCalls);
+        Assert.Empty(cookiePool.OfflineCalls);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_NavMidZero_DoesNotTriggerUpsert()
+    {
+        var cookieId = ObjectId.GenerateNewId();
+        var bili = new MockBiliApiClient
+        {
+            NavInfoFunc = (_, _) => Task.FromResult(new NavInfo { Mid = 0 })
+        };
+        var cookiePool = new MockCookiePoolService
+        {
+            ActiveCookies = [new CookieRecord { Id = cookieId, Cookie = "cookie1", Status = CookieStatus.Active }]
+        };
+        var repo = new MockCookieAccountInfoRepository();
+        var job = new CookieProbeJob(bili, cookiePool, repo, DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Empty(repo.Upserts);
+        Assert.Single(cookiePool.OfflineCalls);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_NavException_DoesNotTriggerUpsert()
+    {
+        var cookieId = ObjectId.GenerateNewId();
+        var bili = new MockBiliApiClient
+        {
+            NavInfoFunc = (_, _) => throw new InvalidOperationException("test error")
+        };
+        var cookiePool = new MockCookiePoolService
+        {
+            ActiveCookies = [new CookieRecord { Id = cookieId, Cookie = "cookie1", Status = CookieStatus.Active }]
+        };
+        var repo = new MockCookieAccountInfoRepository();
+        var job = new CookieProbeJob(bili, cookiePool, repo, DefaultOptions(), NullLogger<CookieProbeJob>.Instance);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Empty(repo.Upserts);
+        Assert.Single(cookiePool.OfflineCalls);
     }
 }
