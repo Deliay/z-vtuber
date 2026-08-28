@@ -5,7 +5,7 @@ import * as client from '../../api/client'
 
 vi.mock('../../api/client')
 
-const mockListCookies = vi.mocked(client.listCookies)
+const mockListCookies = vi.mocked(client.listBackstageCookies)
 const mockAddCookie = vi.mocked(client.addCookie)
 
 describe('CookiePage', () => {
@@ -52,6 +52,34 @@ describe('CookiePage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('暂无 Cookie')).toBeInTheDocument()
+    })
+  })
+
+  it('should render account nickname and placeholder regardless of status', async () => {
+    mockListCookies.mockResolvedValue([
+      {
+        id: 'cookie-1',
+        status: 'active',
+        lastCheckedAt: null,
+        lastUsedAt: null,
+        account: { name: '某帐号' },
+      },
+      {
+        id: 'cookie-2',
+        status: 'offline',
+        lastCheckedAt: null,
+        lastUsedAt: null,
+        account: null,
+      },
+    ])
+
+    render(<CookiePage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('某帐号')).toBeInTheDocument()
+      expect(screen.getByText('暂无资料')).toBeInTheDocument()
+      expect(screen.getByText('可用')).toBeInTheDocument()
+      expect(screen.getByText('离线')).toBeInTheDocument()
     })
   })
 
