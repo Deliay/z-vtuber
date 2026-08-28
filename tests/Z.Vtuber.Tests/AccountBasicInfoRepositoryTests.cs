@@ -30,4 +30,36 @@ public class AccountBasicInfoRepositoryTests(MongoDbFixture fixture) : IAsyncLif
         Assert.NotNull(latest);
         Assert.Equal("data-2", latest.Data);
     }
+
+    [Fact]
+    public async Task GetLatestByMidsAsync_MultiMidMultiVersion_ReturnsLatestPerMid()
+    {
+        var repository = new AccountBasicInfoRepository(fixture.Database);
+        var early = DateTime.UtcNow.AddHours(-2);
+
+        await repository.UpsertAsync(Record("m1-early"));
+        await repository.UpsertAsync(Record("m1-late"));
+        await repository.UpsertAsync(new AccountBasicInfoRecord
+        {
+            Mid = 222,
+            RoomId = 222,
+            Data = "m2-data",
+            FetchedAt = early,
+        });
+
+        var found = await repository.GetLatestByMidsAsync([1150976664, 222, 333]);
+
+        Assert.Equal(2, found.Count);
+        Assert.False(found.ContainsKey(333));
+        Assert.Equal("m1-late", found[1150976664].Data);
+        Assert.Equal("m2-data", found[222].Data);
+    }
+
+    [Fact]
+    public async Task GetLatestByMidsAsync_EmptyInput_ReturnsEmptyDict()
+    {
+        var repository = new AccountBasicInfoRepository(fixture.Database);
+        var found = await repository.GetLatestByMidsAsync([]);
+        Assert.Empty(found);
+    }
 }
