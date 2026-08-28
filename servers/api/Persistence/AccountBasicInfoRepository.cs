@@ -34,4 +34,20 @@ public sealed class AccountBasicInfoRepository(IMongoDatabase database)
             .FirstOrDefaultAsync(ct);
         return latest?.RoomId;
     }
+
+    public async Task<Dictionary<long, AccountBasicInfoRecord>> GetLatestByMidsAsync(
+        IReadOnlyCollection<long> mids, CancellationToken ct = default)
+    {
+        if (mids.Count == 0)
+        {
+            return new Dictionary<long, AccountBasicInfoRecord>();
+        }
+
+        var filter = Builders<AccountBasicInfoRecord>.Filter.In(a => a.Mid, mids);
+        var records = await _collection.Find(filter).ToListAsync(ct);
+
+        return records
+            .GroupBy(a => a.Mid)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(a => a.FetchedAt).First());
+    }
 }

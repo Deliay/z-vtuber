@@ -36,6 +36,7 @@ builder.Services.AddSingleton<LiveEventRepository>();
 builder.Services.AddSingleton<SpaceTimelineRepository>();
 builder.Services.AddSingleton<LiveSessionRepository>();
 builder.Services.AddSingleton<LiveEventTextIndexRepository>();
+builder.Services.AddSingleton<CookieAccountInfoRepository>();
 builder.Services.AddSingleton<MongoDbInitializer>();
 
 builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
