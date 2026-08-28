@@ -4,7 +4,14 @@ using Z.Vtuber.Persistence.Entities;
 
 namespace Z.Vtuber.Persistence;
 
-public sealed class CookieAccountInfoRepository(IMongoDatabase database)
+public interface ICookieAccountInfoRepository
+{
+    Task UpsertAsync(CookieAccountInfoRecord record, CancellationToken ct = default);
+    Task<Dictionary<ObjectId, CookieAccountInfoRecord>> GetByCookieIdsAsync(
+        IReadOnlyCollection<ObjectId> cookieIds, CancellationToken ct = default);
+}
+
+public sealed class CookieAccountInfoRepository(IMongoDatabase database) : ICookieAccountInfoRepository
 {
     private readonly IMongoCollection<CookieAccountInfoRecord> _collection =
         database.GetCollection<CookieAccountInfoRecord>(MongoCollectionNames.CookieAccountInfo);

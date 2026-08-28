@@ -1,5 +1,7 @@
 using Z.Vtuber.Configuration;
 using Z.Vtuber.Crawlers;
+using Z.Vtuber.Persistence;
+using Z.Vtuber.Persistence.Entities;
 using Z.Vtuber.Services;
 
 namespace Z.Vtuber.Jobs;
@@ -7,6 +9,7 @@ namespace Z.Vtuber.Jobs;
 public sealed class CookieProbeJob(
     IBiliApiClient bili,
     ICookiePoolService cookiePool,
+    ICookieAccountInfoRepository cookieAccountInfo,
     BilibiliCrawlerOptions options,
     ILogger<CookieProbeJob> logger) : PeriodicJobBase(logger)
 {
@@ -30,6 +33,21 @@ public sealed class CookieProbeJob(
                 if (nav.Mid <= 0)
                 {
                     throw new InvalidOperationException("nav returned mid=0");
+                }
+
+                try
+                {
+                    await cookieAccountInfo.UpsertAsync(new CookieAccountInfoRecord
+                    {
+                        CookieId = record.Id,
+                        Mid = nav.Mid,
+                        Uname = nav.Name,
+                        FetchedAt = DateTime.UtcNow,
+                    }, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Cookie account info persist failed for cookie (id={Id}); probe outcome unchanged.", record.Id);
                 }
             }
             catch (CrawlBackoffActiveException ex)
