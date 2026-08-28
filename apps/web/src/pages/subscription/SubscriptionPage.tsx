@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import {
-  listSubscriptions,
+  listBackstageSubscriptions,
   subscribe,
   unsubscribe,
 } from '../../api/client'
 import type { components } from '../../api/schema'
 
-type SubscriptionItem = components['schemas']['SubscriptionItem']
+type SubscriptionItem = components['schemas']['BackstageSubscriptionItem']
 
 const TYPE_LABELS: Record<string, string> = {
   danmaku: '弹幕',
@@ -29,7 +29,7 @@ export function SubscriptionPage() {
     try {
       setLoading(true)
       setError(null)
-      const data = await listSubscriptions()
+      const data = await listBackstageSubscriptions()
       setSubscriptions(data)
     } catch {
       setError('服务不可用')
@@ -146,6 +146,7 @@ export function SubscriptionPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
+              <th style={{ textAlign: 'left', padding: '0.5rem' }}>主播昵称</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>主播 ID</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>类型</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>订阅时间</th>
@@ -159,6 +160,9 @@ export function SubscriptionPage() {
 
               return (
                 <tr key={key}>
+                  <td style={{ padding: '0.5rem' }}>
+                    {item.streamer?.name ?? '暂无资料'}
+                  </td>
                   <td style={{ padding: '0.5rem' }}>{item.mid}</td>
                   <td style={{ padding: '0.5rem' }}>
                     {TYPE_LABELS[item.type ?? ''] ?? item.type}

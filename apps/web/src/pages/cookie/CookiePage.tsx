@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { listCookies, addCookie } from '../../api/client'
+import { listBackstageCookies, addCookie } from '../../api/client'
 import type { components } from '../../api/schema'
 
-type CookieItem = components['schemas']['CookieItem']
+type CookieItem = components['schemas']['BackstageCookieItem']
 
 const STATUS_LABELS: Record<string, string> = {
   active: '可用',
@@ -28,7 +28,7 @@ export function CookiePage() {
     try {
       setLoading(true)
       setError(null)
-      const data = await listCookies()
+      const data = await listBackstageCookies()
       setCookies(data)
     } catch {
       setError('服务不可用')
@@ -121,6 +121,7 @@ export function CookiePage() {
           <thead>
             <tr>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>ID</th>
+              <th style={{ textAlign: 'left', padding: '0.5rem' }}>帐号昵称</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>状态</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>
                 最近校验时间
@@ -134,6 +135,9 @@ export function CookiePage() {
             {cookies.map((item, index) => (
               <tr key={item.id ?? index}>
                 <td style={{ padding: '0.5rem' }}>{truncateId(item.id)}</td>
+                <td style={{ padding: '0.5rem' }}>
+                  {item.account?.name ?? '暂无资料'}
+                </td>
                 <td style={{ padding: '0.5rem' }}>
                   <span
                     style={{
