@@ -17,6 +17,8 @@ builder.Services.AddControllers()
     });
 builder.Services.AddOpenApi();
 
+builder.Services.AddHealthChecks();
+
 builder.AddMongoDBClient("mongo");
 
 builder.Services.AddOptions<BilibiliCrawlerOptions>()
