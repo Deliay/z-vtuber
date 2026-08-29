@@ -14,6 +14,7 @@ public sealed class MongoCollectionNames
     public const string LiveSession = "bilibili_live_session";
     public const string Meta = "zvtuber_meta";
     public const string LiveEventTextIndex = "bilibili_live_event_text_index";
+    public const string CookieAccountInfo = "bilibili_cookie_account_info";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -30,6 +31,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureSpaceTimelineIndexesAsync(ct);
         await EnsureLiveSessionIndexesAsync(ct);
         await EnsureLiveEventTextIndexAsync(ct);
+        await EnsureCookieAccountInfoIndexesAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -154,6 +156,14 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         // 清理旧版索引：$text 方案的全文索引，以及无法服务 regex 与排序的普通 Text 索引
         await DropIndexIfExistsAsync(collection, "RoomId_Text_text", ct);
         await DropIndexIfExistsAsync(collection, "RoomId_Text_1", ct);
+    }
+
+    private Task EnsureCookieAccountInfoIndexesAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<CookieAccountInfoRecord>(MongoCollectionNames.CookieAccountInfo);
+        var keys = Builders<CookieAccountInfoRecord>.IndexKeys.Ascending(r => r.CookieId);
+        var options = new CreateIndexOptions { Unique = true, Name = "CookieId_1" };
+        return collection.Indexes.CreateOneAsync(new CreateIndexModel<CookieAccountInfoRecord>(keys, options), cancellationToken: ct);
     }
 
     private static async Task DropIndexIfExistsAsync<T>(IMongoCollection<T> collection, string name, CancellationToken ct)

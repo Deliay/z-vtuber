@@ -6,7 +6,7 @@
 - 框架：ASP.NET Core Web API
 - API 文档：Microsoft.AspNetCore.OpenApi
 - 数据库：MongoDB（Aspire 编排，`Aspire.MongoDB.Driver` + `MongoDB.Driver`）
-- 抓取库：Mikibot.Crawler（NuGet 1.0.8）
+- 抓取库：Mikibot.Crawler（NuGet 1.0.9）
 
 ## 项目模块示意图
 
@@ -19,12 +19,12 @@ graph LR
 
 ## 模块结构
 
-- `Controllers/`：对外 API（Health + BilibiliSubscription/BilibiliUser/BilibiliLive，统一前缀 `/api/b`）
+- `Controllers/`：对外 API（Health + BilibiliSubscription/BilibiliUser/BilibiliLive + BilibiliBackstage，统一前缀 `/api/b`；`BilibiliBackstageController` 为后台聚合只读接口，前缀 `/api/b/backstage`，内存 join 返回订阅/ Cookie 列表及其昵称）
 - `Configuration/`：`BilibiliCrawlerOptions`（抓取周期 + 风控配置，节 `BilibiliCrawler`：`FetchMode`/退避/冷却/拟真头参数）
 - `Crawlers/`：`IBiliApiClient`/`BiliApiClient`（直连）、`BrowserishBiliApiClient`（拟真通道）、`ResilientBiliApiClient`（自动切换装饰器）、`RiskControlHandler`/`RiskControlClassifier`（风控识别 DelegatingHandler）、`CrawlBackoffRegistry`（目标级退避/冷却）、`BiliRawCrawler`
 - `Jobs/`：`PeriodicJobBase`、`CrawlLockProvider`（per-key 锁）、`CookieProbeJob`（跳过冷却中凭证）/`AccountInfoJob`/`LiveStatusJob`/`SpaceTimelineJob`（捕获 `CrawlBackoffActiveException` 跳过退避期）
 - `Live/`：`LiveEventSource`（弹幕长连接）、`DanmakuClientFactory`、`DanmakuEventNormalizer`、`ILiveEventBus`/`LiveEventBus`（SSE 订阅门控）、`LiveEvent`、`LiveEventTextExtractor`（单次解析提取文本+发送者三元素：用户名/UID/粉丝牌）
-- `Persistence/`：9 个 MongoDB 集合实体（8 实体 + Meta）、仓储、`MongoDbInitializer`（索引初始化 + `SpaceTimeline` PubTs 幂等回填 + `LiveEventTextIndex` 文本回填 + 发送者字段回填 `live_event_text_index_sender_backfill_v1` + 订阅类型拆分迁移 `subscription_type_split_v1`）、`BsonConvert`
+- `Persistence/`：10 个 MongoDB 集合实体（9 实体 + Meta）、仓储（含 `CookieAccountInfoRepository`：按 `CookieId` upsert 帐号昵称、批量查询；`AccountBasicInfoRepository.GetLatestByMidsAsync` 批量取最新主播资料）、`MongoDbInitializer`（索引初始化 + `SpaceTimeline` PubTs 幂等回填 + `LiveEventTextIndex` 文本回填 + 发送者字段回填 `live_event_text_index_sender_backfill_v1` + 订阅类型拆分迁移 `subscription_type_split_v1`）、`BsonConvert`
 - `Services/`：`ICookiePoolService`（三态：在线/冷却/离线，round-robin）、`ISubscriptionService`、`ILiveSessionTracker`、`LiveStatusStateMachine`（场次划分，`Decide` 返回 `SessionTransition`：None/Started/Ended）、`PubTsExtractor`（从动态 JSON 提取 `pub_ts`）、`AccountInfoCrawler`（B 站场次按时间邻近合并去重）、`SpaceTimelinePaging`
 - 场次维护：`LiveStatusJob` 在开播/下播时通过 `LiveSessionRepository.UpsertAsync`/`CloseAsync` 同步 `bilibili_live_session`；分页端点统一支持可选 `startedAt`/`endedAt` 时间范围过滤
 - 直播事件：`BilibiliLiveController` 的 `event/range` 支持分页（`page`/`pageSize`）与可重复 `type` 类型筛选、可选时间范围；`event/subscribe` 支持可重复 `type` 过滤推送；`event/search` 支持按用户名/粉丝牌/UID 多维度搜索（$or regex + 纯数字 UID 精确匹配）；仓储 `LiveEventRepository.GetPageAsync` 组合 RoomId + 类型 `$in` + 可选 OccurredAt 范围 + Count/Find 分页

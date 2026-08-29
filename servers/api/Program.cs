@@ -17,6 +17,8 @@ builder.Services.AddControllers()
     });
 builder.Services.AddOpenApi();
 
+builder.Services.AddHealthChecks();
+
 builder.AddMongoDBClient("mongo");
 
 builder.Services.AddOptions<BilibiliCrawlerOptions>()
@@ -37,6 +39,8 @@ builder.Services.AddSingleton<SpaceTimelineRepository>();
 builder.Services.AddSingleton<LiveSessionRepository>();
 builder.Services.AddSingleton<LiveEventTextIndexRepository>();
 builder.Services.AddSingleton<MongoDbInitializer>();
+
+builder.Services.AddBackstageDataAggregation();
 
 builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
