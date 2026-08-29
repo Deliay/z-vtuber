@@ -1,15 +1,11 @@
 using Z.Vtuber.Configuration;
-using Z.Vtuber.Crawlers;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
 using Z.Vtuber.Services;
 
 namespace Z.Vtuber.Jobs;
 
 public sealed class CookieProbeJob(
-    IBiliApiClient bili,
     ICookiePoolService cookiePool,
-    ICookieAccountInfoRepository cookieAccountInfo,
+    ICookieNavProbeService probeService,
     BilibiliCrawlerOptions options,
     ILogger<CookieProbeJob> logger) : PeriodicJobBase(logger)
 {
@@ -27,47 +23,10 @@ public sealed class CookieProbeJob(
         var cooldown = 0;
         foreach (var record in cookies)
         {
-            try
+            var outcome = await probeService.ProbeAsync(record, ct);
+            if (outcome == CookieProbeOutcome.Cooldown)
             {
-                var nav = await bili.GetNavInfoV2Async(record.Cookie, ct);
-                if (nav.Mid <= 0)
-                {
-                    throw new InvalidOperationException("nav returned mid=0");
-                }
-
-                try
-                {
-                    await cookieAccountInfo.UpsertAsync(new CookieAccountInfoRecord
-                    {
-                        CookieId = record.Id,
-                        Mid = nav.Mid,
-                        Uname = nav.Name,
-                        FetchedAt = DateTime.UtcNow,
-                    }, ct);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "Cookie account info persist failed for cookie (id={Id}); probe outcome unchanged.", record.Id);
-                }
-            }
-            catch (CrawlBackoffActiveException ex)
-            {
-                logger.LogInformation(ex, "Cookie probe skipped for cookie (id={Id}): backoff active.", record.Id);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (RiskControlException ex)
-            {
-                await cookiePool.MarkCooldownAsync(record.Cookie, TimeSpan.FromMinutes(options.CooldownMinutes), ct);
                 cooldown++;
-                logger.LogWarning(ex, "Cookie (id={Id}) marked cooldown for {Minutes} minutes due to risk control.", record.Id, options.CooldownMinutes);
-            }
-            catch (Exception ex)
-            {
-                await cookiePool.MarkOfflineAsync(record.Cookie, ct);
-                logger.LogWarning(ex, "Cookie (id={Id}) marked offline due to probe failure.", record.Id);
             }
         }
 
