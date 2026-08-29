@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Crawlers;
+using Z.Vtuber.Persistence;
 using Z.Vtuber.Persistence.Entities;
 using Z.Vtuber.Services;
 
@@ -46,4 +47,73 @@ public sealed class FakeCookiePoolService : ICookiePoolService
 
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<CookieRecord>>([new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active }]);
+}
+
+public sealed class FakeCookieNavProbeService : ICookieNavProbeService
+{
+    public Func<CookieRecord, CancellationToken, Task<CookieProbeOutcome>>? ProbeFunc { get; set; }
+    public int CallCount { get; private set; }
+
+    public Task<CookieProbeOutcome> ProbeAsync(CookieRecord record, CancellationToken ct = default)
+    {
+        CallCount++;
+        return ProbeFunc?.Invoke(record, ct) ?? Task.FromResult(CookieProbeOutcome.Success);
+    }
+}
+
+public sealed class ProbeServiceProvider : IServiceProvider
+{
+    public ICookieNavProbeService? Probe { get; set; }
+
+    public object? GetService(Type serviceType) =>
+        serviceType == typeof(ICookieNavProbeService) ? Probe : null;
+}
+
+public sealed class MockCookieAccountInfoRepository : ICookieAccountInfoRepository
+{
+    public List<CookieAccountInfoRecord> Upserts { get; } = [];
+    public bool ThrowOnUpsert { get; set; }
+
+    public Task UpsertAsync(CookieAccountInfoRecord record, CancellationToken ct = default)
+    {
+        if (ThrowOnUpsert)
+        {
+            throw new InvalidOperationException("db down");
+        }
+
+        Upserts.Add(record);
+        return Task.CompletedTask;
+    }
+
+    public Task<Dictionary<MongoDB.Bson.ObjectId, CookieAccountInfoRecord>> GetByCookieIdsAsync(
+        IReadOnlyCollection<MongoDB.Bson.ObjectId> cookieIds, CancellationToken ct = default)
+        => Task.FromResult(new Dictionary<MongoDB.Bson.ObjectId, CookieAccountInfoRecord>());
+}
+
+public sealed class MockCookiePoolService : ICookiePoolService
+{
+    public List<CookieRecord> ActiveCookies { get; set; } = [];
+    public List<(string Cookie, TimeSpan Duration)> CooldownCalls { get; } = [];
+    public List<string> OfflineCalls { get; } = [];
+
+    public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<CookieRecord>>(ActiveCookies);
+
+    public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default)
+        => Task.FromResult(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+
+    public Task<CookieRecord> NextAsync(CancellationToken ct = default)
+        => Task.FromResult(new CookieRecord { Cookie = "next", Status = CookieStatus.Active });
+
+    public Task MarkOfflineAsync(string cookie, CancellationToken ct = default)
+    {
+        OfflineCalls.Add(cookie);
+        return Task.CompletedTask;
+    }
+
+    public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default)
+    {
+        CooldownCalls.Add((cookie, duration));
+        return Task.CompletedTask;
+    }
 }

@@ -1,12 +1,11 @@
 using Z.Vtuber.Configuration;
-using Z.Vtuber.Crawlers;
 using Z.Vtuber.Services;
 
 namespace Z.Vtuber.Jobs;
 
 public sealed class CookieProbeJob(
-    IBiliApiClient bili,
     ICookiePoolService cookiePool,
+    ICookieNavProbeService probeService,
     BilibiliCrawlerOptions options,
     ILogger<CookieProbeJob> logger) : PeriodicJobBase(logger)
 {
@@ -24,32 +23,10 @@ public sealed class CookieProbeJob(
         var cooldown = 0;
         foreach (var record in cookies)
         {
-            try
+            var outcome = await probeService.ProbeAsync(record, ct);
+            if (outcome == CookieProbeOutcome.Cooldown)
             {
-                var nav = await bili.GetNavInfoV2Async(record.Cookie, ct);
-                if (nav.Mid <= 0)
-                {
-                    throw new InvalidOperationException("nav returned mid=0");
-                }
-            }
-            catch (CrawlBackoffActiveException ex)
-            {
-                logger.LogInformation(ex, "Cookie probe skipped for cookie (id={Id}): backoff active.", record.Id);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (RiskControlException ex)
-            {
-                await cookiePool.MarkCooldownAsync(record.Cookie, TimeSpan.FromMinutes(options.CooldownMinutes), ct);
                 cooldown++;
-                logger.LogWarning(ex, "Cookie (id={Id}) marked cooldown for {Minutes} minutes due to risk control.", record.Id, options.CooldownMinutes);
-            }
-            catch (Exception ex)
-            {
-                await cookiePool.MarkOfflineAsync(record.Cookie, ct);
-                logger.LogWarning(ex, "Cookie (id={Id}) marked offline due to probe failure.", record.Id);
             }
         }
 

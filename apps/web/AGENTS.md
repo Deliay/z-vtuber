@@ -41,6 +41,7 @@ src/
 
 - TDD 开发（先写测试再实现）
 - 契约式开发（基于 OpenAPI 契约生成客户端）
+- 后台聚合：订阅/Cookie 管理页使用 `listBackstageSubscriptions`/`listBackstageCookies` 聚合接口，分别展示主播/帐号昵称列（昵称缺失显示「暂无资料」），现有增删/录入操作不变
 - 参考：`docs/engineering/common-rules.md`
 
 ## 常用命令

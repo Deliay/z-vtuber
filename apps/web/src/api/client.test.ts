@@ -5,6 +5,8 @@ import {
   unsubscribe,
   listCookies,
   addCookie,
+  listBackstageSubscriptions,
+  listBackstageCookies,
 } from './client'
 
 const mockFetch = vi.fn()
@@ -209,6 +211,86 @@ describe('API Client', () => {
       })
 
       await expect(addCookie({ cookie: '' })).rejects.toThrow(
+        'API request failed',
+      )
+    })
+  })
+
+  describe('listBackstageSubscriptions', () => {
+    it('should fetch backstage subscription list', async () => {
+      const mockData = {
+        items: [
+          { mid: 123, type: 'danmaku', streamer: { name: '某主播' } },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockData),
+      })
+
+      const result = await listBackstageSubscriptions()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/b/backstage/subscription'),
+        expect.objectContaining({}),
+      )
+      expect(result).toEqual(mockData.items)
+    })
+
+    it('should return empty array when items is undefined', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({}),
+      })
+
+      const result = await listBackstageSubscriptions()
+      expect(result).toEqual([])
+    })
+
+    it('should throw error on non-2xx response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        text: () => Promise.resolve('Server error message'),
+      })
+
+      await expect(listBackstageSubscriptions()).rejects.toThrow(
+        'API request failed',
+      )
+    })
+  })
+
+  describe('listBackstageCookies', () => {
+    it('should fetch backstage cookie list', async () => {
+      const mockData = {
+        items: [
+          { id: 'cookie-1', status: 'active', account: { name: '某帐号' } },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockData),
+      })
+
+      const result = await listBackstageCookies()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/b/backstage/cookie'),
+        expect.objectContaining({}),
+      )
+      expect(result).toEqual(mockData.items)
+    })
+
+    it('should throw error on non-2xx response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        text: () => Promise.resolve('Server error message'),
+      })
+
+      await expect(listBackstageCookies()).rejects.toThrow(
         'API request failed',
       )
     })

@@ -4,6 +4,8 @@ const BASE_URL = '/api'
 
 type CookieItem = components['schemas']['CookieItem']
 type SubscriptionItem = components['schemas']['SubscriptionItem']
+type BackstageSubscriptionItem = components['schemas']['BackstageSubscriptionItem']
+type BackstageCookieItem = components['schemas']['BackstageCookieItem']
 type SubscribeRequest = components['schemas']['SubscribeRequest']
 type CookieAddRequest = components['schemas']['CookieAddRequest']
 
@@ -86,4 +88,20 @@ export async function addCookie(
     method: 'POST',
     body: JSON.stringify(params),
   })
+}
+
+export async function listBackstageSubscriptions(): Promise<
+  BackstageSubscriptionItem[]
+> {
+  const data = await request<
+    components['schemas']['BackstageSubscriptionList']
+  >('/b/backstage/subscription')
+  return data.items ?? []
+}
+
+export async function listBackstageCookies(): Promise<BackstageCookieItem[]> {
+  const data = await request<components['schemas']['BackstageCookieList']>(
+    '/b/backstage/cookie',
+  )
+  return data.items ?? []
 }
