@@ -208,6 +208,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/b/backstage/subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 聚合查询订阅主播列表（含库中主播昵称）
+         * @description 只读后台聚合接口：订阅列表与库中主播昵称（channel JSON 的 uName）内存 join，一次返回。未抓取到资料的主播 streamer 为 null。
+         */
+        get: operations["listBackstageSubscriptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/b/backstage/cookie": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 聚合查询活跃 Cookie 列表（含对应帐号昵称）
+         * @description 只读后台聚合接口：活跃 Cookie 列表与易拉帐号昵称（CookieProbeJob 探测 nav 落库）内存 join，一次返回。尚未探测成功的 Cookie account 为 null。响应不含 Cookie 原文。
+         */
+        get: operations["listBackstageCookies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -249,6 +289,39 @@ export interface components {
         };
         SubscriptionList: {
             items?: components["schemas"]["SubscriptionItem"][];
+        };
+        BackstageStreamerRef: {
+            /** @description 主播昵称（从 channel JSON 的 uName 字段提取），缺失时为 null */
+            name?: string | null;
+        };
+        BackstageSubscriptionItem: {
+            /** Format: int64 */
+            mid?: number;
+            /** @enum {string} */
+            type?: "danmaku" | "dynamic";
+            /** Format: date-time */
+            subscribedAt?: string;
+            streamer?: components["schemas"]["BackstageStreamerRef"];
+        };
+        BackstageSubscriptionList: {
+            items?: components["schemas"]["BackstageSubscriptionItem"][];
+        };
+        BackstageAccountRef: {
+            /** @description 帐号昵称（CookieProbeJob 探测成功时由 nav 落库），缺失时为 null */
+            name?: string | null;
+        };
+        BackstageCookieItem: {
+            id?: string;
+            /** @enum {string} */
+            status?: "active" | "offline";
+            /** Format: date-time */
+            lastCheckedAt?: string | null;
+            /** Format: date-time */
+            lastUsedAt?: string | null;
+            account?: components["schemas"]["BackstageAccountRef"];
+        };
+        BackstageCookieList: {
+            items?: components["schemas"]["BackstageCookieItem"][];
         };
         LiveState: {
             /** Format: int64 */
@@ -730,6 +803,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    listBackstageSubscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 订阅聚合列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackstageSubscriptionList"];
+                };
+            };
+        };
+    };
+    listBackstageCookies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cookie 聚合列表（不含明文 Cookie） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackstageCookieList"];
+                };
             };
         };
     };

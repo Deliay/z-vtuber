@@ -5,7 +5,7 @@ import * as client from '../../api/client'
 
 vi.mock('../../api/client')
 
-const mockListSubscriptions = vi.mocked(client.listSubscriptions)
+const mockListSubscriptions = vi.mocked(client.listBackstageSubscriptions)
 const mockSubscribe = vi.mocked(client.subscribe)
 const mockUnsubscribe = vi.mocked(client.unsubscribe)
 
@@ -51,6 +51,60 @@ describe('SubscriptionPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('暂无订阅')).toBeInTheDocument()
+    })
+  })
+
+  it('should render streamer nickname and placeholder', async () => {
+    mockListSubscriptions.mockResolvedValue([
+      {
+        mid: 123,
+        type: 'danmaku',
+        subscribedAt: '2024-01-01T00:00:00Z',
+        streamer: { name: '某主播' },
+      },
+      {
+        mid: 456,
+        type: 'dynamic',
+        subscribedAt: '2024-01-02T00:00:00Z',
+        streamer: null,
+      },
+      {
+        mid: 789,
+        type: 'dynamic',
+        subscribedAt: '2024-01-03T00:00:00Z',
+        streamer: { name: null },
+      },
+    ])
+
+    render(<SubscriptionPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('某主播')).toBeInTheDocument()
+    })
+    expect(screen.getAllByText('暂无资料').length).toBe(2)
+  })
+
+  it('should render same mid both types as separate rows with nickname', async () => {
+    mockListSubscriptions.mockResolvedValue([
+      {
+        mid: 123,
+        type: 'danmaku',
+        subscribedAt: '2024-01-01T00:00:00Z',
+        streamer: { name: '同主播' },
+      },
+      {
+        mid: 123,
+        type: 'dynamic',
+        subscribedAt: '2024-01-02T00:00:00Z',
+        streamer: { name: '同主播' },
+      },
+    ])
+
+    render(<SubscriptionPage />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('同主播').length).toBe(2)
+      expect(screen.getAllByText('123').length).toBe(2)
     })
   })
 

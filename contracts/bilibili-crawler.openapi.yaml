@@ -223,6 +223,30 @@ paths:
                 $ref: "#/components/schemas/LiveEventPage"
         "400":
           description: stringCriteria 非法（缺失、空串、纯空白、超过 200 字符）
+  /api/b/backstage/subscription:
+    get:
+      summary: 聚合查询订阅主播列表（含库中主播昵称）
+      description: 只读后台聚合接口：订阅列表与库中主播昵称（channel JSON 的 uName）内存 join，一次返回。未抓取到资料的主播 streamer 为 null。
+      operationId: listBackstageSubscriptions
+      responses:
+        "200":
+          description: 订阅聚合列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackstageSubscriptionList"
+  /api/b/backstage/cookie:
+    get:
+      summary: 聚合查询活跃 Cookie 列表（含对应帐号昵称）
+      description: 只读后台聚合接口：活跃 Cookie 列表与易拉帐号昵称（CookieProbeJob 探测 nav 落库）内存 join，一次返回。尚未探测成功的 Cookie account 为 null。响应不含 Cookie 原文。
+      operationId: listBackstageCookies
+      responses:
+        "200":
+          description: Cookie 聚合列表（不含明文 Cookie）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackstageCookieList"
 components:
   parameters:
     Mid:
@@ -361,6 +385,66 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SubscriptionItem"
+    BackstageStreamerRef:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+          description: 主播昵称（从 channel JSON 的 uName 字段提取），缺失时为 null
+    BackstageSubscriptionItem:
+      type: object
+      properties:
+        mid:
+          type: integer
+          format: int64
+        type:
+          type: string
+          enum: [danmaku, dynamic]
+        subscribedAt:
+          type: string
+          format: date-time
+        streamer:
+          $ref: "#/components/schemas/BackstageStreamerRef"
+    BackstageSubscriptionList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BackstageSubscriptionItem"
+    BackstageAccountRef:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+          description: 帐号昵称（CookieProbeJob 探测成功时由 nav 落库），缺失时为 null
+    BackstageCookieItem:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [active, offline]
+        lastCheckedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        account:
+          $ref: "#/components/schemas/BackstageAccountRef"
+    BackstageCookieList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BackstageCookieItem"
     LiveState:
       type: object
       properties:
