@@ -17,7 +17,7 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IAsyncLi
 
     private static BilibiliBackstageController CreateController(IMongoDatabase database) => new(
         new SubscriptionService(database),
-        new CookiePoolService(database),
+        new CookiePoolService(database, new ProbeServiceProvider()),
         new AccountBasicInfoRepository(database),
         new CookieAccountInfoRepository(database));
 
