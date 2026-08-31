@@ -93,7 +93,8 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         FakeBiliApiClient bili,
         DateTime? utcNow = null,
         AccountBasicInfoRepository? accountRepo = null,
-        BilibiliCrawlerOptions? options = null)
+        BilibiliCrawlerOptions? options = null,
+        ICookiePoolService? cookiePool = null)
     {
         accountRepo ??= new AccountBasicInfoRepository(fixture.Database);
         var accountInfoCrawler = new AccountInfoCrawler(
@@ -106,7 +107,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         return new CountingGuardJob(
             new SubscriptionService(fixture.Database),
             bili,
-            new FakeCookiePoolService(),
+            cookiePool ?? new FakeCookiePoolService(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
             accountInfoCrawler,
@@ -322,6 +323,57 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
 
         var guardRepo = new LiveGuardRepository(fixture.Database);
         Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-08-31"));
+    }
+
+    [Fact]
+    public async Task Crawl_NoAvailableCookie_SkipsWithoutUpsert()
+    {
+        await SeedSubscriptionAsync(SubscriptionType.Guard);
+        await SeedAccountAsync(RoomId);
+        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new Exception("should not be called") };
+        var cookiePool = new NoCookiePoolService();
+        var job = CreateJob(bili, cookiePool: cookiePool);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        var guardRepo = new LiveGuardRepository(fixture.Database);
+        Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-08-31"));
+    }
+
+    [Fact]
+    public async Task Crawl_PageCountCap_LimitsRequests()
+    {
+        await SeedSubscriptionAsync(SubscriptionType.Guard);
+        await SeedAccountAsync(RoomId);
+        var options = GuardOptions();
+        options.GuardMaxPages = 2;
+        var pagesRequested = 0;
+        var bili = new FakeBiliApiClient
+        {
+            RoomGuardListProvider = (_, _) =>
+            {
+                pagesRequested++;
+                return new GuardInfo { Info = new GuardInfo.PageInfo { Count = 100, Current = pagesRequested, PageCount = 100 }, List = [new GuardUserInfo { Uid = pagesRequested }] };
+            }
+        };
+        var job = CreateJob(bili, options: options);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(2, pagesRequested);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
+        Assert.Equal(2, stored.GuardCount);
+        Assert.Equal(1, job.DelayCount);
+    }
+
+    private sealed class NoCookiePoolService : ICookiePoolService
+    {
+        public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<CookieRecord> NextAsync(CancellationToken ct = default) => throw new NoAvailableCookieException();
+        public Task MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.CompletedTask;
+        public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<CookieRecord>>([]);
     }
 
     private static System.Text.Json.JsonElement JsonDoc(string channelBody)

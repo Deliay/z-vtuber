@@ -171,7 +171,7 @@ public class LiveGuardJob : PeriodicJobBase
                 merged.TryAdd(user.Uid, ToEntry(user));
             }
 
-            if (info.List.Count == 0 || page >= info.Info.PageCount)
+            if (info.List.Count == 0 || page >= info.Info.PageCount || page >= _options.GuardMaxPages)
             {
                 break;
             }
