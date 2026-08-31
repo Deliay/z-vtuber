@@ -259,6 +259,103 @@ public sealed class BrowserishBiliApiClientTests
     }
 
     [Fact]
+    public async Task GetRoomGuardListAsync_SendsCorrectRequest_AndBindsGuardInfo()
+    {
+        // Arrange
+        var responseJson = """
+        {
+            "code": 0,
+            "data": {
+                "info": { "num": 100, "now": 1, "page": 2 },
+                "list": [
+                    {
+                        "uid": 111,
+                        "ruid": 222,
+                        "username": "guard-user",
+                        "rank": 3,
+                        "face": "face-url",
+                        "is_alive": 1,
+                        "guard_level": 3,
+                        "medal_info": { "medal_name": "星", "medal_level": 5 }
+                    }
+                ],
+                "top3": []
+            }
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(async request =>
+        {
+            if (request.RequestUri?.ToString().Contains("bilibili.com") == true &&
+                !request.RequestUri.ToString().Contains("guardTab"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("<html>Warmup</html>")
+                };
+            }
+
+            Assert.Contains("xlive/app-room/v2/guardTab/topList", request.RequestUri?.ToString());
+            Assert.Contains($"roomid={TestRoomId}", request.RequestUri?.ToString());
+            Assert.Contains($"page=1", request.RequestUri?.ToString());
+            Assert.Contains($"ruid={TestMid}", request.RequestUri?.ToString());
+            Assert.Contains("page_size=29", request.RequestUri?.ToString());
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseJson)
+            };
+        });
+
+        var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
+
+        // Act
+        var result = await client.GetRoomGuardListAsync(TestCookie, TestRoomId, TestMid);
+
+        // Assert
+        Assert.Equal(100, result.Info.Count);
+        Assert.Equal(1, result.Info.Current);
+        Assert.Equal(2, result.Info.PageCount);
+        var entry = Assert.Single(result.List);
+        Assert.Equal(111L, entry.Uid);
+        Assert.Equal(222L, entry.RoomUid);
+        Assert.Equal("guard-user", entry.UserName);
+        Assert.Equal(3, entry.RoomRank);
+        Assert.Equal(3, entry.GuardType);
+        Assert.Equal("星", entry.MedalInfo.Name);
+        Assert.Equal(5, entry.MedalInfo.Level);
+    }
+
+    [Fact]
+    public async Task GetRoomGuardListAsync_NonZeroCode_Throws()
+    {
+        // Arrange
+        var responseJson = """{"code":-412,"message":"风控","data":null}""";
+        var handler = new MockHttpMessageHandler(async request =>
+        {
+            if (request.RequestUri?.ToString().Contains("bilibili.com") == true &&
+                !request.RequestUri.ToString().Contains("guardTab"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("<html>Warmup</html>")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseJson)
+            };
+        });
+
+        var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.GetRoomGuardListAsync(TestCookie, TestRoomId, TestMid));
+        Assert.Contains("-412", ex.Message);
+    }
+
+    [Fact]
     public void Constructor_SetsDefaultHeaders()
     {
         // Arrange & Act
