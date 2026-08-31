@@ -271,19 +271,19 @@ export interface components {
             /** Format: int64 */
             mid: number;
             /**
-             * @description 订阅类型（danmaku 弹幕 / dynamic 动态），必填。
+             * @description 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长），必填。
              * @enum {string}
              */
-            type: "danmaku" | "dynamic";
+            type: "danmaku" | "dynamic" | "guard";
         };
         SubscriptionItem: {
             /** Format: int64 */
             mid?: number;
             /**
-             * @description 订阅类型
+             * @description 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长）
              * @enum {string}
              */
-            type?: "danmaku" | "dynamic";
+            type?: "danmaku" | "dynamic" | "guard";
             /** Format: date-time */
             subscribedAt?: string;
         };
@@ -298,7 +298,7 @@ export interface components {
             /** Format: int64 */
             mid?: number;
             /** @enum {string} */
-            type?: "danmaku" | "dynamic";
+            type?: "danmaku" | "dynamic" | "guard";
             /** Format: date-time */
             subscribedAt?: string;
             streamer?: components["schemas"]["BackstageStreamerRef"];
@@ -516,7 +516,7 @@ export interface operations {
                     "application/json": components["schemas"]["SubscriptionItem"];
                 };
             };
-            /** @description mid 非法或 type 缺失/非法（合法取值：danmaku, dynamic） */
+            /** @description mid 非法或 type 缺失/非法（合法取值：danmaku, dynamic, guard） */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -528,8 +528,8 @@ export interface operations {
     unsubscribe: {
         parameters: {
             query: {
-                /** @description 订阅类型（danmaku 或 dynamic），缺失或非法返回 400。 */
-                type: "danmaku" | "dynamic";
+                /** @description 订阅类型（danmaku / dynamic / guard），缺失或非法返回 400。 */
+                type: "danmaku" | "dynamic" | "guard";
             };
             header?: never;
             path: {
@@ -546,7 +546,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description type 缺失或非法（合法取值：danmaku, dynamic） */
+            /** @description type 缺失或非法（合法取值：danmaku, dynamic, guard） */
             400: {
                 headers: {
                     [name: string]: unknown;
