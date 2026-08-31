@@ -2,10 +2,12 @@
 
 **功能名称**: 抓取与 API 服务拆分
 **关联 PRD**: `docs/product/draft/20260901-api-crawler-split-prd.md`
-**技术提案版本**: v1.0
+**技术提案版本**: v1.1
 **创建日期**: 2026-09-01
 **作者**: Deliay
 **feat-branch**: `feat/api-crawler-split`
+
+> v1.1 返工说明：按评审意见，服务间事件通道由「MongoDB 仓储轮询」改为「消息中间件 pub/sub」——crawler 发布事件，api 在有 SSE 订阅请求时按需订阅、无订阅或断开后退订；消息中间件通过 Aspire 编排。选型对比见 6.1 决策（Redis / RabbitMQ / Kafka），**待 review 确认**。
 
 ## 1. 概述
 
@@ -29,8 +31,9 @@
 - 解决方案与工程结构调整：`servers/Z.Vtuber.slnx`、`servers/common`、`servers/crawler`、`servers/api` 瘦身；
 - 代码搬迁与命名空间调整（`Z.Vtuber.Common` / `Z.Vtuber.Crawler`），不改动业务逻辑；
 - crawler 独立宿主（Worker SDK）、`servers/crawler/Dockerfile`、`.github/workflows/build-crawler-image.yml`；
-- Aspire 编排增加 crawler 项目；
-- API 侧弹幕事件 SSE 推送通道的跨进程改造（见 6.1 决策）。
+- 引入消息中间件（Aspire 编排）：crawler 发布弹幕事件，api 按需订阅（有 SSE 订阅请求才订阅、无订阅/断开后退订）；
+- Aspire 编排增加 crawler 项目与消息中间件资源；
+- API 侧弹幕事件 SSE 推送通道的跨进程改造（pub/sub，选型见 6.1，**待 review**）。
 
 **不做**：
 
@@ -49,6 +52,8 @@ graph TD
     API --> M[(MongoDB)]
     Crawler[servers/crawler Z.Vtuber.Crawler] --> M
     Crawler --> BILI[B站接口/弹幕长连接]
+    Crawler -->|pub 弹幕事件| MQ[消息中间件<br>选型待 review]
+    MQ -->|按需 sub| API
     Common[servers/common Z.Vtuber.Common] -.被引用.-> API
     Common -.被引用.-> Crawler
 ```
@@ -61,6 +66,7 @@ graph TD
 | 抓取服务 | C# (.NET 10) Worker | `Microsoft.NET.Sdk.Worker`，后台任务宿主 |
 | 公共项目 | C# (.NET 10) 类库 | `Z.Vtuber.Common`，实体/仓储/共享服务 |
 | 数据库 | MongoDB | 两个服务各自直连，共享既有集合 |
+| 消息中间件 | 选型待 review（Redis / RabbitMQ / Kafka） | 弹幕事件 pub/sub，Aspire 编排，见 6.1 |
 | 抓取库 | Mikibot.Crawler 1.0.9 | 仅 crawler 引用，api 移除该依赖 |
 | 编排 | Aspire | AppHost 增加 crawler 项目引用 |
 
@@ -108,7 +114,7 @@ graph LR
 
 ### 3.2 内部接口
 
-两个服务之间不引入任何同步调用，仅通过共享 MongoDB 集合交换数据：
+两个服务之间不引入任何同步调用。持久数据仍仅通过共享 MongoDB 集合交换：
 
 | 方向 | 集合 | 说明 |
 |------|------|------|
@@ -116,7 +122,7 @@ graph LR
 | api 写 / crawler 读 | `bilibili_subscription` | 订阅管理写入，抓取任务消费 |
 | 双向 | `bilibili_cookie` | api 录入/状态展示，crawler 池化消费与状态回写 |
 
-唯一需要跨进程改造的内存态通道是弹幕事件 SSE 推送（原 `LiveEventSource` → `LiveEventBus` 进程内直推），拆分后事件源在 crawler 进程，改造方案见 5.2 实现点 2 与 6.1 决策。
+弹幕事件的实时推送通道改为消息中间件 pub/sub：crawler 侧 `LiveEventSource` 归一化出事件后，在落库的同时向消息中间件发布；api 侧仅当存在 SSE 订阅请求时订阅对应频道，无订阅或全部断开后退订。事件以 MongoDB 落库为准，消息通道只承担实时分发（丢失可接受，不影响数据完整性）。详细方案见 5.2 实现点 2，中间件选型见 6.1（待 review）。
 
 ## 4. 数据模型
 
@@ -136,19 +142,24 @@ graph LR
 sequenceDiagram
     participant C as Crawler 服务
     participant D as MongoDB
+    participant Q as 消息中间件
     participant A as API 服务
     participant U as 用户/前端
 
     loop 周期任务/弹幕长连接
         C->>D: 抓取结果落库（既有逻辑不变）
+        C->>Q: pub 弹幕事件（落库同时发布）
     end
     U->>A: 查询/管理请求
     A->>D: 读写（订阅、查询）
     D-->>A: 结果
     A-->>U: 响应
     U->>A: event/subscribe (SSE)
-    A->>D: 增量轮询 LiveEvent
-    A-->>U: 推送新事件
+    A->>Q: sub 对应频道（有订阅才连接/订阅）
+    Q-->>A: 实时事件
+    A-->>U: SSE 推送（沿用 type 过滤门控）
+    U->>A: 断开 / 无订阅者
+    A->>Q: 退订（无订阅不再占用订阅）
 ```
 
 ### 5.2 关键实现点
@@ -160,11 +171,15 @@ sequenceDiagram
 - **技术细节**: 纯搬运，不改动任何类型成员与逻辑；命名空间 `Z.Vtuber.Persistence` 等统一调整为 `Z.Vtuber.Common.*`，抓取侧类型调整为 `Z.Vtuber.Crawler.*`，api 侧保持 `Z.Vtuber.*`。
 - **风险点**: 反射/约定绑定处（如 OpenAPI、DI 注册）需在迁移后全量回归。
 
-#### 实现点 2: 弹幕事件 SSE 跨进程改造
+#### 实现点 2: 弹幕事件通道改造为消息中间件 pub/sub
 
-- **描述**: 原链路 `LiveEventSource`（进程内）→ `LiveEventBus` → SSE。拆分后事件源位于 crawler，事件已落库 `bilibili_live_event`；api 侧 `LiveEventBus` 改为由后台轮询任务驱动：按订阅房间的 `OccurredAt`/`Id` 增量轮询 `LiveEventRepository`，新事件进入总线推送给 SSE 订阅者。
-- **技术细节**: 轮询间隔取秒级（内网低频场景足够），沿用现有 `type` 过滤门控语义；未选用 MongoDB change stream，因为 Aspire 本地编排为单机 mongo（非 replica set）不支持 change stream，且部署环境未承诺副本集。
-- **风险点**: 事件推送从「准实时直推」变为「秒级轮询」，延迟略有增加，属可接受的产品行为变化（PRD 异常边界已约定）；轮询游标需处理时钟与分页边界。
+- **描述**: 原链路 `LiveEventSource`（进程内）→ `LiveEventBus` → SSE。拆分后事件源位于 crawler：`LiveEventSource` 归一化出 `LiveEvent` 后，在落库 `bilibili_live_event` 的同时向消息中间件发布；api 侧 `LiveEventBus` 保留 SSE 订阅门控语义，数据源改为消息订阅——**按需订阅**：存在 SSE 订阅者时才建立/保持对相应频道的订阅，最后一个订阅者断开后退订，不空挂订阅。
+- **技术细节**:
+  - 频道按房间划分（如 `live-event:{roomId}`），发布载荷为归一化后的 `LiveEvent` JSON；api 侧沿用现有 `type` 过滤门控；
+  - 订阅生命周期由 `LiveEventBus` 的订阅计数驱动：首个订阅者加入时订阅频道，计数归零时退订；
+  - 事件可靠性以 MongoDB 落库为准：消息通道只做实时分发，api 未订阅期间的事件不补推（与现状「只有在线订阅者收推送」语义一致），历史事件仍走 `event/range`/`event/search` 查库；
+  - 消息中间件由 Aspire 编排注入连接（见 6.1 选型与实现点 4）。
+- **风险点**: pub/sub 为 fire-and-forget，api 重启窗口内的实时推送会丢（落库不受影响）；若 review 认为需要投递保证，选型应倾向 RabbitMQ（见 6.1）。
 
 #### 实现点 3: crawler 独立宿主与流水线
 
@@ -174,8 +189,8 @@ sequenceDiagram
 
 #### 实现点 4: Aspire 编排与配置
 
-- **描述**: `infra/apphost/AppHost.cs` 增加 `builder.AddProject<Projects.Z_Vtuber_Crawler>("crawler").WithReference(mongo)`；crawler 的 appsettings 携带 `ConnectionStrings:mongo`（由 Aspire 注入）与 `BilibiliCrawler` 节；api 的 appsettings 移除 `BilibiliCrawler` 节（若该 Options 归 crawler）。
-- **风险点**: 非 Aspire 的裸部署场景需在部署文档中说明 crawler 所需环境变量。
+- **描述**: `infra/apphost/AppHost.cs` 增加 `builder.AddProject<Projects.Z_Vtuber_Crawler>("crawler").WithReference(mongo)`；同时增加消息中间件资源（以选型结果为准，如 Redis 则 `builder.AddRedis("messaging")`），crawler 与 api 均 `.WithReference(messaging)`，连接串由 Aspire 注入 `ConnectionStrings:messaging`；crawler 的 appsettings 携带 `BilibiliCrawler` 节；api 的 appsettings 移除 `BilibiliCrawler` 节（若该 Options 归 crawler）。
+- **风险点**: 非 Aspire 的裸部署场景需在部署文档中说明 crawler/api 所需的消息中间件环境变量；镜像流水线不变（中间件为基础设施容器，不进业务镜像）。
 
 ## 6. 技术决策
 
@@ -183,21 +198,40 @@ sequenceDiagram
 
 | 决策 | 选项 A | 选项 B | 最终选择 | 原因 |
 |------|--------|--------|---------|------|
-| SSE 事件通道 | Mongo change stream | 仓储增量轮询 | B | 本地/部署 mongo 非副本集，change stream 不可用；轮询实现简单、秒级延迟可接受 |
+| 消息中间件选型 | 见 6.2 对比 | — | **待 review** | 评审要求引入 Redis/RabbitMQ/Kafka 之一并做选型，对比见 6.2，推荐 Redis |
 | 公共代码复用 | 双方各复制一份 | 共享类库项目 common | B | 需求明确要求公共类型单份维护，避免口径漂移 |
 | crawler 宿主形态 | ASP.NET Core（无控制器） | Worker SDK | B | 抓取服务无 HTTP 端点，Worker 语义最简最准确 |
-| 服务间通信 | 新增 RPC/HTTP 调用 | 仅共享数据库 | B | PRD 约束：不引入同步调用依赖，保证两服务可用性解耦 |
+| 服务间通信 | 新增 RPC/HTTP 调用 | 共享数据库 + 异步 pub/sub | B | PRD 约束：不引入同步调用依赖；实时事件走异步消息，持久数据走库 |
 | 测试项目 | 按三项目拆分测试工程 | 保持 `tests/Z.Vtuber.Tests` 单工程引用三项目 | B | 最小改动，现有测试全部平移即回归；后续可按需再拆 |
 | slnx | 无文件可挪，跳过 | 在 servers/ 下新建 slnx | B | 仓库现状无 sln/slnx，按需求意图新建并正确配置相对路径 |
 
-### 6.2 依赖与约束
+### 6.2 消息中间件选型（待 review）
+
+场景特征：单生产者（crawler）单消费者（api）；消息为弹幕事件实时分发，**事件已落库 MongoDB，通道本身不要求投递保证与持久化**；api 侧按需订阅/退订；部署为内网小规模，Aspire 编排。
+
+| 维度 | Redis（pub/sub） | RabbitMQ | Kafka |
+|------|------------------|----------|-------|
+| 匹配度 | pub/sub 语义天然贴合「有订阅才投递、无订阅即丢弃」 | 队列语义，需声明 exchange/queue 模拟 fan-out，无消费者时消息堆积需配 TTL | 日志语义，面向高吞吐流式场景，本场景严重过重 |
+| 投递保证 | fire-and-forget，无持久化（本场景可接受，落库兜底） | 可持久化、可 ACK（本场景用不上） | 持久化、可回放（本场景用不上） |
+| Aspire 集成 | `AddRedis` 一等支持，`Aspire.StackExchange.Redis` 客户端 | `AddRabbitMQ` 一等支持，`Aspire.RabbitMQ.Client` | 有集成但组件重（broker+zk/kraft），本地编排启动慢 |
+| 运维成本 | 极低，单容器 | 中，需管理 exchange/queue | 高，内网小规模不值得 |
+| 额外收益 | 可顺带承担后续缓存需求 | 路由能力强（用不上） | 流处理生态（用不上） |
+
+**推荐：Redis（pub/sub）**——语义最贴合「按需订阅、无订阅即弃、落库兜底」的本场景，Aspire 集成与运维成本最低。
+
+备选意见：若 review 要求 api 离线期间事件不丢（补投），则改选 **RabbitMQ**（durable queue + TTL），api 离线时消息暂存、重连后补投；Kafka 对本场景无收益，不建议。
+
+**请 review 确认选型：Redis（推荐）/ RabbitMQ / Kafka。**
+
+### 6.3 依赖与约束
 
 | 类型 | 内容 | 说明 |
 |------|------|------|
 | 依赖 | MongoDB 连接串 | 两服务共用 `ConnectionStrings:mongo`，Aspire 注入 |
+| 依赖 | 消息中间件连接 | 两服务共用 `ConnectionStrings:messaging`，Aspire 注入（选型见 6.2） |
 | 依赖 | `Mikibot.Crawler` 1.0.9 | 仅 crawler 引用 |
 | 约束 | 契约不变 | `contracts/bilibili-crawler.openapi.yaml` 零改动 |
-| 约束 | TDD | 拆分后现有测试全绿，新增 SSE 轮询逻辑补测试 |
+| 约束 | TDD | 拆分后现有测试全绿，新增 pub/sub 与按需订阅逻辑补测试 |
 | 约束 | 纯搬运 | 不借机重构业务逻辑 |
 
 ## 7. 项目结构
@@ -207,10 +241,10 @@ servers/
 ├── Z.Vtuber.slnx                          # 新建：api/common/crawler + tests + apphost
 ├── api/
 │   ├── Controllers/                       # 保留：6 个控制器
-│   ├── Live/LiveEventBus.cs               # 保留：SSE 门控（改为轮询驱动）
-│   ├── Program.cs                         # 瘦身：移除抓取侧注册，新增轮询宿主
+│   ├── Live/LiveEventBus.cs               # 保留：SSE 门控（改为消息订阅驱动，按需订阅/退订）
+│   ├── Program.cs                         # 瘦身：移除抓取侧注册，接入消息订阅
 │   ├── Dockerfile                         # 改造：补充 common 拷贝
-│   └── Z.Vtuber.csproj                    # 移除 Mikibot.Crawler，引用 common
+│   └── Z.Vtuber.csproj                    # 移除 Mikibot.Crawler，引用 common + 消息客户端
 ├── common/
 │   ├── Persistence/                       # 搬入：实体/仓储/MongoDbInitializer/BsonConvert
 │   ├── Services/                          # 搬入：CookiePool/Subscription/SessionTracker 等共享服务
@@ -219,14 +253,14 @@ servers/
 └── crawler/
     ├── Crawlers/                          # 搬入：抓取通道/风控/退避
     ├── Jobs/                              # 搬入：4 周期任务 + 基类 + 锁
-    ├── Live/                              # 搬入：LiveEventSource/弹幕客户端/归一化
+    ├── Live/                              # 搬入：LiveEventSource/弹幕客户端/归一化（新增事件发布）
     ├── Services/                          # 搬入：AccountInfoCrawler/CookieNavProbeService
     ├── Configuration/BilibiliCrawlerOptions.cs
     ├── Program.cs                         # 新建：Worker 宿主
     ├── Dockerfile                         # 新建
-    └── Z.Vtuber.Crawler.csproj            # 新建 Worker 项目
+    └── Z.Vtuber.Crawler.csproj            # 新建 Worker 项目（引用 common + 消息客户端）
 .github/workflows/build-crawler-image.yml  # 新建：zero-tools/z-vtuber-crawler
-infra/apphost/AppHost.cs                   # 增加 crawler 项目引用
+infra/apphost/AppHost.cs                   # 增加 crawler 项目与消息中间件资源
 tests/Z.Vtuber.Tests/                      # 引用调整为三项目，用例平移
 ```
 
@@ -241,8 +275,8 @@ tests/Z.Vtuber.Tests/                      # 引用调整为三项目，用例�
 
 | 类型 | 工具 | 覆盖范围 |
 |------|------|---------|
-| 单元测试 | xUnit | 现有用例随代码平移后全绿；新增 SSE 轮询增量/游标边界用例 |
-| 集成测试 | Testcontainers (MongoDB) | 仓储与聚合端点回归；crawler 写 / api 读的跨服务读写一致性 |
+| 单元测试 | xUnit | 现有用例随代码平移后全绿；新增 pub/sub 发布、按需订阅/退订（订阅计数归零退订）用例 |
+| 集成测试 | Testcontainers (MongoDB + 消息中间件) | 仓储与聚合端点回归；crawler pub → api sub 端到端；crawler 写 / api 读的跨服务读写一致性 |
 | 构建验证 | dotnet build / docker build | slnx 全量构建；两个 Dockerfile 可构建 |
 
 ## 9. 部署方案
@@ -251,25 +285,25 @@ tests/Z.Vtuber.Tests/                      # 引用调整为三项目，用例�
 
 | 环境 | 用途 | 部署方式 |
 |------|------|---------|
-| 本地/Aspire | 开发联调 | AppHost 编排 mongo + crawler + api + web |
-| 内网 | 实际使用 | 两个独立容器：`zero-tools/z-vtuber-api` 与 `zero-tools/z-vtuber-crawler`，共用 MongoDB |
+| 本地/Aspire | 开发联调 | AppHost 编排 mongo + 消息中间件 + crawler + api + web |
+| 内网 | 实际使用 | 两个独立容器：`zero-tools/z-vtuber-api` 与 `zero-tools/z-vtuber-crawler`，共用 MongoDB 与消息中间件（基础设施容器，选型见 6.2） |
 
 ### 9.2 配置管理
 
-- 两服务共用 `ConnectionStrings:mongo`；
+- 两服务共用 `ConnectionStrings:mongo` 与 `ConnectionStrings:messaging`（消息中间件，Aspire 注入）；
 - `BilibiliCrawler` 节仅 crawler 需要（api appsettings 中移除）；
 - 镜像流水线复用既有 `DOCKER_ENDPOINT`/`DOCKER_USER`/`DOCKER_PASSWORD` secrets。
 
 ## 10. 验收标准
 
-- [ ] 技术方案评审通过
+- [ ] 技术方案评审通过（含 6.2 消息中间件选型确认）
 - [ ] slnx 全量构建通过，三项目引用关系正确
-- [ ] crawler 可独立启动并执行全部抓取任务与弹幕长连接
-- [ ] api 可独立启动，全部既有端点回归通过（契约零变更）
+- [ ] crawler 可独立启动并执行全部抓取任务与弹幕长连接，事件落库同时向消息中间件发布
+- [ ] api 可独立启动，全部既有端点回归通过（契约零变更）；SSE 在有订阅时收到实时推送，无订阅/断开后退订
 - [ ] 任一服务停止时另一服务行为正常
 - [ ] 单元/集成测试全绿
 - [ ] `z-vtuber-crawler` 镜像由新流水线构建推送成功
-- [ ] Aspire 一键编排两服务联调通过
+- [ ] Aspire 一键编排（mongo + 消息中间件 + 两服务 + web）联调通过
 
 ## 11. 相关文档
 
