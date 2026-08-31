@@ -38,6 +38,7 @@ builder.Services.AddSingleton<LiveEventRepository>();
 builder.Services.AddSingleton<SpaceTimelineRepository>();
 builder.Services.AddSingleton<LiveSessionRepository>();
 builder.Services.AddSingleton<LiveEventTextIndexRepository>();
+builder.Services.AddSingleton<LiveGuardRepository>();
 builder.Services.AddSingleton<MongoDbInitializer>();
 
 builder.Services.AddBackstageDataAggregation();
@@ -66,11 +67,13 @@ builder.Services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
 builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventBus, LiveEventBus>();
 builder.Services.AddSingleton<CrawlLockProvider>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddHostedService<CookieProbeJob>();
 builder.Services.AddHostedService<AccountInfoJob>();
 builder.Services.AddHostedService<LiveStatusJob>();
 builder.Services.AddHostedService<SpaceTimelineJob>();
+builder.Services.AddHostedService<LiveGuardJob>();
 builder.Services.AddHostedService<LiveEventSource>();
 
 var app = builder.Build();

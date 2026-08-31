@@ -27,6 +27,9 @@ public sealed class CookieNavProbeServiceTests
 
         public Task<System.Text.Json.JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
             => Task.FromResult(System.Text.Json.JsonDocument.Parse("""{"mid":0}""").RootElement.Clone());
+
+        public Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
+            => Task.FromResult(new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
     }
 
     private static readonly BilibiliCrawlerOptions Options = new() { CookieProbeIntervalMinutes = 5, CooldownMinutes = 30 };

@@ -120,4 +120,55 @@ public class SubscriptionServiceTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Equal("dynamic", dynamicJson.Trim('"'));
         Assert.Equal("danmaku", danmakuJson.Trim('"'));
     }
+
+    [Fact]
+    public async Task Subscribe_Guard_IsIdempotent()
+    {
+        var service = CreateService();
+        await service.SubscribeAsync(1150976664, SubscriptionType.Guard);
+        await service.SubscribeAsync(1150976664, SubscriptionType.Guard);
+
+        var mids = await service.GetMidsAsync(SubscriptionType.Guard);
+        Assert.Equal([1150976664L], mids);
+    }
+
+    [Fact]
+    public async Task GetMids_Guard_StrictlyFilters()
+    {
+        var service = CreateService();
+        await service.SubscribeAsync(1150976664, SubscriptionType.Guard);
+        await service.SubscribeAsync(1150976664, SubscriptionType.Dynamic);
+        await service.SubscribeAsync(222, SubscriptionType.Guard);
+
+        Assert.Equal([1150976664L, 222L], await service.GetMidsAsync(SubscriptionType.Guard));
+        Assert.Equal([1150976664L], await service.GetMidsAsync(SubscriptionType.Dynamic));
+    }
+
+    [Fact]
+    public async Task Unsubscribe_Guard_DoesNotAffectOtherTypesOnSameMid()
+    {
+        var service = CreateService();
+        await service.SubscribeAsync(1150976664, SubscriptionType.Guard);
+        await service.SubscribeAsync(1150976664, SubscriptionType.Dynamic);
+
+        var removed = await service.UnsubscribeAsync(1150976664, SubscriptionType.Guard);
+
+        Assert.True(removed);
+        Assert.Empty(await service.GetMidsAsync(SubscriptionType.Guard));
+        Assert.Equal([1150976664L], await service.GetMidsAsync(SubscriptionType.Dynamic));
+    }
+
+    [Fact]
+    public void SubscriptionType_Guard_SerializesToCamelCase()
+    {
+        var options = new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+        };
+
+        var guardJson = JsonSerializer.Serialize(SubscriptionType.Guard, options);
+
+        Assert.Equal("\"guard\"", guardJson);
+        Assert.Equal("guard", guardJson.Trim('"'));
+    }
 }

@@ -183,6 +183,27 @@ public sealed class BrowserishBiliApiClient : IBiliApiClient, IDisposable
         return new SpaceDynamicsPage { HasMore = hasMore, Offset = nextOffset, Items = items };
     }
 
+    public async Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
+    {
+        await EnsureWarmupAsync(ct);
+        await DelayAsync(ct);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            $"https://api.live.bilibili.com/xlive/app-room/v2/guardTab/topList?roomid={roomId}&page={page}&ruid={bId}&page_size=29");
+        request.Headers.Add("Cookie", cookie);
+
+        using var response = await _httpClient.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        var stream = await response.Content.ReadAsStreamAsync(ct);
+        var apiResponse = await JsonSerializer.DeserializeAsync<BilibiliApiResponse<JsonElement>>(stream, JsonOptions, ct);
+
+        if (apiResponse.Code != 0)
+            throw new InvalidOperationException($"bilibili api returned code {apiResponse.Code}");
+
+        return apiResponse.Data.Deserialize<GuardInfo>(JsonOptions)!;
+    }
+
     public async Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"https://ukamnads.icu/api/v2/channel?uId={mid}");
