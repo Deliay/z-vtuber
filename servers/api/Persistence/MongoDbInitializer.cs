@@ -15,6 +15,7 @@ public sealed class MongoCollectionNames
     public const string Meta = "zvtuber_meta";
     public const string LiveEventTextIndex = "bilibili_live_event_text_index";
     public const string CookieAccountInfo = "bilibili_cookie_account_info";
+    public const string LiveGuards = "bilibili_live_guards";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -32,6 +33,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureLiveSessionIndexesAsync(ct);
         await EnsureLiveEventTextIndexAsync(ct);
         await EnsureCookieAccountInfoIndexesAsync(ct);
+        await EnsureLiveGuardIndexesAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -164,6 +166,16 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var keys = Builders<CookieAccountInfoRecord>.IndexKeys.Ascending(r => r.CookieId);
         var options = new CreateIndexOptions { Unique = true, Name = "CookieId_1" };
         return collection.Indexes.CreateOneAsync(new CreateIndexModel<CookieAccountInfoRecord>(keys, options), cancellationToken: ct);
+    }
+
+    private Task EnsureLiveGuardIndexesAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var keys = Builders<LiveGuardRecord>.IndexKeys
+            .Ascending(r => r.Mid)
+            .Ascending(r => r.Date);
+        var options = new CreateIndexOptions { Unique = true, Name = "Mid_1_Date_1" };
+        return collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveGuardRecord>(keys, options), cancellationToken: ct);
     }
 
     private static async Task DropIndexIfExistsAsync<T>(IMongoCollection<T> collection, string name, CancellationToken ct)

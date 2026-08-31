@@ -24,6 +24,7 @@ public interface IBiliApiClient
     Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default);
     Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default);
     Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default);
+    Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default);
 }
 
 public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IBiliApiClient
@@ -97,6 +98,13 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
         }
 
         return new SpaceDynamicsPage { HasMore = hasMore, Offset = nextOffset, Items = items };
+    }
+
+    public async Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
+    {
+        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var crawler = provider.GetRequiredService<BiliLiveCrawler>();
+        return await crawler.GetRoomGuardList(roomId, bId, page, ct);
     }
 
     private static BilibiliApiResponse<T> EnsureSuccess<T>(BilibiliApiResponse<T> response)

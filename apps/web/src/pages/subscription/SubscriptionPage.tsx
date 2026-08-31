@@ -11,6 +11,7 @@ type SubscriptionItem = components['schemas']['BackstageSubscriptionItem']
 const TYPE_LABELS: Record<string, string> = {
   danmaku: '弹幕',
   dynamic: '动态',
+  guard: '舰长',
 }
 
 export function SubscriptionPage() {
@@ -19,7 +20,7 @@ export function SubscriptionPage() {
   const [error, setError] = useState<string | null>(null)
 
   const [mid, setMid] = useState('')
-  const [type, setType] = useState<'danmaku' | 'dynamic' | ''>('')
+  const [type, setType] = useState<'danmaku' | 'dynamic' | 'guard' | ''>('')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -79,7 +80,7 @@ export function SubscriptionPage() {
     }
   }
 
-  const handleCancel = async (mid: number, type: 'danmaku' | 'dynamic') => {
+  const handleCancel = async (mid: number, type: 'danmaku' | 'dynamic' | 'guard') => {
     try {
       await unsubscribe(mid, type)
       await fetchSubscriptions()
@@ -115,13 +116,14 @@ export function SubscriptionPage() {
           <select
             value={type}
             onChange={(e) =>
-              setType(e.target.value as 'danmaku' | 'dynamic' | '')
+              setType(e.target.value as 'danmaku' | 'dynamic' | 'guard' | '')
             }
             style={{ padding: '0.5rem' }}
           >
             <option value="">请选择类型</option>
             <option value="danmaku">弹幕</option>
             <option value="dynamic">动态</option>
+            <option value="guard">舰长</option>
           </select>
           <button
             type="submit"
@@ -177,7 +179,7 @@ export function SubscriptionPage() {
                           onClick={() =>
                             handleCancel(
                               item.mid!,
-                              item.type as 'danmaku' | 'dynamic',
+                              item.type as 'danmaku' | 'dynamic' | 'guard',
                             )
                           }
                           style={{ padding: '0.25rem 0.5rem' }}

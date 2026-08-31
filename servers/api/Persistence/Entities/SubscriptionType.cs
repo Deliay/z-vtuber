@@ -9,5 +9,8 @@ public enum SubscriptionType
     Dynamic = 0,
 
     [BsonRepresentation(BsonType.String)]
-    Danmaku = 1
+    Danmaku = 1,
+
+    [BsonRepresentation(BsonType.String)]
+    Guard = 2
 }
