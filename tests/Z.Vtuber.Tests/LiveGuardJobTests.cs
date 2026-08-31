@@ -94,7 +94,9 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         DateTime? utcNow = null,
         AccountBasicInfoRepository? accountRepo = null,
         BilibiliCrawlerOptions? options = null,
-        ICookiePoolService? cookiePool = null)
+        ICookiePoolService? cookiePool = null,
+        ISubscriptionService? subscription = null,
+        FakeTimeProvider? timeProvider = null)
     {
         accountRepo ??= new AccountBasicInfoRepository(fixture.Database);
         var accountInfoCrawler = new AccountInfoCrawler(
@@ -105,7 +107,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             NullLogger<AccountInfoCrawler>.Instance);
 
         return new CountingGuardJob(
-            new SubscriptionService(fixture.Database),
+            subscription ?? new SubscriptionService(fixture.Database),
             bili,
             cookiePool ?? new FakeCookiePoolService(),
             accountRepo,
@@ -113,8 +115,21 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             accountInfoCrawler,
             new CrawlLockProvider(),
             options ?? GuardOptions(),
-            new FakeTimeProvider(utcNow ?? BeijingDateTime(2026, 8, 31, 23)),
+            timeProvider ?? new FakeTimeProvider(utcNow ?? BeijingDateTime(2026, 8, 31, 23)),
             NullLogger<LiveGuardJob>.Instance);
+    }
+
+    private static async Task WaitForAsync(Func<Task<bool>> condition)
+    {
+        for (var i = 0; i < 100; i++)
+        {
+            if (await condition())
+            {
+                return;
+            }
+            await Task.Delay(20);
+        }
+        Assert.Fail("condition not met within timeout");
     }
 
     [Fact]
@@ -209,16 +224,92 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         await SeedSubscriptionAsync(SubscriptionType.Danmaku);
         await SeedAccountAsync(RoomId);
         var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new Exception("should not be called") };
-        var job = CreateJob(bili);
-
-        // 直接触发事件路径：通过订阅 Danmaku 触发 OnSubscribed（type != Guard 不抓取）
         var subscription = new SubscriptionService(fixture.Database);
+        var job = CreateJob(bili, subscription: subscription);
+
         await subscription.SubscribeAsync(Mid, SubscriptionType.Danmaku);
 
-        await Task.Delay(100);
+        await Task.Delay(300);
 
         var guardRepo = new LiveGuardRepository(fixture.Database);
         Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-08-31"));
+    }
+
+    [Fact]
+    public async Task OnSubscribed_BeforeCatchUpHour_CrawlsAsYesterdaySnapshot_AndDailyRunStillWorks()
+    {
+        await SeedAccountAsync(RoomId);
+        var calls = 0;
+        var bili = new FakeBiliApiClient
+        {
+            RoomGuardListProvider = (_, _) =>
+            {
+                calls++;
+                return new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [new GuardUserInfo { Uid = 1 }] };
+            }
+        };
+        var subscription = new SubscriptionService(fixture.Database);
+        // 北京时间 2026-09-01 02:00，处于 00:00–03:00 凌晨补抓窗口
+        var timeProvider = new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 2));
+        var job = CreateJob(bili, subscription: subscription, timeProvider: timeProvider);
+
+        await subscription.SubscribeAsync(Mid, SubscriptionType.Guard);
+
+        var guardRepo = new LiveGuardRepository(fixture.Database);
+        // 首次添加立即抓取，快照记为前一日（8 月 31 日）
+        await WaitForAsync(async () => (await guardRepo.GetMidsWithSnapshotAsync("2026-08-31")).Contains(Mid));
+        Assert.Equal(1, calls);
+        Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-09-01"));
+
+        // 9 月 1 日 23:00 的定时抓取不受影响，仍按当日差集正常抓取
+        timeProvider.UtcNow = BeijingDateTime(2026, 9, 1, 23);
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal([Mid], await guardRepo.GetMidsWithSnapshotAsync("2026-09-01"));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task OnSubscribed_BeforeCatchUpHour_ExistingYesterdaySnapshot_Skips()
+    {
+        await SeedAccountAsync(RoomId);
+        var guardRepo = new LiveGuardRepository(fixture.Database);
+        await guardRepo.UpsertDailySnapshotAsync(new LiveGuardRecord
+        {
+            Mid = Mid,
+            RoomId = RoomId,
+            Date = "2026-08-31",
+            Guards = [],
+            GuardCount = 0,
+            FetchedAt = DateTime.UtcNow,
+        });
+
+        var calls = 0;
+        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => { calls++; return new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] }; } };
+        var subscription = new SubscriptionService(fixture.Database);
+        var job = CreateJob(bili, subscription: subscription, timeProvider: new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 2)));
+
+        await subscription.SubscribeAsync(Mid, SubscriptionType.Guard);
+        await Task.Delay(300);
+
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task OnSubscribed_AfterCatchUpHourBeforeDailyHour_DoesNotCrawl()
+    {
+        await SeedAccountAsync(RoomId);
+        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new Exception("should not be called") };
+        var subscription = new SubscriptionService(fixture.Database);
+        // 北京时间 2026-09-01 04:00，过了凌晨补抓窗口、未到当日 23:00
+        var job = CreateJob(bili, subscription: subscription, timeProvider: new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 4)));
+
+        await subscription.SubscribeAsync(Mid, SubscriptionType.Guard);
+        await Task.Delay(300);
+
+        var guardRepo = new LiveGuardRepository(fixture.Database);
+        Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-08-31"));
+        Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-09-01"));
     }
 
     [Fact]
