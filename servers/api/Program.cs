@@ -38,6 +38,7 @@ builder.Services.AddSingleton<LiveEventRepository>();
 builder.Services.AddSingleton<SpaceTimelineRepository>();
 builder.Services.AddSingleton<LiveSessionRepository>();
 builder.Services.AddSingleton<LiveEventTextIndexRepository>();
+builder.Services.AddSingleton<LiveGuardRepository>();
 builder.Services.AddSingleton<MongoDbInitializer>();
 
 builder.Services.AddBackstageDataAggregation();
