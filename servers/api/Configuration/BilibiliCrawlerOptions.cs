@@ -26,4 +26,10 @@ public sealed class BilibiliCrawlerOptions
     public int BrowserMaxDelaySeconds { get; set; } = 5;
     public string BrowserUserAgent { get; set; } = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     public int ChannelRecoverSuccessCount { get; set; } = 3;
+
+    public int GuardDailyCrawlHour { get; set; } = 23;
+    public int GuardCheckIntervalMinutes { get; set; } = 10;
+    public int GuardPageDelayMinSeconds { get; set; } = 2;
+    public int GuardPageDelayMaxSeconds { get; set; } = 5;
+    public int GuardMaxPages { get; set; } = 50;
 }

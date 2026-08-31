@@ -67,11 +67,13 @@ builder.Services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
 builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventBus, LiveEventBus>();
 builder.Services.AddSingleton<CrawlLockProvider>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddHostedService<CookieProbeJob>();
 builder.Services.AddHostedService<AccountInfoJob>();
 builder.Services.AddHostedService<LiveStatusJob>();
 builder.Services.AddHostedService<SpaceTimelineJob>();
+builder.Services.AddHostedService<LiveGuardJob>();
 builder.Services.AddHostedService<LiveEventSource>();
 
 var app = builder.Build();
