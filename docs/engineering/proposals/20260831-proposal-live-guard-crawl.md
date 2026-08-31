@@ -48,6 +48,8 @@ graph TD
     SVC -- Subscribed mid, Guard --> JOB[LiveGuardJob<br/>立即补抓]
     JOB -- 周期遍历 Guard 订阅 --> SVC
     JOB --> BASIC[AccountBasicInfoRepository<br/>GetLatestRoomIdByMidAsync]
+    JOB -- 无 roomId 时即时补抓 --> CRAWL[AccountInfoCrawler<br/>CrawlAsync mid]
+    CRAWL --> BASIC
     JOB --> COOKIE[CookiePoolService]
     JOB --> CLIENT[ResilientBiliApiClient<br/>直连/拟真双通道]
     CLIENT --> BILI[BiliLiveCrawler.GetRoomGuardList<br/>分页遍历 + 页间延迟]
@@ -85,7 +87,7 @@ graph LR
 |------|------|-----------|
 | `SubscriptionType` | 新增 `Guard` 枚举值 | 字符串序列化落库 `"guard"`，与契约 enum 一致 |
 | `IBiliApiClient` 及三实现 | 舰长名单单页查询 | 直连复用 Mikibot `BiliLiveCrawler`；拟真通道 wbi 签名直调 HTTP；装饰器通道键 `guard:{roomId}` |
-| `LiveGuardJob` | 周期分页全量抓取、页间延迟、失败隔离 | 复用 `PeriodicJobBase` / `CrawlLockProvider`（锁键 `guard:{mid}`）/ Cookie 池 |
+| `LiveGuardJob` | 周期分页全量抓取、页间延迟、失败隔离、roomId 缺失即时补抓 | 复用 `PeriodicJobBase` / `CrawlLockProvider`（锁键 `guard:{mid}`）/ Cookie 池 / `IAccountInfoCrawler` |
 | `LiveGuardRepository` + `LiveGuardRecord` | 每日快照读写 | (Mid, Date) upsert 覆盖写 |
 | `MongoDbInitializer` | 新集合索引 | (Mid, Date) 唯一索引 |
 | `AccountInfoJob` | 基础信息覆盖 Guard 订阅 mid | mid 集合并入 Guard 类型，保证 roomId 可解析 |
@@ -146,6 +148,10 @@ Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int 
 Task UpsertDailySnapshotAsync(LiveGuardRecord record, CancellationToken ct = default); // 过滤条件 { Mid, Date }，ReplaceOne + IsUpsert
 ```
 
+#### `LiveGuardJob` 依赖说明
+
+除 `ISubscriptionService` / `IBiliApiClient` / Cookie 池 / `CrawlLockProvider` 外，注入现有 `IAccountInfoCrawler`：当 `AccountBasicInfoRepository.GetLatestRoomIdByMidAsync` 无记录时调用一次 `CrawlAsync(mid)` 即时补抓基础信息，再重新解析 roomId（详见 5.2 实现点 4）。
+
 #### `AccountInfoJob` 调整
 
 `RunOnceAsync` 的 mid 集合由「Dynamic ∪ Danmaku」改为「Dynamic ∪ Danmaku ∪ Guard」（去重），保证舰长订阅主播的基础信息（roomId）持续维护。
@@ -202,22 +208,26 @@ sequenceDiagram
         S-->>J: mids
         loop 每个 mid（锁 guard:{mid}）
             J->>B: GetLatestRoomIdByMidAsync(mid)
-            alt 无 roomId
-                B-->>J: null → 跳过本轮，记日志
-            else
-                B-->>J: roomId
-                loop page = 1..N
-                    J->>C: GetRoomGuardListAsync(cookie, roomId, mid, page)
-                    C-->>J: GuardInfo{Info, List}
-                    alt List 为空 或 page ≥ Info.PageCount
-                        J->>J: 结束翻页
-                    else
-                        J->>J: 延迟 GuardPageDelaySeconds（随机区间）后翻下一页
-                    end
+            alt 无 roomId（基础信息缺失）
+                B-->>J: null
+                J->>J: 调用 AccountInfoCrawler.CrawlAsync(mid) 即时补抓一次
+                J->>B: 再次 GetLatestRoomIdByMidAsync(mid)
+                alt 补抓后仍无 roomId
+                    B-->>J: null → 跳过本轮，记日志
                 end
-                J->>R: UpsertDailySnapshotAsync(mid, roomId, date, 合并名单)
-                R->>M: ReplaceOne {Mid, Date} upsert
             end
+            B-->>J: roomId
+            loop page = 1..N
+                J->>C: GetRoomGuardListAsync(cookie, roomId, mid, page)
+                C-->>J: GuardInfo{Info, List}
+                alt List 为空 或 page ≥ Info.PageCount
+                    J->>J: 结束翻页
+                else
+                    J->>J: 延迟 GuardPageDelaySeconds（随机区间）后翻下一页
+                end
+            end
+            J->>R: UpsertDailySnapshotAsync(mid, roomId, date, 合并名单)
+            R->>M: ReplaceOne {Mid, Date} upsert
         end
     end
 ```
@@ -242,11 +252,11 @@ sequenceDiagram
 - **技术细节**: 页间延迟由 Job 层负责，客户端方法保持单页语义（与 `GetSpaceDynamicsAsync` 的单页/单 offset 语义一致）；拟真通道的延迟（`DelayAsync`）与 Job 翻页延迟叠加，总量仍由配置控制。
 - **风险点**: 拟真通道需对齐 Mikibot 内部实际请求路径与签名参数，实现时以 Mikibot 1.0.9 IL/源码核对为准；若拟真实现复杂度过高，允许首版拟真通道降级为「委托直连通道实现」（与 `GetAccountInfoDataAsync` 现状一致），在决策表中记录。
 
-#### 实现点 4: roomId 解析依赖与兜底
+#### 实现点 4: roomId 解析依赖与缺失兜底
 
-- **描述**: 舰长抓取依赖 `bilibili_account_basic_info` 的 roomId；`AccountInfoJob` 并入 `Guard` 订阅 mid，保证新订阅主播在周期内获得基础信息。
-- **技术细节**: `Subscribed(Guard)` 事件同时被 `AccountInfoJob`（现有事件处理对新订阅立即抓取基础信息）与 `LiveGuardJob`（立即补抓舰长）消费；首次补抓若尚无 roomId 则跳过，待基础信息就绪后的下一周期自然补上，不引入额外的就绪等待机制。
-- **风险点**: 基础信息抓取周期较长（默认 168h）——新订阅主播的首次舰长快照可能延迟到基础信息抓取之后；事件驱动的即时基础信息抓取可覆盖该场景，可接受。
+- **描述**: 舰长抓取依赖 `bilibili_account_basic_info` 的 roomId，但 `AccountBasicInfoRepository` 中**可能不存在**指定 mid 的记录（新订阅主播的基础信息尚未被抓取、或基础信息抓取失败）。因此 `LiveGuardJob` 在 `GetLatestRoomIdByMidAsync` 返回空时，必须**调用一次 `IAccountInfoCrawler.CrawlAsync(mid)` 即时补抓基础信息**，随后重新解析 roomId；补抓后仍无 roomId 才跳过本轮。
+- **技术细节**: `IAccountInfoCrawler.CrawlAsync` 为现有服务（内部带 `account:{mid}` 锁、失败仅记日志不抛出），直接注入复用；补抓每轮每个 mid 至多触发一次，避免重复请求；`AccountInfoJob` 同时并入 `Guard` 订阅 mid，让基础信息进入常规周期维护，即时补抓只是冷启动/失败后的兜底。
+- **风险点**: 补抓本身也可能失败（目标主播无直播间、接口异常）——此时本轮跳过并记日志，下一周期重试，不阻塞其他主播。
 
 ## 6. 技术决策
 
@@ -261,6 +271,7 @@ sequenceDiagram
 | 翻页延迟位置 | Job 层统一延迟 | 客户端内延迟 | A | 单页语义与既有客户端方法一致；延迟策略集中可调 |
 | 拟真通道实现 | wbi 签名直调 HTTP | 复用直连实现 | A（允许降级 B） | 与 `GetSpaceDynamicsAsync` 模式一致；若实现核对发现偏差过大，首版降级为 B 并记录 |
 | 快照失败策略 | 整轮失败不落库 | 落部分名单 | A | 半成品名单会污染趋势分析 |
+| roomId 缺失兜底 | 即时调用 `AccountInfoCrawler.CrawlAsync` 补抓一次后重解析 | 直接跳过等下一周期 | A | 基础信息表可能无指定 mid，直接跳过会让新订阅主播长期无快照；补抓为现有服务，代价低 |
 
 ### 6.2 依赖与约束
 
@@ -268,7 +279,7 @@ sequenceDiagram
 |------|------|------|
 | 依赖 | Mikibot.Crawler 1.0.9 | `GetRoomGuardList(roomId, bId, page, token)` 重载已存在，无需升级包 |
 | 依赖 | `SubscriptionService` / `AccountBasicInfoRepository` / Cookie 池 / `CrawlLockProvider` / 风控治理 | 就地复用，不重构 |
-| 依赖 | `AccountInfoJob` 基础信息维护 | mid 集合扩展 Guard 类型 |
+| 依赖 | `AccountInfoJob` / `IAccountInfoCrawler` 基础信息维护与即时补抓 | mid 集合扩展 Guard 类型；roomId 缺失时补抓兜底 |
 | 约束 | 契约变更需同步 | `contracts/bilibili-crawler.openapi.yaml` 枚举扩展后前端重新生成客户端 |
 | 约束 | 页间延迟 + 页数上限 | 防反爬与死循环兜底，配置可调 |
 | 约束 | 每日一行 | (Mid, Date) 唯一索引 + 覆盖写 |
@@ -288,7 +299,7 @@ servers/api/
 │   ├── BrowserishBiliApiClient.cs          # 扩展：GetRoomGuardListAsync（拟真，或降级委托）
 │   └── ResilientBiliApiClient.cs           # 扩展：guard:{roomId} 通道治理
 ├── Jobs/
-│   ├── LiveGuardJob.cs                     # 新增：周期分页抓取 + 订阅事件补抓
+│   ├── LiveGuardJob.cs                     # 新增：周期分页抓取 + 订阅事件补抓 + roomId 缺失时调用 IAccountInfoCrawler 即时补抓
 │   └── AccountInfoJob.cs                   # 调整：mid 集合并入 Guard 类型
 ├── Configuration/
 │   └── BilibiliCrawlerOptions.cs           # 扩展：GuardIntervalHours / GuardPageDelayMinSeconds / GuardPageDelayMaxSeconds / GuardMaxPages
@@ -318,7 +329,7 @@ tests/Z.Vtuber.Tests/
 
 | 类型 | 工具 | 覆盖范围 |
 |------|------|---------|
-| 单元测试 | xUnit | 翻页终止（List 空 / 到达 PageCount / 页数上限）、单页失败整轮放弃、空名单落快照、日期口径 |
+| 单元测试 | xUnit | 翻页终止（List 空 / 到达 PageCount / 页数上限）、单页失败整轮放弃、空名单落快照、日期口径、roomId 缺失时即时补抓基础信息（补抓成功继续抓取 / 补抓后仍无 roomId 则跳过） |
 | 集成测试 | xUnit + Testcontainers (Mongo) | (Mid, Date) 唯一索引、同日覆盖写幂等、重启重复调度收敛一行 |
 | API 测试 | 现有 API 测试模式 | 上述订阅端点的 guard 类型用例 |
 | 手工验证 | 本地 Aspire 编排 | 订阅真实主播 guard 类型，观察分页日志、延迟与快照落库；取消订阅后抓取停止 |
