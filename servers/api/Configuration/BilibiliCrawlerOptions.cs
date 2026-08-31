@@ -28,6 +28,7 @@ public sealed class BilibiliCrawlerOptions
     public int ChannelRecoverSuccessCount { get; set; } = 3;
 
     public int GuardDailyCrawlHour { get; set; } = 23;
+    public int GuardCatchUpBeforeHour { get; set; } = 3;
     public int GuardCheckIntervalMinutes { get; set; } = 10;
     public int GuardPageDelayMinSeconds { get; set; } = 2;
     public int GuardPageDelayMaxSeconds { get; set; } = 5;

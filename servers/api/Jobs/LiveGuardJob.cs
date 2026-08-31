@@ -79,9 +79,41 @@ public class LiveGuardJob : PeriodicJobBase
 
     private void OnSubscribed(long mid, SubscriptionType type)
     {
-        if (type == SubscriptionType.Guard)
+        if (type != SubscriptionType.Guard)
+        {
+            return;
+        }
+
+        // 凌晨窗口（北京时间 00:00–GuardCatchUpBeforeHour）新增的 Guard 订阅：
+        // 立即补抓一次并视为前一日的舰长快照；其余时间收敛到 RunOnceAsync 的差集检查路径。
+        if (BeijingNow().Hour < _options.GuardCatchUpBeforeHour)
+        {
+            _ = CatchUpYesterdayAsync(mid);
+        }
+        else
         {
             _ = RunOnceAsync(CancellationToken.None);
+        }
+    }
+
+    private async Task CatchUpYesterdayAsync(long mid)
+    {
+        try
+        {
+            var date = BeijingNow().AddDays(-1).ToString("yyyy-MM-dd");
+            var withSnapshot = await _guardRepository.GetMidsWithSnapshotAsync(date, CancellationToken.None);
+            if (withSnapshot.Contains(mid))
+            {
+                _logger.LogInformation("Guard catch-up skipped for mid {Mid}: snapshot for {Date} already exists.", mid, date);
+                return;
+            }
+
+            _logger.LogInformation("Guard catch-up for mid {Mid}: crawling as {Date} snapshot.", mid, date);
+            await CrawlLockedAsync(mid, date, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Guard catch-up failed for mid {Mid}.", mid);
         }
     }
 
