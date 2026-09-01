@@ -75,6 +75,49 @@ public class RedisLiveEventBusTests(RedisFixture redis)
     }
 
     [Fact]
+    public async Task LastUnsubscribe_RemovesRedisSubscription()
+    {
+        var bus = new LiveEventBus(redis.Connection);
+        var sub = bus.Subscribe(4242);
+        await WaitForSubscriptionAsync();
+
+        var server = redis.Connection.GetServer(redis.Connection.GetEndPoints().First());
+
+        // 确认订阅已建立：Redis 上存在对该频道的订阅
+        Assert.True(await WaitUntilAsync(
+            () => SubscriberCount(server, Channel(4242)) > 0,
+            TimeSpan.FromSeconds(5)),
+            "Expected a Redis subscription to be active after Subscribe.");
+
+        bus.Unsubscribe(4242, sub.Id);
+
+        // 安静房间退订后 Redis 订阅真正拆除：订阅计数归零（而非仅停止投递）
+        Assert.True(await WaitUntilAsync(
+            () => SubscriberCount(server, Channel(4242)) == 0,
+            TimeSpan.FromSeconds(5)),
+            "Redis subscription should be removed after the last unsubscribe.");
+    }
+
+    private static long SubscriberCount(IServer server, RedisChannel channel)
+        => server.SubscriptionSubscriberCount(channel);
+
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            if (condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(100);
+        }
+
+        return condition();
+    }
+
+    [Fact]
     public async Task Publish_WithoutSubscriber_ReturnsFalse()
     {
         var bus = new LiveEventBus(redis.Connection);
