@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
-using Z.Vtuber.Persistence;
+using Z.Vtuber.Common.Persistence;
 
 namespace Z.Vtuber.Controllers;
 

@@ -1,10 +1,10 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
-using Z.Vtuber.Jobs;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
-using Z.Vtuber.Services;
+using Z.Vtuber.Crawler.Jobs;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Tests;
 

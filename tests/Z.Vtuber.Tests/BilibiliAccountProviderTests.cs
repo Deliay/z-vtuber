@@ -3,9 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Mikibot.Crawler;
 using Mikibot.Crawler.Http;
 using Mikibot.Crawler.Http.Bilibili;
-using Z.Vtuber.Configuration;
-using Z.Vtuber.Crawlers;
-using Z.Vtuber.Services;
+using Z.Vtuber.Crawler.Configuration;
+using Z.Vtuber.Crawler.Crawlers;
+using Z.Vtuber.Common.Services;
 
 namespace Z.Vtuber.Tests;
 

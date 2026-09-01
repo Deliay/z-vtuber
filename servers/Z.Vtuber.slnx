@@ -1,0 +1,17 @@
+<Solution>
+
+  <Folder Name="/servers/">
+    <Project Path="api/Z.Vtuber.csproj" />
+    <Project Path="common/Z.Vtuber.Common.csproj" />
+    <Project Path="crawler/Z.Vtuber.Crawler.csproj" />
+  </Folder>
+
+  <Folder Name="/tests/">
+    <Project Path="../tests/Z.Vtuber.Tests/Z.Vtuber.Tests.csproj" />
+  </Folder>
+
+  <Folder Name="/infra/">
+    <Project Path="../infra/apphost/Z.Vtuber.AppHost.csproj" />
+  </Folder>
+
+</Solution>

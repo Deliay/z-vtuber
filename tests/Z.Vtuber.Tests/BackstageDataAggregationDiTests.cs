@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Services;
+using Z.Vtuber.Common.Persistence;
 
 namespace Z.Vtuber.Tests;
 
@@ -16,10 +15,5 @@ public sealed class BackstageDataAggregationDiTests
             services.Where(d => d.ServiceType == typeof(ICookieAccountInfoRepository)));
         Assert.Equal(typeof(CookieAccountInfoRepository), repoDescriptor.ImplementationType);
         Assert.Equal(ServiceLifetime.Singleton, repoDescriptor.Lifetime);
-
-        var probeDescriptor = Assert.Single(
-            services.Where(d => d.ServiceType == typeof(ICookieNavProbeService)));
-        Assert.Equal(typeof(CookieNavProbeService), probeDescriptor.ImplementationType);
-        Assert.Equal(ServiceLifetime.Singleton, probeDescriptor.Lifetime);
     }
 }

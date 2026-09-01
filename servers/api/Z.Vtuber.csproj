@@ -10,7 +10,11 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
     <PackageReference Include="Aspire.MongoDB.Driver" Version="13.4.6" />
     <PackageReference Include="MongoDB.Driver" Version="3.9.0" />
-    <PackageReference Include="Mikibot.Crawler" Version="1.0.9" />
+    <PackageReference Include="Aspire.StackExchange.Redis" Version="13.4.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\common\Z.Vtuber.Common.csproj" />
   </ItemGroup>
 
 </Project>

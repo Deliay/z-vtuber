@@ -1,4 +1,4 @@
-using Z.Vtuber.Jobs;
+using Z.Vtuber.Crawler.Jobs;
 
 namespace Z.Vtuber.Tests;
 

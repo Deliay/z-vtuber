@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
 using Testcontainers.MongoDb;
-using Z.Vtuber.Persistence;
+using Z.Vtuber.Common.Persistence;
 
 namespace Z.Vtuber.Tests;
 

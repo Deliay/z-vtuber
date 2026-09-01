@@ -2,7 +2,7 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Mikibot.Crawler;
 using Mikibot.Crawler.Http;
-using Z.Vtuber.Crawlers;
+using Z.Vtuber.Crawler.Crawlers;
 
 namespace Z.Vtuber.Tests;
 

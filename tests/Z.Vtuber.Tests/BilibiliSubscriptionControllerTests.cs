@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.Common.Services;
 using Z.Vtuber.Controllers;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
-using Z.Vtuber.Services;
 
 namespace Z.Vtuber.Tests;
 
