@@ -10,12 +10,16 @@ var messaging = builder.AddRedis("messaging")
 
 var api = builder.AddProject<Projects.Z_Vtuber>("api")
     .WithReference(mongo)
+    .WaitFor(mongo)
     .WithReference(messaging)
+    .WaitFor(messaging)
     .WithExternalHttpEndpoints();
 
 var crawler = builder.AddProject<Projects.Z_Vtuber_Crawler>("crawler")
     .WithReference(mongo)
+    .WaitFor(mongo)
     .WithReference(messaging)
+    .WaitFor(messaging)
     .WithHttpHealthCheck("/health");
 
 var web = builder.AddViteApp("web", "../../apps/web")

@@ -273,7 +273,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         }
         while (processed == batchSize);
 
-        await meta.InsertOneAsync(new MetaRecord { Key = SpaceTimelinePubTsMigrationKey }, options: null, ct);
+        await MarkMigrationAppliedAsync(SpaceTimelinePubTsMigrationKey, ct);
         logger.LogInformation("Space timeline PubTs backfill completed and marked as applied.");
     }
 
@@ -342,7 +342,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         logger.LogInformation("Gift price backfill total processed {Total} records.", totalProcessed);
 
-        await meta.InsertOneAsync(new MetaRecord { Key = GiftPriceBackfillMigrationKey }, options: null, ct);
+        await MarkMigrationAppliedAsync(GiftPriceBackfillMigrationKey, ct);
         logger.LogInformation("Gift price backfill completed and marked as applied.");
     }
 
@@ -448,7 +448,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         logger.LogInformation("Backfill total processed {Total} events.", totalProcessed);
 
-        await meta.InsertOneAsync(new MetaRecord { Key = LiveEventTextIndexBackfillMigrationKey }, options: null, ct);
+        await MarkMigrationAppliedAsync(LiveEventTextIndexBackfillMigrationKey, ct);
         logger.LogInformation("Live event text index backfill completed and marked as applied.");
     }
 
@@ -554,8 +554,16 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         logger.LogInformation("Live event sender backfill total processed {Total} events.", totalProcessed);
 
-        await meta.InsertOneAsync(new MetaRecord { Key = LiveEventSenderBackfillMigrationKey }, options: null, ct);
+        await MarkMigrationAppliedAsync(LiveEventSenderBackfillMigrationKey, ct);
         logger.LogInformation("Live event sender backfill completed and marked as applied.");
+    }
+
+    // 使用 upsert 避免重复键错误：api 与 crawler 双服务并发启动初始化时，marker 可能已被另一方写入
+    private async Task MarkMigrationAppliedAsync(string key, CancellationToken ct)
+    {
+        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var filter = Builders<MetaRecord>.Filter.Eq(r => r.Key, key);
+        await meta.ReplaceOneAsync(filter, new MetaRecord { Key = key }, new ReplaceOptions { IsUpsert = true }, ct);
     }
 
     public const string SubscriptionTypeSplitMigrationKey = "subscription_type_split_v1";
@@ -635,9 +643,8 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         logger.LogInformation("Subscription type split migration total processed {Total} records.", totalProcessed);
 
-        // 使用 upsert 避免重复键错误（回滚场景）
-        var markerFilter = Builders<MetaRecord>.Filter.Eq(r => r.Key, SubscriptionTypeSplitMigrationKey);
-        await meta.ReplaceOneAsync(markerFilter, new MetaRecord { Key = SubscriptionTypeSplitMigrationKey }, new ReplaceOptions { IsUpsert = true }, ct);
+        // 使用 upsert 避免重复键错误（回滚场景 / 双服务并发）
+        await MarkMigrationAppliedAsync(SubscriptionTypeSplitMigrationKey, ct);
         logger.LogInformation("Subscription type split migration completed and marked as applied.");
     }
 }
