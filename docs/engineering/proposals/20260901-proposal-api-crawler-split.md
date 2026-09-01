@@ -2,12 +2,14 @@
 
 **功能名称**: 抓取与 API 服务拆分
 **关联 PRD**: `docs/product/draft/20260901-api-crawler-split-prd.md`
-**技术提案版本**: v1.1
+**技术提案版本**: v1.2
 **创建日期**: 2026-09-01
 **作者**: Deliay
 **feat-branch**: `feat/api-crawler-split`
 
-> v1.1 返工说明：按评审意见，服务间事件通道由「MongoDB 仓储轮询」改为「消息中间件 pub/sub」——crawler 发布事件，api 在有 SSE 订阅请求时按需订阅、无订阅或断开后退订；消息中间件通过 Aspire 编排。选型对比见 6.1 决策（Redis / RabbitMQ / Kafka），**待 review 确认**。
+> v1.1 返工说明：按评审意见，服务间事件通道由「MongoDB 仓储轮询」改为「消息中间件 pub/sub」——crawler 发布事件，api 在有 SSE 订阅请求时按需订阅、无订阅或断开后退订；消息中间件通过 Aspire 编排。选型对比见 6.2（Redis / RabbitMQ / Kafka），**待 review 确认**。
+>
+> v1.2 返工说明：按评审意见，crawler 增加健康检查接口 `/health`，供 Aspire 与部署环境探活，见 5.2 实现点 3 与 6.1 决策。
 
 ## 1. 概述
 
@@ -30,7 +32,7 @@
 
 - 解决方案与工程结构调整：`servers/Z.Vtuber.slnx`、`servers/common`、`servers/crawler`、`servers/api` 瘦身；
 - 代码搬迁与命名空间调整（`Z.Vtuber.Common` / `Z.Vtuber.Crawler`），不改动业务逻辑；
-- crawler 独立宿主（Worker SDK）、`servers/crawler/Dockerfile`、`.github/workflows/build-crawler-image.yml`；
+- crawler 独立宿主（Worker SDK）、健康检查接口 `/health`、`servers/crawler/Dockerfile`、`.github/workflows/build-crawler-image.yml`；
 - 引入消息中间件（Aspire 编排）：crawler 发布弹幕事件，api 按需订阅（有 SSE 订阅请求才订阅、无订阅/断开后退订）；
 - Aspire 编排增加 crawler 项目与消息中间件资源；
 - API 侧弹幕事件 SSE 推送通道的跨进程改造（pub/sub，选型见 6.1，**待 review**）。
@@ -63,7 +65,7 @@ graph TD
 | 层级 | 技术选型 | 说明 |
 |------|---------|------|
 | API 服务 | C# (.NET 10) + ASP.NET Core | 现有工程瘦身，命名空间保持 `Z.Vtuber` |
-| 抓取服务 | C# (.NET 10) Worker | `Microsoft.NET.Sdk.Worker`，后台任务宿主 |
+| 抓取服务 | C# (.NET 10) Worker | `Microsoft.NET.Sdk.Worker`，后台任务宿主 + `/health` 健康检查接口 |
 | 公共项目 | C# (.NET 10) 类库 | `Z.Vtuber.Common`，实体/仓储/共享服务 |
 | 数据库 | MongoDB | 两个服务各自直连，共享既有集合 |
 | 消息中间件 | 选型待 review（Redis / RabbitMQ / Kafka） | 弹幕事件 pub/sub，Aspire 编排，见 6.1 |
@@ -181,15 +183,15 @@ sequenceDiagram
   - 消息中间件由 Aspire 编排注入连接（见 6.1 选型与实现点 4）。
 - **风险点**: pub/sub 为 fire-and-forget，api 重启窗口内的实时推送会丢（落库不受影响）；若 review 认为需要投递保证，选型应倾向 RabbitMQ（见 6.1）。
 
-#### 实现点 3: crawler 独立宿主与流水线
+#### 实现点 3: crawler 独立宿主、健康检查与流水线
 
-- **描述**: `servers/crawler/Program.cs` 以 `Host.CreateApplicationBuilder` 承载 4 个周期任务与弹幕长连接（原 `Program.cs` 中对应 DI 注册平移）；新增 `servers/crawler/Dockerfile`（多阶段构建，restore 需同时拷贝 common 与 crawler 的 csproj）；新增 `.github/workflows/build-crawler-image.yml`，参照 `build-api-image.yml`：`release`/`release/**` 推送或手动触发，路径过滤 `servers/crawler/**`、`servers/common/**`，镜像 tag 为 `${DOCKER_ENDPOINT}/zero-tools/z-vtuber-crawler:{sha}` 与 `:latest`。
-- **技术细节**: 同步在 `build-api-image.yml` 的路径过滤中补充 `servers/common/**`（common 变更应同时触发两个镜像重建）；api 的 Dockerfile 同步补充 common 项目拷贝。
-- **风险点**: 镜像上下文为仓库根，需注意 Dockerfile 中 common 的 COPY 路径，漏拷会导致 restore 失败。
+- **描述**: `servers/crawler/Program.cs` 以 `Host.CreateApplicationBuilder` 承载 4 个周期任务与弹幕长连接（原 `Program.cs` 中对应 DI 注册平移）；同时暴露健康检查接口 `GET /health`：csproj 增加 `FrameworkReference Microsoft.AspNetCore.App`，宿主内挂最小 Kestrel（端口可配置，默认 8080），`AddHealthChecks` + `MapHealthChecks("/health")`，健康项包含进程存活与 MongoDB 连通性；新增 `servers/crawler/Dockerfile`（多阶段构建，restore 需同时拷贝 common 与 crawler 的 csproj，EXPOSE 8080）；新增 `.github/workflows/build-crawler-image.yml`，参照 `build-api-image.yml`：`release`/`release/**` 推送或手动触发，路径过滤 `servers/crawler/**`、`servers/common/**`，镜像 tag 为 `${DOCKER_ENDPOINT}/zero-tools/z-vtuber-crawler:{sha}` 与 `:latest`。
+- **技术细节**: 同步在 `build-api-image.yml` 的路径过滤中补充 `servers/common/**`（common 变更应同时触发两个镜像重建）；api 的 Dockerfile 同步补充 common 项目拷贝；Aspire 侧 crawler 资源以 `.WithHttpHealthCheck("/health")` 接入探活（见实现点 4）。
+- **风险点**: 镜像上下文为仓库根，需注意 Dockerfile 中 common 的 COPY 路径，漏拷会导致 restore 失败；健康端点仅做探活，不承载业务 API，不对外暴露其他路由。
 
 #### 实现点 4: Aspire 编排与配置
 
-- **描述**: `infra/apphost/AppHost.cs` 增加 `builder.AddProject<Projects.Z_Vtuber_Crawler>("crawler").WithReference(mongo)`；同时增加消息中间件资源（以选型结果为准，如 Redis 则 `builder.AddRedis("messaging")`），crawler 与 api 均 `.WithReference(messaging)`，连接串由 Aspire 注入 `ConnectionStrings:messaging`；crawler 的 appsettings 携带 `BilibiliCrawler` 节；api 的 appsettings 移除 `BilibiliCrawler` 节（若该 Options 归 crawler）。
+- **描述**: `infra/apphost/AppHost.cs` 增加 `builder.AddProject<Projects.Z_Vtuber_Crawler>("crawler").WithReference(mongo)` 并 `.WithHttpHealthCheck("/health")`（健康检查接口探活）；同时增加消息中间件资源（以选型结果为准，如 Redis 则 `builder.AddRedis("messaging")`），crawler 与 api 均 `.WithReference(messaging)`，连接串由 Aspire 注入 `ConnectionStrings:messaging`；crawler 的 appsettings 携带 `BilibiliCrawler` 节；api 的 appsettings 移除 `BilibiliCrawler` 节（若该 Options 归 crawler）。
 - **风险点**: 非 Aspire 的裸部署场景需在部署文档中说明 crawler/api 所需的消息中间件环境变量；镜像流水线不变（中间件为基础设施容器，不进业务镜像）。
 
 ## 6. 技术决策
@@ -200,7 +202,8 @@ sequenceDiagram
 |------|--------|--------|---------|------|
 | 消息中间件选型 | 见 6.2 对比 | — | **待 review** | 评审要求引入 Redis/RabbitMQ/Kafka 之一并做选型，对比见 6.2，推荐 Redis |
 | 公共代码复用 | 双方各复制一份 | 共享类库项目 common | B | 需求明确要求公共类型单份维护，避免口径漂移 |
-| crawler 宿主形态 | ASP.NET Core（无控制器） | Worker SDK | B | 抓取服务无 HTTP 端点，Worker 语义最简最准确 |
+| crawler 宿主形态 | ASP.NET Core（Web SDK） | Worker SDK + FrameworkReference 挂最小 Kestrel | B | 抓取服务除 `/health` 探活外无 HTTP 端点，Worker 语义最简；健康检查按评审要求保留 |
+| crawler 健康检查 | 不提供（纯后台进程） | 提供 `GET /health`（进程存活 + MongoDB 连通性） | B | 评审明确要求抓取服务有健康检查接口，供 Aspire 与部署环境探活 |
 | 服务间通信 | 新增 RPC/HTTP 调用 | 共享数据库 + 异步 pub/sub | B | PRD 约束：不引入同步调用依赖；实时事件走异步消息，持久数据走库 |
 | 测试项目 | 按三项目拆分测试工程 | 保持 `tests/Z.Vtuber.Tests` 单工程引用三项目 | B | 最小改动，现有测试全部平移即回归；后续可按需再拆 |
 | slnx | 无文件可挪，跳过 | 在 servers/ 下新建 slnx | B | 仓库现状无 sln/slnx，按需求意图新建并正确配置相对路径 |
@@ -256,8 +259,8 @@ servers/
     ├── Live/                              # 搬入：LiveEventSource/弹幕客户端/归一化（新增事件发布）
     ├── Services/                          # 搬入：AccountInfoCrawler/CookieNavProbeService
     ├── Configuration/BilibiliCrawlerOptions.cs
-    ├── Program.cs                         # 新建：Worker 宿主
-    ├── Dockerfile                         # 新建
+    ├── Program.cs                         # 新建：Worker 宿主 + /health 健康检查
+    ├── Dockerfile                         # 新建（EXPOSE 8080）
     └── Z.Vtuber.Crawler.csproj            # 新建 Worker 项目（引用 common + 消息客户端）
 .github/workflows/build-crawler-image.yml  # 新建：zero-tools/z-vtuber-crawler
 infra/apphost/AppHost.cs                   # 增加 crawler 项目与消息中间件资源
@@ -275,7 +278,7 @@ tests/Z.Vtuber.Tests/                      # 引用调整为三项目，用例�
 
 | 类型 | 工具 | 覆盖范围 |
 |------|------|---------|
-| 单元测试 | xUnit | 现有用例随代码平移后全绿；新增 pub/sub 发布、按需订阅/退订（订阅计数归零退订）用例 |
+| 单元测试 | xUnit | 现有用例随代码平移后全绿；新增 pub/sub 发布、按需订阅/退订（订阅计数归零退订）、crawler `/health` 健康项用例 |
 | 集成测试 | Testcontainers (MongoDB + 消息中间件) | 仓储与聚合端点回归；crawler pub → api sub 端到端；crawler 写 / api 读的跨服务读写一致性 |
 | 构建验证 | dotnet build / docker build | slnx 全量构建；两个 Dockerfile 可构建 |
 
@@ -298,7 +301,7 @@ tests/Z.Vtuber.Tests/                      # 引用调整为三项目，用例�
 
 - [ ] 技术方案评审通过（含 6.2 消息中间件选型确认）
 - [ ] slnx 全量构建通过，三项目引用关系正确
-- [ ] crawler 可独立启动并执行全部抓取任务与弹幕长连接，事件落库同时向消息中间件发布
+- [ ] crawler 可独立启动并执行全部抓取任务与弹幕长连接，事件落库同时向消息中间件发布；`GET /health` 健康检查可访问（含 MongoDB 连通性）
 - [ ] api 可独立启动，全部既有端点回归通过（契约零变更）；SSE 在有订阅时收到实时推送，无订阅/断开后退订
 - [ ] 任一服务停止时另一服务行为正常
 - [ ] 单元/集成测试全绿
