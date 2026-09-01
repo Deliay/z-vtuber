@@ -113,17 +113,17 @@ public sealed class LiveEventBus : ILiveEventBus
     {
         var subscriber = _redis!.GetSubscriber();
         var channel = new RedisChannel(LiveEventChannels.ChannelName(roomId), RedisChannel.PatternMode.Literal);
+        ChannelMessageQueue? queue = null;
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                ChannelMessageQueue? queue = null;
                 try
                 {
                     queue = await subscriber.SubscribeAsync(channel);
                     state.Queue = queue;
 
-                    // 退订与订阅竞态：若订阅完成前已请求取消，立即拆除订阅退出，避免悬挂订阅
+                    // 退订与订阅竞态：若订阅完成前已请求取消，立即拆除本泵订阅退出，避免悬挂订阅
                     if (ct.IsCancellationRequested)
                     {
                         await queue.UnsubscribeAsync();
@@ -157,7 +157,7 @@ public sealed class LiveEventBus : ILiveEventBus
                         Distribute(roomId, state, liveEvent);
                     }
 
-                    // 队列被释放（最后一个订阅者退订）→ 正常退出泵
+                    // 队列被关闭（最后一个订阅者退订）→ 正常退出泵
                     break;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -168,13 +168,17 @@ public sealed class LiveEventBus : ILiveEventBus
                 {
                     // 泵故障：记录日志并重建订阅（仍有订阅者且未取消时）
                     _logger.LogWarning(ex, "LiveEventBus pump for room {RoomId} faulted; re-subscribing.", roomId);
-                    try
+                    if (queue is not null)
                     {
-                        await subscriber.UnsubscribeAsync(channel);
-                    }
-                    catch
-                    {
-                        // 忽略退订失败，下一次重建仍会重试
+                        try
+                        {
+                            // 仅拆除本泵的 handler（队列级），避免误拆同频道其他泵的订阅
+                            await queue.UnsubscribeAsync();
+                        }
+                        catch
+                        {
+                            // 忽略退订失败，下一次重建仍会重试
+                        }
                     }
 
                     try
@@ -190,13 +194,18 @@ public sealed class LiveEventBus : ILiveEventBus
         }
         finally
         {
-            try
+            // 仅拆除本泵的 handler（队列级），绝不使用频道级 UnsubscribeAsync——
+            // 频道级退订会清除同频道全部 handler，可能误拆快速重订阅时新泵刚建立的订阅，导致房间静默失聪
+            if (queue is not null)
             {
-                await subscriber.UnsubscribeAsync(channel);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to unsubscribe LiveEventBus channel {Channel}.", channel);
+                try
+                {
+                    await queue.UnsubscribeAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to unsubscribe LiveEventBus queue for channel {Channel}.", channel);
+                }
             }
 
             state.PumpCompleted.TrySetResult();
