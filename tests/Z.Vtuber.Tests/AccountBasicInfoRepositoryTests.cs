@@ -1,5 +1,5 @@
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Tests;
 

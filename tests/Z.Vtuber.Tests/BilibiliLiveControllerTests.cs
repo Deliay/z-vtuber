@@ -4,9 +4,10 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using Z.Vtuber.Controllers;
+using Z.Vtuber.Common.Live;
 using Z.Vtuber.Live;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Tests;
 
@@ -533,7 +534,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
         await eventRepository.InsertAsync(event2);
 
         // 插入文本索引
-        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        await textIndexRepository.InsertAsync(new LiveEventTextIndexRecord
         {
             EventId = event1.Id,
             RoomId = 123456,
@@ -541,7 +542,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
             Text = "Hello World",
             OccurredAt = event1.OccurredAt,
         });
-        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        await textIndexRepository.InsertAsync(new LiveEventTextIndexRecord
         {
             EventId = event2.Id,
             RoomId = 123456,
@@ -616,7 +617,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
         await eventRepository.InsertAsync(event1);
 
         var criteria200 = new string('a', 200);
-        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        await textIndexRepository.InsertAsync(new LiveEventTextIndexRecord
         {
             EventId = event1.Id,
             RoomId = 123456,
@@ -639,7 +640,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
         var event1 = Event("danmaku", EventBaseDate.AddHours(1));
         await eventRepository.InsertAsync(event1);
 
-        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        await textIndexRepository.InsertAsync(new LiveEventTextIndexRecord
         {
             EventId = event1.Id,
             RoomId = 123456,
@@ -663,7 +664,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
         var event1 = Event("danmaku", EventBaseDate.AddHours(1));
         await eventRepository.InsertAsync(event1);
 
-        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        await textIndexRepository.InsertAsync(new LiveEventTextIndexRecord
         {
             EventId = event1.Id,
             RoomId = 123456,
@@ -691,7 +692,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
         await eventRepository.InsertAsync(event2);
         await eventRepository.InsertAsync(event3);
 
-        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        await textIndexRepository.InsertAsync(new LiveEventTextIndexRecord
         {
             EventId = event1.Id,
             RoomId = 123456,
@@ -699,7 +700,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
             Text = "Hello World",
             OccurredAt = event1.OccurredAt,
         });
-        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        await textIndexRepository.InsertAsync(new LiveEventTextIndexRecord
         {
             EventId = event2.Id,
             RoomId = 123456,
@@ -707,7 +708,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
             Text = "Hello World",
             OccurredAt = event2.OccurredAt,
         });
-        await textIndexRepository.InsertAsync(new Persistence.Entities.LiveEventTextIndexRecord
+        await textIndexRepository.InsertAsync(new LiveEventTextIndexRecord
         {
             EventId = event3.Id,
             RoomId = 123456,

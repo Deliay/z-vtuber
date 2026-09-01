@@ -1,10 +1,11 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Mikibot.Crawler.Http.Bilibili.Model;
-using Z.Vtuber.Configuration;
-using Z.Vtuber.Crawlers;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
-using Z.Vtuber.Services;
+using Z.Vtuber.Crawler.Configuration;
+using Z.Vtuber.Crawler.Crawlers;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.Common.Services;
+using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Tests;
 
@@ -116,7 +117,7 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
 
         // Simulate legacy document: directly set CooldownUntil to null via raw update
         var collection = fixture.Database.GetCollection<MongoDB.Bson.BsonDocument>(
-            Persistence.MongoCollectionNames.Cookies);
+            MongoCollectionNames.Cookies);
         var filter = new MongoDB.Bson.BsonDocument("cookie", "cookie-a");
         var update = new MongoDB.Bson.BsonDocument("$set",
             new MongoDB.Bson.BsonDocument("cooldownUntil",

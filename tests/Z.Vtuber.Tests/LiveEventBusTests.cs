@@ -1,3 +1,4 @@
+using Z.Vtuber.Common.Live;
 using Z.Vtuber.Live;
 
 namespace Z.Vtuber.Tests;

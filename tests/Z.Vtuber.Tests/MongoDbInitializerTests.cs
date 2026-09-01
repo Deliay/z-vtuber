@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Tests;
 

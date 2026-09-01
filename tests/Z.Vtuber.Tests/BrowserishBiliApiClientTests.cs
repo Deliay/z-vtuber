@@ -6,8 +6,8 @@ using Microsoft.Extensions.Options;
 using Mikibot.Crawler.Http;
 using Mikibot.Crawler.Http.Bilibili;
 using Mikibot.Crawler.Http.Bilibili.Model;
-using Z.Vtuber.Configuration;
-using Z.Vtuber.Crawlers;
+using Z.Vtuber.Crawler.Configuration;
+using Z.Vtuber.Crawler.Crawlers;
 
 namespace Z.Vtuber.Tests;
 

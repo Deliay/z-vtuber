@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 
+using Z.Vtuber.Common.Live;
 namespace Z.Vtuber.Live;
 
 public sealed record LiveEventSubscription(Guid Id, ChannelReader<LiveEvent> Reader);
