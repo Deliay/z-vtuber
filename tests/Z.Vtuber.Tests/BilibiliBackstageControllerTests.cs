@@ -163,6 +163,23 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IAsyncLi
     }
 
     [Fact]
+    public async Task Subscription_Guard_ReturnsWithoutError()
+    {
+        // 回归：线上已存在 Type="Guard" 的订阅文档，若枚举缺少 Guard 反序列化会抛异常导致
+        // /api/b/backstage/subscription 服务不可用；Guard=2 合入后须正常返回。
+        const long mid = 1150976664;
+        var subscriptions = fixture.Database
+            .GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+        await subscriptions.InsertOneAsync(Subscription(mid, SubscriptionType.Guard));
+
+        var json = Ok(await CreateController(fixture.Database).ListSubscriptions(CancellationToken.None));
+
+        // 关键回归点：Guard 订阅能正常反序列化并返回（而非抛异常致服务不可用）
+        Assert.Equal(1, json.GetProperty("items").GetArrayLength());
+        Assert.Equal(mid, json.GetProperty("items")[0].GetProperty("mid").GetInt64());
+    }
+
+    [Fact]
     public async Task Cookie_WithAccountInfo_ReturnsAccountNameWithoutCookiePlaintext()
     {
         var cookies = fixture.Database
