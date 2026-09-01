@@ -8,6 +8,7 @@ on:
       - 'release/**'
     paths:
       - 'servers/api/**'
+      - 'servers/common/**'
 
 jobs:
   build:
