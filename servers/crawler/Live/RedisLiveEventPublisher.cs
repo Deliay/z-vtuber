@@ -13,13 +13,11 @@ public sealed class RedisLiveEventPublisher(
     IConnectionMultiplexer redis,
     ILogger<RedisLiveEventPublisher> logger) : ILiveEventPublisher
 {
-    public static string ChannelName(long roomId) => $"live-event:{roomId}";
-
     public async Task PublishAsync(LiveEvent liveEvent, CancellationToken ct = default)
     {
         try
         {
-            var channel = new RedisChannel(ChannelName(liveEvent.RoomId), RedisChannel.PatternMode.Literal);
+            var channel = new RedisChannel(LiveEventChannels.ChannelName(liveEvent.RoomId), RedisChannel.PatternMode.Literal);
             await redis.GetSubscriber().PublishAsync(channel, JsonSerializer.Serialize(liveEvent));
         }
         catch (Exception ex)
