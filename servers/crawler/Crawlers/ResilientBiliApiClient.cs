@@ -48,6 +48,10 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         => ExecuteWithResilienceAsync(cookie, $"space:{mid}", c => _direct.GetSpaceDynamicsAsync(c, mid, offset, ct),
             c => _browser.GetSpaceDynamicsAsync(c, mid, offset, ct));
 
+    public Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
+        => ExecuteWithResilienceAsync(cookie, $"guard:{roomId}", c => _direct.GetRoomGuardListAsync(c, roomId, bId, page, ct),
+            c => _browser.GetRoomGuardListAsync(c, roomId, bId, page, ct));
+
     public Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
         => _direct.GetAccountInfoDataAsync(cookie, mid, ct);
 

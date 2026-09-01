@@ -30,6 +30,12 @@ public sealed class FakeBiliApiClient : IBiliApiClient
 
     public Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default) =>
         Task.FromResult(new SpaceDynamicsPage { HasMore = false, Offset = string.Empty, Items = [] });
+
+    public Func<long, int, GuardInfo>? RoomGuardListProvider { get; set; }
+
+    public Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default) =>
+        Task.FromResult(RoomGuardListProvider?.Invoke(roomId, page)
+            ?? new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
 }
 
 public sealed class FakeCookiePoolService : ICookiePoolService

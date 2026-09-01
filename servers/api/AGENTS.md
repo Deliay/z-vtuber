@@ -22,13 +22,13 @@ graph LR
 
 纯 API 服务：对外接口与读侧能力，进程内不承载任何周期性抓取任务（抓取在 `servers/crawler`）。
 
-- `Controllers/`：对外 API（Health + BilibiliSubscription/BilibiliUser/BilibiliLive + BilibiliBackstage，统一前缀 `/api/b`；`BilibiliBackstageController` 为后台聚合只读接口，前缀 `/api/b/backstage`，内存 join 返回订阅/ Cookie 列表及其昵称）
+- `Controllers/`：对外 API（Health + BilibiliSubscription/BilibiliUser/BilibiliLive + BilibiliBackstage，统一前缀 `/api/b`；`BilibiliSubscriptionController` 订阅/退订支持 `dynamic`/`danmaku`/`guard`；`BilibiliBackstageController` 为后台聚合只读接口，前缀 `/api/b/backstage`，内存 join 返回订阅/ Cookie 列表及其昵称）
 - `Live/`：`ILiveEventBus`/`LiveEventBus`（SSE 订阅门控；数据源为 Redis pub/sub，按订阅计数驱动按需 `SUBSCRIBE`/`UNSUBSCRIBE`，收到消息反序列化为 `LiveEvent` 后走既有 type 过滤门控分发）
 - `Program.cs`：注册 Controllers/OpenApi/HealthChecks/mongo/Redis 客户端/仓储/共享服务/`ILiveEventBus`/backstage 聚合；启动时执行幂等索引初始化与回填
 
 ## 共享依赖（servers/common）
 
-实体、仓储、共享领域服务（`CookiePoolService`、`SubscriptionService`、`LiveSessionTracker`、`LiveStatusStateMachine`、`PubTsExtractor`、`SpaceTimelinePaging`）、共享模型 `LiveEvent`、`MongoDbInitializer`、`BsonConvert`、backstage 聚合扩展均位于 `servers/common`（`Z.Vtuber.Common`），本服务与 crawler 共同引用单份实现。
+实体、仓储、共享领域服务（`CookiePoolService`、`SubscriptionService`、`LiveSessionTracker`、`LiveStatusStateMachine`、`PubTsExtractor`、`SpaceTimelinePaging`）、共享模型 `LiveEvent`、`LiveGuardRepository`、`MongoDbInitializer`、`BsonConvert`、backstage 聚合扩展均位于 `servers/common`（`Z.Vtuber.Common`），本服务与 crawler 共同引用单份实现。
 
 ## 开发流程
 

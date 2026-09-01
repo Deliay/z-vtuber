@@ -118,6 +118,90 @@ describe('SubscriptionPage', () => {
     })
   })
 
+  it('should render guard type label and selectable option', async () => {
+    mockListSubscriptions.mockResolvedValue([
+      {
+        mid: 777,
+        type: 'guard',
+        subscribedAt: '2024-01-05T00:00:00Z',
+      },
+    ])
+
+    render(<SubscriptionPage />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('舰长').length).toBeGreaterThan(0)
+      expect(screen.getByText('777')).toBeInTheDocument()
+    })
+  })
+
+  it('should subscribe with guard type', async () => {
+    mockSubscribe.mockResolvedValue({
+      mid: 888,
+      type: 'guard',
+      subscribedAt: '2024-01-06T00:00:00Z',
+    })
+    mockListSubscriptions
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          mid: 888,
+          type: 'guard',
+          subscribedAt: '2024-01-06T00:00:00Z',
+        },
+      ])
+
+    render(<SubscriptionPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('暂无订阅')).toBeInTheDocument()
+    })
+
+    const typeSelect = screen.getByDisplayValue('请选择类型')
+    fireEvent.change(typeSelect, { target: { value: 'guard' } })
+
+    const midInput = screen.getByPlaceholderText('主播 ID (mid)')
+    fireEvent.change(midInput, { target: { value: '888' } })
+
+    const submitButton = screen.getByText('新增订阅')
+    fireEvent.click(submitButton)
+
+    await waitFor(() => {
+      expect(mockSubscribe).toHaveBeenCalledWith({ mid: 888, type: 'guard' })
+      expect(screen.getByText('888')).toBeInTheDocument()
+    })
+  })
+
+  it('should cancel guard subscription', async () => {
+    mockListSubscriptions
+      .mockResolvedValueOnce([
+        {
+          mid: 999,
+          type: 'guard',
+          subscribedAt: '2024-01-07T00:00:00Z',
+        },
+      ])
+      .mockResolvedValueOnce([])
+    mockUnsubscribe.mockResolvedValue(undefined)
+
+    render(<SubscriptionPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('999')).toBeInTheDocument()
+    })
+
+    const cancelButton = screen.getByText('取消')
+    fireEvent.click(cancelButton)
+
+    const confirmButton = screen.getByText('确认取消')
+    fireEvent.click(confirmButton)
+
+    await waitFor(() => {
+      expect(mockUnsubscribe).toHaveBeenCalledWith(999, 'guard')
+      expect(screen.getByText('暂无订阅')).toBeInTheDocument()
+    })
+  })
+
   it('should validate type selection before submission', async () => {
     render(<SubscriptionPage />)
 

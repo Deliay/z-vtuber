@@ -21,6 +21,7 @@ public sealed class ResilientBiliApiClientTests
         public Func<string, CancellationToken, Task<NavInfo>>? NavInfoFunc { get; set; }
         public Func<string, long, string, CancellationToken, Task<SpaceDynamicsPage>>? SpaceDynamicsFunc { get; set; }
         public Func<string, long, CancellationToken, Task<JsonElement>>? AccountInfoFunc { get; set; }
+        public Func<string, long, long, int, CancellationToken, Task<GuardInfo>>? RoomGuardListFunc { get; set; }
 
         public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default)
         {
@@ -52,6 +53,14 @@ public sealed class ResilientBiliApiClientTests
             LastCookie = cookie;
             return AccountInfoFunc?.Invoke(cookie, mid, ct)
                 ?? Task.FromResult(JsonDocument.Parse("""{"mid":0}""").RootElement.Clone());
+        }
+
+        public Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref _callCount);
+            LastCookie = cookie;
+            return RoomGuardListFunc?.Invoke(cookie, roomId, bId, page, ct)
+                ?? Task.FromResult(new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
         }
     }
 
@@ -299,6 +308,56 @@ public sealed class ResilientBiliApiClientTests
         await sut.GetLiveRoomInfoAsync("cookie1", 123);
 
         Assert.Equal(0, direct.CallCount);
+        Assert.Equal(1, browser.CallCount);
+    }
+
+    [Fact]
+    public async Task GetRoomGuardListAsync_BackoffActiveOnGuardRoomIdKey_ThrowsBackoff()
+    {
+        var direct = new TrackingBiliApiClient();
+        var browser = new TrackingBiliApiClient();
+        var opts = DefaultOptions();
+        var registry = new CrawlBackoffRegistry(Options.Create(opts));
+        // 退避键必须为 guard:{roomId}，预置退避后调用应抛 CrawlBackoffActiveException
+        registry.ReportRiskControl("guard:123");
+        var sut = new ResilientBiliApiClient(
+            direct, browser, opts,
+            new SpyCookiePoolService(), registry,
+            NullLogger<ResilientBiliApiClient>.Instance);
+
+        await Assert.ThrowsAsync<CrawlBackoffActiveException>(
+            () => sut.GetRoomGuardListAsync("cookie1", 123, 456));
+
+        Assert.Equal(0, direct.CallCount);
+        Assert.Equal(0, browser.CallCount);
+    }
+
+    [Fact]
+    public async Task GetRoomGuardListAsync_DirectRiskControl_DegradesToBrowser()
+    {
+        var direct = new TrackingBiliApiClient
+        {
+            RoomGuardListFunc = (_, _, _, _, _) => throw MakeRiskControl("cookie12345678")
+        };
+        var browserCalled = false;
+        var browser = new TrackingBiliApiClient
+        {
+            RoomGuardListFunc = (_, roomId, bId, page, _) =>
+            {
+                browserCalled = true;
+                return Task.FromResult(new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
+            }
+        };
+        var opts = DefaultOptions();
+        var sut = new ResilientBiliApiClient(
+            direct, browser, opts,
+            new SpyCookiePoolService(), new CrawlBackoffRegistry(Options.Create(opts)),
+            NullLogger<ResilientBiliApiClient>.Instance);
+
+        await sut.GetRoomGuardListAsync("cookie12345678", 123, 456);
+
+        Assert.True(browserCalled);
+        Assert.Equal(1, direct.CallCount);
         Assert.Equal(1, browser.CallCount);
     }
 

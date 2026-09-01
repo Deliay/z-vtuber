@@ -68,7 +68,7 @@ export async function subscribe(
 
 export async function unsubscribe(
   mid: number,
-  type: 'danmaku' | 'dynamic',
+  type: NonNullable<SubscriptionItem['type']>,
 ): Promise<void> {
   return request<void>(
     `/b/subscription/${mid}?type=${type}`,
