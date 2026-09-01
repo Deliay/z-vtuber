@@ -8,13 +8,15 @@
     <UserSecretsId>f0faee9f-5069-4fb9-a93f-5376a2680a27</UserSecretsId>
   </PropertyGroup>
 
-  <ItemGroup>
+<ItemGroup>
     <PackageReference Include="Aspire.Hosting.JavaScript" Version="13.4.6" />
     <PackageReference Include="Aspire.Hosting.MongoDB" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting.Redis" Version="13.4.6" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\servers\api\Z.Vtuber.csproj" />
+    <ProjectReference Include="..\..\servers\crawler\Z.Vtuber.Crawler.csproj" />
   </ItemGroup>
 
 </Project>
