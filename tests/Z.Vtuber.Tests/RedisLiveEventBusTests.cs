@@ -137,4 +137,37 @@ public class RedisLiveEventBusTests(RedisFixture redis)
 
         bus.Unsubscribe(2, sub.Id);
     }
+
+    [Fact]
+    public async Task ResubscribeRace_OldPumpTeardown_DoesNotSilenceRoom()
+    {
+        // 回归：旧泵 finally/重建路径的退订必须是队列级（ChannelMessageQueue.UnsubscribeAsync），
+        // 绝不能是频道级（subscriber.UnsubscribeAsync(channel)）——频道级退订会清除同频道全部 handler，
+        // 在「旧泵 teardown 与新泵 SUBSCRIBE 交叠」时误拆新泵订阅，导致房间静默失聪。
+        var bus = new LiveEventBus(redis.Connection);
+        var server = redis.Connection.GetServer(redis.Connection.GetEndPoints().First());
+        const long room = 888001;
+
+        LiveEventSubscription? active = null;
+        for (var i = 0; i < 5; i++)
+        {
+            // 退订旧订阅（若存在）→ 触发旧泵 teardown
+            if (active is not null)
+            {
+                bus.Unsubscribe(room, active.Id);
+            }
+
+            // 立即对同一频道重订阅 → 新 RoomState + 新泵，与旧泵 teardown 交叠
+            active = bus.Subscribe(room);
+            await Task.Delay(150);
+
+            // 新订阅者必须仍能收到事件（旧泵 teardown 不得误拆新泵订阅）
+            await PublishAsync(redis, Event(room));
+            var received = await active.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(room, received.RoomId);
+        }
+
+        bus.Unsubscribe(room, active.Id);
+        await WaitUntilAsync(() => SubscriberCount(server, Channel(room)) == 0, TimeSpan.FromSeconds(5));
+    }
 }
