@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence.Entities;
 
@@ -31,5 +32,59 @@ public sealed class LiveGuardRepository(IMongoDatabase database)
             .Project<LiveGuardRecord>(projection)
             .ToListAsync(ct);
         return records.Select(r => r.Mid).ToList();
+    }
+
+    public async Task<IReadOnlyList<LiveGuardEntry>> GetOnboardGuardEntriesAsync(
+        long roomId,
+        IReadOnlyList<string> dates,
+        bool requireAllDays,
+        CancellationToken ct = default)
+    {
+        if (dates.Count == 0)
+        {
+            return [];
+        }
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "RoomId", roomId },
+                { "Date", new BsonDocument("$in", new BsonArray(dates)) },
+            }),
+            new BsonDocument("$unwind", "$Guards"),
+            new BsonDocument("$sort", new BsonDocument("Date", -1)),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", "$Guards.Uid" },
+                { "days", new BsonDocument("$addToSet", "$Date") },
+                { "latest", new BsonDocument("$first", "$Guards") },
+            }),
+            new BsonDocument("$sort", new BsonDocument("_id", 1)),
+        };
+
+        var result = await _collection.Aggregate<BsonDocument>(pipeline).ToListAsync(ct);
+
+        var items = result.Select(doc => new
+        {
+            Entry = new LiveGuardEntry
+            {
+                Uid = doc["_id"].AsInt64,
+                UserName = doc["latest"]["UserName"].AsString,
+                GuardLevel = doc["latest"]["GuardLevel"].AsInt32,
+                MedalName = doc["latest"].AsBsonDocument.Contains("MedalName") && !doc["latest"]["MedalName"].IsBsonNull
+                    ? doc["latest"]["MedalName"].AsString
+                    : null,
+                MedalLevel = doc["latest"]["MedalLevel"].AsInt32,
+            },
+            DaysCount = doc["days"].AsBsonArray.Count,
+        });
+
+        if (requireAllDays)
+        {
+            items = items.Where(e => e.DaysCount == dates.Count);
+        }
+
+        return items.Select(e => e.Entry).ToList();
     }
 }
