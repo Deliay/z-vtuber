@@ -204,6 +204,14 @@ public class LiveGuardJob : PeriodicJobBase
                 merged.TryAdd(user.Uid, ToEntry(user));
             }
 
+            if (page == 1 && info.Top3 is not null)
+            {
+                foreach (var user in info.Top3)
+                {
+                    merged.TryAdd(user.Uid, ToEntry(user));
+                }
+            }
+
             if (info.List.Count == 0 || page >= info.Info.PageCount || page >= _options.GuardMaxPages)
             {
                 break;

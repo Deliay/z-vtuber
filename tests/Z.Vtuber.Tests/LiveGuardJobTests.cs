@@ -459,6 +459,167 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Equal(1, job.DelayCount);
     }
 
+    [Fact]
+    public async Task Crawl_FirstPageTop3_MergesIntoGuardList()
+    {
+        await SeedSubscriptionAsync(SubscriptionType.Guard);
+        await SeedAccountAsync(RoomId);
+        var bili = new FakeBiliApiClient
+        {
+            RoomGuardListProvider = (_, page) => page switch
+            {
+                1 => new GuardInfo
+                {
+                    Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 1 },
+                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }, new GuardUserInfo { Uid = 2, UserName = "user2" }],
+                    Top3 = [new GuardUserInfo { Uid = 3, UserName = "top3_user", GuardType = 5, MedalInfo = new GuardUserInfo.Medal { Name = "medal", Level = 10 } }],
+                },
+                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
+            }
+        };
+        var job = CreateJob(bili);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
+        Assert.NotNull(stored);
+        Assert.Equal(3, stored.GuardCount);
+        Assert.Equal(3, stored.Guards.Count);
+        var uids = stored.Guards.Select(g => g.Uid).OrderBy(u => u).ToList();
+        Assert.Equal([1L, 2L, 3L], uids);
+        var top3Entry = stored.Guards.First(g => g.Uid == 3);
+        Assert.Equal("top3_user", top3Entry.UserName);
+        Assert.Equal(5, top3Entry.GuardLevel);
+        Assert.Equal("medal", top3Entry.MedalName);
+        Assert.Equal(10, top3Entry.MedalLevel);
+    }
+
+    [Fact]
+    public async Task Crawl_Top3OverlapWithList_DeduplicatesByUid()
+    {
+        await SeedSubscriptionAsync(SubscriptionType.Guard);
+        await SeedAccountAsync(RoomId);
+        var bili = new FakeBiliApiClient
+        {
+            RoomGuardListProvider = (_, page) => page switch
+            {
+                1 => new GuardInfo
+                {
+                    Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 1 },
+                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }, new GuardUserInfo { Uid = 2, UserName = "user2" }],
+                    Top3 = [new GuardUserInfo { Uid = 1, UserName = "top3_user1_dup" }],
+                },
+                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
+            }
+        };
+        var job = CreateJob(bili);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
+        Assert.NotNull(stored);
+        Assert.Equal(2, stored.GuardCount);
+        Assert.Equal(2, stored.Guards.Count);
+        var uids = stored.Guards.Select(g => g.Uid).OrderBy(u => u).ToList();
+        Assert.Equal([1L, 2L], uids);
+    }
+
+    [Fact]
+    public async Task Crawl_Top3Null_FallsBackToGuardListOnly()
+    {
+        await SeedSubscriptionAsync(SubscriptionType.Guard);
+        await SeedAccountAsync(RoomId);
+        var bili = new FakeBiliApiClient
+        {
+            RoomGuardListProvider = (_, page) => page switch
+            {
+                1 => new GuardInfo
+                {
+                    Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 1 },
+                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }, new GuardUserInfo { Uid = 2, UserName = "user2" }],
+                    Top3 = null!,
+                },
+                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
+            }
+        };
+        var job = CreateJob(bili);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
+        Assert.NotNull(stored);
+        Assert.Equal(2, stored.GuardCount);
+        Assert.Equal(2, stored.Guards.Count);
+    }
+
+    [Fact]
+    public async Task Crawl_Top3EmptyList_FallsBackToGuardListOnly()
+    {
+        await SeedSubscriptionAsync(SubscriptionType.Guard);
+        await SeedAccountAsync(RoomId);
+        var bili = new FakeBiliApiClient
+        {
+            RoomGuardListProvider = (_, page) => page switch
+            {
+                1 => new GuardInfo
+                {
+                    Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 1 },
+                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }, new GuardUserInfo { Uid = 2, UserName = "user2" }],
+                    Top3 = [],
+                },
+                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
+            }
+        };
+        var job = CreateJob(bili);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
+        Assert.NotNull(stored);
+        Assert.Equal(2, stored.GuardCount);
+        Assert.Equal(2, stored.Guards.Count);
+    }
+
+    [Fact]
+    public async Task Crawl_MultiPageTop3_NotMergedBeyondFirstPage()
+    {
+        await SeedSubscriptionAsync(SubscriptionType.Guard);
+        await SeedAccountAsync(RoomId);
+        var bili = new FakeBiliApiClient
+        {
+            RoomGuardListProvider = (_, page) => page switch
+            {
+                1 => new GuardInfo
+                {
+                    Info = new GuardInfo.PageInfo { Count = 1, Current = 1, PageCount = 2 },
+                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }],
+                    Top3 = [new GuardUserInfo { Uid = 10, UserName = "top3_page1" }],
+                },
+                2 => new GuardInfo
+                {
+                    Info = new GuardInfo.PageInfo { Count = 1, Current = 2, PageCount = 2 },
+                    List = [new GuardUserInfo { Uid = 2, UserName = "user2" }],
+                    Top3 = [new GuardUserInfo { Uid = 20, UserName = "top3_page2_should_not_merge" }],
+                },
+                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
+            }
+        };
+        var job = CreateJob(bili);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
+        Assert.NotNull(stored);
+        Assert.Equal(3, stored.GuardCount);
+        var uids = stored.Guards.Select(g => g.Uid).OrderBy(u => u).ToList();
+        Assert.Equal([1L, 2L, 10L], uids);
+    }
+
     private sealed class NoCookiePoolService : ICookiePoolService
     {
         public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default) => throw new NotImplementedException();
