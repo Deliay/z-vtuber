@@ -778,7 +778,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
     }
 
     [Fact]
-    public async Task Subscribe_Heartbeat不受TypeFilter影响()
+    public async Task Subscribe_HeartbeatNotAffectedByTypeFilter()
     {
         var bus = new LiveEventBus();
         var controller = new BilibiliLiveController(
