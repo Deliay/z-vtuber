@@ -539,7 +539,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
                 {
                     Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 1 },
                     List = [new GuardUserInfo { Uid = 1, UserName = "user1" }, new GuardUserInfo { Uid = 2, UserName = "user2" }],
-                    Top3 = null,
+                    Top3 = null!,
                 },
                 _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
             }

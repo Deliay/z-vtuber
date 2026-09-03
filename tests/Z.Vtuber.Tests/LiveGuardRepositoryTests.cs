@@ -77,4 +77,92 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Equal([1001L], await repository.GetMidsWithSnapshotAsync("2026-08-30"));
         Assert.Equal([1001L], await repository.GetMidsWithSnapshotAsync("2026-08-31"));
     }
+
+    [Fact]
+    public async Task Upsert_WithTop3Entries_IncludesAllFields()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        var record = new LiveGuardRecord
+        {
+            Id = MongoDB.Bson.ObjectId.GenerateNewId(),
+            Mid = 1001,
+            RoomId = 123456,
+            Date = "2026-08-31",
+            Guards =
+            [
+                new LiveGuardEntry { Uid = 1, UserName = "regular", GuardLevel = 3, MedalName = "星", MedalLevel = 5 },
+                new LiveGuardEntry { Uid = 2, UserName = "former_guard", GuardLevel = 5, MedalName = "舰", MedalLevel = 10 },
+            ],
+            GuardCount = 2,
+            FetchedAt = DateTime.UtcNow,
+        };
+        await repository.UpsertDailySnapshotAsync(record);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == 1001).FirstOrDefaultAsync();
+        Assert.NotNull(stored);
+        Assert.Equal(2, stored.Guards.Count);
+        Assert.Equal(2, stored.GuardCount);
+
+        var entry1 = stored.Guards.First(g => g.Uid == 1);
+        Assert.Equal("regular", entry1.UserName);
+        Assert.Equal(3, entry1.GuardLevel);
+        Assert.Equal("星", entry1.MedalName);
+        Assert.Equal(5, entry1.MedalLevel);
+
+        var entry2 = stored.Guards.First(g => g.Uid == 2);
+        Assert.Equal("former_guard", entry2.UserName);
+        Assert.Equal(5, entry2.GuardLevel);
+        Assert.Equal("舰", entry2.MedalName);
+        Assert.Equal(10, entry2.MedalLevel);
+    }
+
+    [Fact]
+    public async Task Upsert_SameDay_WithTop3Entries_OverwritesAndRemainsSingleRow()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        var first = new LiveGuardRecord
+        {
+            Id = MongoDB.Bson.ObjectId.GenerateNewId(),
+            Mid = 1001,
+            RoomId = 123456,
+            Date = "2026-08-31",
+            Guards =
+            [
+                new LiveGuardEntry { Uid = 1, UserName = "user1", GuardLevel = 3 },
+                new LiveGuardEntry { Uid = 2, UserName = "top3_user", GuardLevel = 5 },
+            ],
+            GuardCount = 2,
+            FetchedAt = DateTime.UtcNow,
+        };
+        await repository.UpsertDailySnapshotAsync(first);
+
+        var second = new LiveGuardRecord
+        {
+            Id = MongoDB.Bson.ObjectId.GenerateNewId(),
+            Mid = 1001,
+            RoomId = 123456,
+            Date = "2026-08-31",
+            Guards =
+            [
+                new LiveGuardEntry { Uid = 1, UserName = "user1", GuardLevel = 3 },
+                new LiveGuardEntry { Uid = 2, UserName = "top3_user", GuardLevel = 5 },
+                new LiveGuardEntry { Uid = 3, UserName = "user3", GuardLevel = 4 },
+            ],
+            GuardCount = 3,
+            FetchedAt = DateTime.UtcNow,
+        };
+        await repository.UpsertDailySnapshotAsync(second);
+
+        var mids = await repository.GetMidsWithSnapshotAsync("2026-08-31");
+        Assert.Equal([1001L], mids);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == 1001).FirstOrDefaultAsync();
+        Assert.NotNull(stored);
+        Assert.Equal(3, stored.Guards.Count);
+        Assert.Equal(3, stored.GuardCount);
+        var uids = stored.Guards.Select(g => g.Uid).OrderBy(u => u).ToList();
+        Assert.Equal([1L, 2L, 3L], uids);
+    }
 }
