@@ -157,7 +157,7 @@ export interface paths {
         };
         /**
          * 订阅直播间实时事件（SSE）
-         * @description 订阅直播间实时事件，可传入一个或多个 type 仅推送匹配类型的事件，不传 type 推送全部类型。
+         * @description 订阅直播间实时事件，可传入一个或多个 type 仅推送匹配类型的事件，不传 type 推送全部类型。 连接建立后立即发送一条 heartbeat 事件，之后每 10 秒发送一条（event: heartbeat，data 为空对象 {}）； heartbeat 为连接存活信号，不受 type 过滤影响，且不持久化、不出现在历史事件查询结果中。
          */
         get: operations["subscribeLiveEvents"];
         put?: never;
@@ -220,6 +220,26 @@ export interface paths {
          * @description 只读后台聚合接口：订阅列表与库中主播昵称（channel JSON 的 uName）内存 join，一次返回。未抓取到资料的主播 streamer 为 null。
          */
         get: operations["listBackstageSubscriptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/b/live/{roomId}/guard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询直播间在舰用户列表
+         * @description 查询指定直播间在指定日期范围内的在舰用户列表，支持 any（范围内任意一天在舰即计入）和 all（范围内每一天都在舰才计入）两种统计口径。
+         */
+        get: operations["listOnboardGuardUids"];
         put?: never;
         post?: never;
         delete?: never;
@@ -399,6 +419,20 @@ export interface components {
             pageSize?: number;
             items?: components["schemas"]["LiveEvent"][];
         };
+        LiveGuardOnboardItem: {
+            /** Format: int64 */
+            uid?: number;
+            userName?: string;
+            /** Format: int32 */
+            guardLevel?: number;
+            medalName?: string | null;
+            /** Format: int32 */
+            medalLevel?: number;
+        };
+        LiveGuardOnboardList: {
+            total?: number;
+            items?: components["schemas"]["LiveGuardOnboardItem"][];
+        };
     };
     responses: never;
     parameters: {
@@ -416,6 +450,12 @@ export interface components {
         MinPrice: number;
         /** @description 搜索关键词，在弹幕/SC 的纯文本、发送者用户名、粉丝牌名称中做不区分大小写子串匹配，任一命中即返回；纯数字关键词额外按发送者 UID 精确匹配；非空且非纯空白，最长 200 字符；缺失、为空、仅空白或超长返回 400。 */
         StringCriteria: string;
+        /** @description 查询起始日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。 */
+        StartedDate: string;
+        /** @description 查询结束日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。当 startedAt 晚于 endedAt 时返回 400。 */
+        EndedDate: string;
+        /** @description 统计口径：any=范围内任意一天在舰即计入（默认），all=范围内每一天都在舰才计入。 */
+        OnboardMode: "any" | "all";
     };
     requestBodies: never;
     headers: never;
@@ -721,7 +761,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description text/event-stream，仅推送连接建立之后的事件 */
+            /** @description text/event-stream，仅推送连接建立之后的事件；另含连接级 heartbeat 帧 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -823,6 +863,42 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BackstageSubscriptionList"];
                 };
+            };
+        };
+    };
+    listOnboardGuardUids: {
+        parameters: {
+            query: {
+                /** @description 查询起始日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。 */
+                startedAt: components["parameters"]["StartedDate"];
+                /** @description 查询结束日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。当 startedAt 晚于 endedAt 时返回 400。 */
+                endedAt: components["parameters"]["EndedDate"];
+                /** @description 统计口径：any=范围内任意一天在舰即计入（默认），all=范围内每一天都在舰才计入。 */
+                mode?: components["parameters"]["OnboardMode"];
+            };
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 在舰用户列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveGuardOnboardList"];
+                };
+            };
+            /** @description 参数非法（缺失、格式错误、起晚于止、范围超 366 天、mode 非法） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
