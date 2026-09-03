@@ -34,6 +34,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureLiveEventTextIndexAsync(ct);
         await EnsureCookieAccountInfoIndexesAsync(ct);
         await EnsureLiveGuardIndexesAsync(ct);
+        await EnsureLiveGuardRoomDateIndexAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -175,6 +176,16 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Ascending(r => r.Mid)
             .Ascending(r => r.Date);
         var options = new CreateIndexOptions { Unique = true, Name = "Mid_1_Date_1" };
+        return collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveGuardRecord>(keys, options), cancellationToken: ct);
+    }
+
+    private Task EnsureLiveGuardRoomDateIndexAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var keys = Builders<LiveGuardRecord>.IndexKeys
+            .Ascending(r => r.RoomId)
+            .Ascending(r => r.Date);
+        var options = new CreateIndexOptions { Name = "RoomId_1_Date_1" };
         return collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveGuardRecord>(keys, options), cancellationToken: ct);
     }
 

@@ -238,6 +238,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BackstageSubscriptionList"
+  /api/b/live/{roomId}/guard:
+    get:
+      summary: 查询直播间在舰用户列表
+      description: 查询指定直播间在指定日期范围内的在舰用户列表，支持 any（范围内任意一天在舰即计入）和 all（范围内每一天都在舰才计入）两种统计口径。
+      operationId: listOnboardGuardUids
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - $ref: "#/components/parameters/StartedDate"
+        - $ref: "#/components/parameters/EndedDate"
+        - $ref: "#/components/parameters/OnboardMode"
+      responses:
+        "200":
+          description: 在舰用户列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveGuardOnboardList"
+        "400":
+          description: 参数非法（缺失、格式错误、起晚于止、范围超 366 天、mode 非法）
   /api/b/backstage/cookie:
     get:
       summary: 聚合查询活跃 Cookie 列表（含对应帐号昵称）
@@ -327,6 +346,31 @@ components:
       schema:
         type: string
         maxLength: 200
+    StartedDate:
+      name: startedAt
+      in: query
+      required: true
+      description: 查询起始日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。
+      schema:
+        type: string
+        format: date
+    EndedDate:
+      name: endedAt
+      in: query
+      required: true
+      description: 查询结束日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。当 startedAt 晚于 endedAt 时返回 400。
+      schema:
+        type: string
+        format: date
+    OnboardMode:
+      name: mode
+      in: query
+      required: false
+      description: 统计口径：any=范围内任意一天在舰即计入（默认），all=范围内每一天都在舰才计入。
+      schema:
+        type: string
+        enum: [any, all]
+        default: any
   schemas:
     CookieAddRequest:
       type: object
@@ -591,3 +635,29 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LiveEvent"
+    LiveGuardOnboardItem:
+      type: object
+      properties:
+        uid:
+          type: integer
+          format: int64
+        userName:
+          type: string
+        guardLevel:
+          type: integer
+          format: int32
+        medalName:
+          type: string
+          nullable: true
+        medalLevel:
+          type: integer
+          format: int32
+    LiveGuardOnboardList:
+      type: object
+      properties:
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveGuardOnboardItem"
