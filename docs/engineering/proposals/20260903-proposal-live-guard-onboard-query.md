@@ -1,5 +1,5 @@
 ---
-description: 在舰查询技术提案——新增 GET /api/b/live/{roomId}/guard 端点，按直播间与 yyyy-MM-dd 日期范围查询在舰 uid，支持 any/all 口径并按 uid 去重，基于既有舰长每日快照聚合实现
+description: 在舰查询技术提案——新增 GET /api/b/live/{roomId}/guard 端点，按直播间与 yyyy-MM-dd 日期范围查询在舰用户，支持 any/all 口径，按 uid 去重并返回最新快照的名单条目（uid、昵称、舰长等级、勋章），基于既有舰长每日快照聚合实现
 type: Permanent
 ---
 
@@ -7,7 +7,7 @@ type: Permanent
 
 **功能名称**: 在舰查询
 **关联 PRD**: [[20260903-live-guard-onboard-query-prd]]
-**技术提案版本**: v1.2
+**技术提案版本**: v1.3
 **创建日期**: 2026-09-03
 **作者**: Deliay
 **feat-branch**: `feat/live-guard-onboard-query`
@@ -16,13 +16,13 @@ type: Permanent
 
 ### 1.1 背景
 
-「舰长数据抓取」（PR #56，提案见 [[20260831-proposal-live-guard-crawl]]）已按订阅将各主播直播间的舰长名单以「每 mid 每天一条快照」的粒度沉淀至 MongoDB 集合 `bilibili_live_guards`，但读侧没有任何出口。本提案依据 [[20260903-live-guard-onboard-query-prd]] 新增在舰查询 API：给定直播间 `roomId` 与 `startedAt`/`endedAt`（均为 `yyyy-MM-dd`）及统计口径 `mode`（`any`/`all`），返回该直播间在该日期范围内满足口径的在舰用户 uid，按 uid 去重。
+「舰长数据抓取」（PR #56，提案见 [[20260831-proposal-live-guard-crawl]]）已按订阅将各主播直播间的舰长名单以「每 mid 每天一条快照」的粒度沉淀至 MongoDB 集合 `bilibili_live_guards`，但读侧没有任何出口。本提案依据 [[20260903-live-guard-onboard-query-prd]] 新增在舰查询 API：给定直播间 `roomId` 与 `startedAt`/`endedAt`（均为 `yyyy-MM-dd`）及统计口径 `mode`（`any`/`all`），返回该直播间在该日期范围内满足口径的在舰用户名单，按 uid 去重，且每个条目带有快照中沉淀的原始名单数据（昵称、舰长等级、粉丝勋章名称与等级，取范围内最新一天快照）。
 
 ### 1.2 目标
 
 - 新增只读查询端点 `GET /api/b/live/{roomId}/guard`，路径参数 `roomId` 指定直播间，查询参数 `startedAt`、`endedAt`（`yyyy-MM-dd`，必填），语义为「起日 00:00 至止日 23:59:59」（首尾两天按全天计入）；
 - 查询参数 `mode`（可选，默认 `any`）：`any` 表示范围内任意一天在舰即计入，`all` 表示范围内每一天都在舰才计入；
-- 结果按 uid 去重，仅覆盖指定 `roomId` 的快照；
+- 结果按 uid 去重，仅覆盖指定 `roomId` 的快照；每个条目包含 `LiveGuardEntry` 的原始字段（uid、昵称、舰长等级、勋章名称与等级），同一 uid 多天数据不一致时取范围内最新一天快照；
 - 参数非法（格式错误、缺失、起日晚于止日、范围超限、mode 取值非法）返回 400 与明确错误信息；
 - 遵循契约式开发：先更新 `contracts/bilibili-crawler.openapi.yaml`，再实现。
 
@@ -63,7 +63,7 @@ graph LR
 | 模块 | 职责 | 关键技术点 |
 |------|------|-----------|
 | `BilibiliLiveGuardController`（新增，servers/api/Controllers/） | 参数解析校验、日期范围展开、返回去重 uid 名单 | `DateOnly.TryParseExact` 严格解析 `yyyy-MM-dd` |
-| `LiveGuardRepository`（扩展，servers/common/Persistence/） | 按日期集合聚合查询去重 uid | 聚合管道 `$match` → `$unwind` → `$group` |
+| `LiveGuardRepository`（扩展，servers/common/Persistence/） | 按直播间与日期集合聚合查询去重名单条目 | 聚合管道 `$match` → `$unwind` → `$sort` → `$group` |
 | `contracts/bilibili-crawler.openapi.yaml` | 端点与 schema 契约 | 新增 `format: date` 参数与响应 schema |
 
 ## 3. API 设计
@@ -85,11 +85,19 @@ graph LR
   - Status: 200
     ```json
     {
-      "total": 2,
-      "items": [10001, 10002]
+      "total": 1,
+      "items": [
+        {
+          "uid": 10001,
+          "userName": "示例舰长",
+          "guardLevel": 3,
+          "medalName": "示例勋章",
+          "medalLevel": 21
+        }
+      ]
     }
     ```
-    - `items`：满足口径的去重在舰 uid 列表（int64，升序）；`total` 恒等于 `items` 长度，便于调用方直接读取数量。
+    - `items`：满足口径的去重名单条目（按 uid 升序），字段直接来自快照内嵌的 `LiveGuardEntry`：`uid`、`userName`（昵称）、`guardLevel`（大航海等级）、`medalName`（粉丝勋章名称，可为 null）、`medalLevel`（粉丝勋章等级）；同一 uid 多天数据不一致时取范围内最新一天快照。`total` 恒等于 `items` 长度，便于调用方直接读取数量。
   - Status: 400 —— 参数缺失、格式非法、起日晚于止日、范围超过上限（366 天）、`mode` 非 `any`/`all`：
     ```json
     { "error": "mode must be one of: any, all." }
@@ -100,21 +108,21 @@ graph LR
 - 新增 path `/api/b/live/{roomId}/guard`，operationId `listOnboardGuardUids`，summary 中文；路径参数复用既有 `components/parameters/RoomId`；
 - 现有 `components/parameters/StartedAt`/`EndedAt` 为 `format: date-time` 且可选、UTC 语义，**不可复用**；新增 `StartedDate`/`EndedDate` 参数（`format: date`，`required: true`，描述北京时间口径与全天含边界语义）；
 - 新增查询参数 `OnboardMode`（`type: string`，`enum: [any, all]`，`required: false`，默认 `any`）；
-- 新增 schema `LiveGuardOnboardList`：`{ total: integer(int32), items: array<integer(int64)> }`。
+- 新增 schema `LiveGuardOnboardItem`：`{ uid: integer(int64), userName: string, guardLevel: integer(int32), medalName: string(nullable), medalLevel: integer(int32) }`；`LiveGuardOnboardList`：`{ total: integer(int32), items: array<LiveGuardOnboardItem> }`。
 
 ### 3.3 内部接口
 
 `LiveGuardRepository` 新增：
 
 ```csharp
-public async Task<IReadOnlyList<long>> GetOnboardGuardUidsAsync(
+public async Task<IReadOnlyList<LiveGuardEntry>> GetOnboardGuardEntriesAsync(
     long roomId, IReadOnlyList<string> dates, bool requireAllDays, CancellationToken ct = default)
 ```
 
 - `roomId` 为直播间 id，`dates` 为 Controller 展开后的 `yyyy-MM-dd` 字符串列表（与 `LiveGuardRecord.Date` 同格式），`requireAllDays` 对应 `mode=all`；
-- 聚合管道：`$match: { RoomId: roomId, Date: { $in: dates } }` → `$unwind: "$Guards"` → `$group: { _id: "$Guards.Uid", days: { $addToSet: "$Date" } }`；
-- `requireAllDays = false`（any）：取全部 `_id` 升序返回；`requireAllDays = true`（all）：仅保留 `days.Count == dates.Count` 的 `_id`，升序返回（`$addToSet` 天然对同 uid 多天命中去重计数）；
-- `dates` 为空时直接返回空列表，不发起查询。
+- 聚合管道：`$match: { RoomId: roomId, Date: { $in: dates } }` → `$unwind: "$Guards"` → `$sort: { Date: -1 }` → `$group: { _id: "$Guards.Uid", days: { $addToSet: "$Date" }, latest: { $first: "$Guards" } }`（先按日期倒序再 `$first`，使 `latest` 为该 uid 范围内最新一天的名单条目）；
+- `requireAllDays = false`（any）：取全部 `latest`；`requireAllDays = true`（all）：仅保留 `days.Count == dates.Count` 的条目（`$addToSet` 天然对同 uid 多天命中去重计数）；
+- 结果按 uid 升序返回；`dates` 为空时直接返回空列表，不发起查询。
 
 ## 4. 数据模型
 
@@ -156,8 +164,8 @@ sequenceDiagram
         A-->>U: 400 { error }
     else 校验通过
         A->>A: 展开为 [起日..止日] 的 yyyy-MM-dd 列表
-        A->>R: GetOnboardGuardUidsAsync(roomId, dates, requireAllDays)
-        R->>D: aggregate($match RoomId+Date in dates, $unwind Guards, $group Uid+days)
+        A->>R: GetOnboardGuardEntriesAsync(roomId, dates, requireAllDays)
+        R->>D: aggregate($match RoomId+Date in dates, $unwind Guards, $sort Date desc, $group Uid+days+latest)
         D-->>R: 去重 uid 集合
         R-->>A: 升序 uid 列表
         A-->>U: 200 { total, items }
@@ -172,10 +180,10 @@ sequenceDiagram
 - **技术细节**: Controller 用 `DateOnly.TryParseExact("yyyy-MM-dd")` 严格解析；用 `DateOnly.AddDays` 从起日迭代到止日生成字符串列表；日期口径与 `LiveGuardJob` 落库口径同为北京时间（UTC+8），无需任何时区换算。
 - **风险点**: 若调用方误传 `date-time` 字符串会被拒绝——契约与错误信息中明确 `yyyy-MM-dd` 要求。
 
-#### 实现点 2: any/all 口径的去重聚合
+#### 实现点 2: any/all 口径的去重聚合与最新条目选取
 
-- **描述**: 同一 uid 可能在指定直播间的多天快照中重复出现；`any` 口径要求去重，`all` 口径要求「命中天数 == 范围天数」。
-- **技术细节**: 聚合管道 `$unwind` 后按 `$group` 到 uid，并用 `$addToSet: "$Date"` 收集该 uid 命中的日期集合——`any` 直接取 `_id`；`all` 过滤 `days.Count == dates.Count`。整个计算在 MongoDB 聚合内完成，避免把全量名单拉到内存；结果按 uid 升序（去重后规模有限，客户端排序即可）。
+- **描述**: 同一 uid 可能在指定直播间的多天快照中重复出现；`any` 口径要求去重，`all` 口径要求「命中天数 == 范围天数」；且每个去重后的条目需带回原始名单数据，多天不一致时取最新一天。
+- **技术细节**: `$unwind` 后先按 `Date` 倒序 `$sort`，再 `$group` 到 uid：`$addToSet: "$Date"` 收集命中日期集合用于口径判定，`$first: "$Guards"` 取最新一天的完整名单条目。整个计算在 MongoDB 聚合内完成，避免把全量名单拉到内存；结果按 uid 升序（去重后规模有限，客户端排序即可）。
 - **风险点**: 范围内某天无该直播间快照时，`all` 口径下任何 uid 的 `days.Count` 都小于 `dates.Count`，结果自然为空——与 PRD 约定一致（无数据即无法证实在舰）；范围内快照全部缺失时返回空 `items`。
 
 #### 实现点 3: 范围上限保护
@@ -196,6 +204,7 @@ sequenceDiagram
 | 日期过滤方式 | `RoomId = roomId AND Date $in [展开日期]` | 范围比较 `Gte/Lte` | 选项 A | `Date` 是字符串日键，`$in` 语义精确且无字典序边界歧义 |
 | mode 默认值 | 缺省按 `any` | `mode` 必填 | 选项 A | 与初版需求（任意一天在舰即统计）语义一致，向后兼容最简单的调用方式 |
 | all 口径缺失快照语义 | 无快照天视为不满足（结果可能为空） | 无快照天不计入范围 | 选项 A | 「每天都在舰」必须逐天证实，放宽会得出误导性的「全勤」结论 |
+| 多天名单信息取值 | 取范围内最新一天快照（`$sort` desc + `$first`） | 取最早一天 / 返回每天明细 | 选项 A | 评审要求响应带回原始名单数据；调用方关心用户当前态，最新快照最贴近 |
 | 响应是否分页 | 一次返回全量 + total | 套 `{total,page,pageSize,items}` | 选项 A | PRD 无分页诉求，单直播间去重名单规模有限（舰长数量级） |
 | 复用契约参数 | 复用 `StartedAt/EndedAt` | 新增 `StartedDate/EndedDate` | 选项 B | 既有参数为 `date-time`/UTC/可选，语义不同不可复用 |
 | 范围上限 | 不设限 | 限 366 天 | 选项 B | 防病态 `$in`，对正常查询无影响 |
@@ -220,7 +229,7 @@ servers/
 │       └── BilibiliLiveGuardController.cs # 新增：在舰查询端点
 └── common/
     └── Persistence/
-        ├── LiveGuardRepository.cs         # 扩展：GetOnboardGuardUidsAsync
+        ├── LiveGuardRepository.cs         # 扩展：GetOnboardGuardEntriesAsync
         └── MongoDbInitializer.cs          # 扩展：RoomId_1_Date_1 索引
 tests/
 └── Z.Vtuber.Tests/
@@ -233,13 +242,13 @@ tests/
 ### 8.1 测试覆盖要求
 
 - 覆盖端点：`GET /api/b/live/{roomId}/guard`（200 与全部 400 分支，含 mode 缺省/非法值）；
-- 仓储方法覆盖：any/all 口径、跨天去重、roomId 过滤（其他直播间快照不混入）、范围过滤、无数据空结果（含 all 口径下部分天缺快照）。
+- 仓储方法覆盖：any/all 口径、跨天去重、条目字段完整性（昵称/舰长等级/勋章）、多天不一致取最新快照、roomId 过滤（其他直播间快照不混入）、范围过滤、无数据空结果（含 all 口径下部分天缺快照）。
 
 ### 8.2 测试类型
 
 | 类型 | 工具 | 覆盖范围 |
 |------|------|---------|
-| 仓储集成测试 | xUnit + Testcontainers（`[Collection("mongo")]`） | `GetOnboardGuardUidsAsync` 的过滤、去重与 any/all 语义，沿用 `LiveGuardRepositoryTests` 范式 |
+| 仓储集成测试 | xUnit + Testcontainers（`[Collection("mongo")]`） | `GetOnboardGuardEntriesAsync` 的过滤、去重、any/all 语义与最新条目选取，沿用 `LiveGuardRepositoryTests` 范式 |
 | Controller 集成测试 | xUnit，直接实例化 Controller + 真实仓储 | 参数校验 400 分支、200 响应结构（`total`/`items` 升序去重），沿用 `BilibiliBackstageControllerTests` 范式 |
 | DI 接线 | `StartupDiTests` | 无新增注册，既有用例回归即可 |
 
