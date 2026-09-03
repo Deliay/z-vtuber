@@ -1,5 +1,4 @@
 using MongoDB.Bson;
-using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Common.Persistence;
@@ -45,12 +44,6 @@ public sealed class LiveGuardRepository(IMongoDatabase database)
             return [];
         }
 
-        var collection = database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
-
-        var matchFilter = Builders<LiveGuardRecord>.Filter.And(
-            Builders<LiveGuardRecord>.Filter.Eq(r => r.RoomId, roomId),
-            Builders<LiveGuardRecord>.Filter.In(r => r.Date, dates));
-
         var pipeline = new[]
         {
             new BsonDocument("$match", new BsonDocument
@@ -69,7 +62,7 @@ public sealed class LiveGuardRepository(IMongoDatabase database)
             new BsonDocument("$sort", new BsonDocument("_id", 1)),
         };
 
-        var result = await collection.Aggregate<BsonDocument>(pipeline).ToListAsync(ct);
+        var result = await _collection.Aggregate<BsonDocument>(pipeline).ToListAsync(ct);
 
         var items = result.Select(doc => new
         {
