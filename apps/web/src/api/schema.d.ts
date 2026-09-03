@@ -228,6 +228,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/b/live/{roomId}/guard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询直播间在舰用户列表
+         * @description 查询指定直播间在指定日期范围内的在舰用户列表，支持 any（范围内任意一天在舰即计入）和 all（范围内每一天都在舰才计入）两种统计口径。
+         */
+        get: operations["listOnboardGuardUids"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/b/backstage/cookie": {
         parameters: {
             query?: never;
@@ -399,6 +419,20 @@ export interface components {
             pageSize?: number;
             items?: components["schemas"]["LiveEvent"][];
         };
+        LiveGuardOnboardItem: {
+            /** Format: int64 */
+            uid?: number;
+            userName?: string;
+            /** Format: int32 */
+            guardLevel?: number;
+            medalName?: string | null;
+            /** Format: int32 */
+            medalLevel?: number;
+        };
+        LiveGuardOnboardList: {
+            total?: number;
+            items?: components["schemas"]["LiveGuardOnboardItem"][];
+        };
     };
     responses: never;
     parameters: {
@@ -416,6 +450,12 @@ export interface components {
         MinPrice: number;
         /** @description 搜索关键词，在弹幕/SC 的纯文本、发送者用户名、粉丝牌名称中做不区分大小写子串匹配，任一命中即返回；纯数字关键词额外按发送者 UID 精确匹配；非空且非纯空白，最长 200 字符；缺失、为空、仅空白或超长返回 400。 */
         StringCriteria: string;
+        /** @description 查询起始日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。 */
+        StartedDate: string;
+        /** @description 查询结束日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。当 startedAt 晚于 endedAt 时返回 400。 */
+        EndedDate: string;
+        /** @description 统计口径：any=范围内任意一天在舰即计入（默认），all=范围内每一天都在舰才计入。 */
+        OnboardMode: "any" | "all";
     };
     requestBodies: never;
     headers: never;
@@ -823,6 +863,42 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BackstageSubscriptionList"];
                 };
+            };
+        };
+    };
+    listOnboardGuardUids: {
+        parameters: {
+            query: {
+                /** @description 查询起始日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。 */
+                startedAt: components["parameters"]["StartedDate"];
+                /** @description 查询结束日期（yyyy-MM-dd，北京时间，含边界，起日 00:00 至止日 23:59:59 全天含边界）。当 startedAt 晚于 endedAt 时返回 400。 */
+                endedAt: components["parameters"]["EndedDate"];
+                /** @description 统计口径：any=范围内任意一天在舰即计入（默认），all=范围内每一天都在舰才计入。 */
+                mode?: components["parameters"]["OnboardMode"];
+            };
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 在舰用户列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveGuardOnboardList"];
+                };
+            };
+            /** @description 参数非法（缺失、格式错误、起晚于止、范围超 366 天、mode 非法） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
