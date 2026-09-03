@@ -170,14 +170,17 @@ paths:
   /api/b/live/{roomId}/event/subscribe:
     get:
       summary: 订阅直播间实时事件（SSE）
-      description: 订阅直播间实时事件，可传入一个或多个 type 仅推送匹配类型的事件，不传 type 推送全部类型。
+      description: >-
+        订阅直播间实时事件，可传入一个或多个 type 仅推送匹配类型的事件，不传 type 推送全部类型。
+        连接建立后立即发送一条 heartbeat 事件，之后每 10 秒发送一条（event: heartbeat，data 为空对象 {}）；
+        heartbeat 为连接存活信号，不受 type 过滤影响，且不持久化、不出现在历史事件查询结果中。
       operationId: subscribeLiveEvents
       parameters:
         - $ref: "#/components/parameters/RoomId"
         - $ref: "#/components/parameters/EventType"
       responses:
         "200":
-          description: text/event-stream，仅推送连接建立之后的事件
+          description: text/event-stream，仅推送连接建立之后的事件；另含连接级 heartbeat 帧
           content:
             text/event-stream:
               schema:

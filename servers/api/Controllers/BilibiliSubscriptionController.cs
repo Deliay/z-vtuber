@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Z.Vtuber.Persistence.Entities;
-using Z.Vtuber.Services;
+using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.Common.Services;
 
 namespace Z.Vtuber.Controllers;
 

@@ -1,4 +1,4 @@
-using Z.Vtuber.Services;
+using Z.Vtuber.Common.Services;
 
 namespace Z.Vtuber.Tests;
 

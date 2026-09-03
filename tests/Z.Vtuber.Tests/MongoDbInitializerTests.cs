@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Tests;
 
@@ -50,6 +50,30 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Equal(1, count);
         var record = await collection.Find(r => r.DynamicId == "1").FirstOrDefaultAsync();
         Assert.Equal(1000, record.PubTs);
+    }
+
+    [Fact]
+    public async Task Backfill_ConcurrentRuns_DoNotThrowDuplicateKey()
+    {
+        // api 与 crawler 双服务并发启动初始化，都会写同一个完成 marker。
+        // 回归：BackfillSpaceTimelinePubTsAsync 的 marker 写入必须为 upsert，
+        // 否则两个服务同时在 marker 不存在时 InsertOne 同一 key 会抛 DuplicateKey。
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)1000) });
+
+        var initializerA = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializerB = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+
+        await Task.WhenAll(
+            initializerA.BackfillSpaceTimelinePubTsAsync(),
+            initializerB.BackfillSpaceTimelinePubTsAsync());
+
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var markerCount = await meta.CountDocumentsAsync(r => r.Key == MongoDbInitializer.SpaceTimelinePubTsMigrationKey);
+        Assert.Equal(1, markerCount);
+
+        var recordCount = await collection.CountDocumentsAsync(FilterDefinition<SpaceTimelineRecord>.Empty);
+        Assert.Equal(1, recordCount);
     }
 
     [Fact]

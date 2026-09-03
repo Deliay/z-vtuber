@@ -1,9 +1,10 @@
 using System.Text.Json;
 using Mikibot.Crawler.Http.Bilibili.Model;
-using Z.Vtuber.Crawlers;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
-using Z.Vtuber.Services;
+using Z.Vtuber.Crawler.Crawlers;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.Common.Services;
+using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Tests;
 

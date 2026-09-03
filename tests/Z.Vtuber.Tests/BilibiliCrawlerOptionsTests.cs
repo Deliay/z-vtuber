@@ -1,4 +1,4 @@
-using Z.Vtuber.Configuration;
+using Z.Vtuber.Crawler.Configuration;
 
 namespace Z.Vtuber.Tests;
 

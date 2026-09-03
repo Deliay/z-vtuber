@@ -1,9 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
+using Z.Vtuber.Common.Live;
 using Z.Vtuber.Live;
-using Z.Vtuber.Persistence;
-using Z.Vtuber.Persistence.Entities;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Controllers;
 
@@ -16,6 +17,7 @@ public class BilibiliLiveController(
     LiveEventTextIndexRepository textIndexRepository,
     ILiveEventBus eventBus) : ControllerBase
 {
+    internal static TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(10);
     [HttpGet("{roomId}/state/all")]
     public async Task<IActionResult> GetAllStates(
         long roomId,
@@ -157,23 +159,52 @@ public class BilibiliLiveController(
         var subscription = eventBus.Subscribe(roomId);
         try
         {
-            await foreach (var liveEvent in subscription.Reader.ReadAllAsync(ct))
+            await WriteHeartbeatAsync(ct);
+
+            var reader = subscription.Reader;
+            while (!ct.IsCancellationRequested)
             {
-                if (types is { Count: > 0 } && !types.Contains(liveEvent.Type))
+                var readTask = reader.WaitToReadAsync(ct).AsTask();
+                var delayTask = Task.Delay(HeartbeatInterval, ct);
+
+                var completedTask = await Task.WhenAny(readTask, delayTask);
+
+                if (completedTask == delayTask)
                 {
+                    await WriteHeartbeatAsync(ct);
                     continue;
                 }
 
-                var data = JsonSerializer.Serialize(ToEventDto(liveEvent));
-                await Response.WriteAsync($"event: {liveEvent.Type}\n", ct);
-                await Response.WriteAsync($"data: {data}\n\n", ct);
-                await Response.Body.FlushAsync(ct);
+                if (!await readTask)
+                {
+                    break;
+                }
+
+                if (reader.TryRead(out var liveEvent))
+                {
+                    if (types is { Count: > 0 } && !types.Contains(liveEvent.Type))
+                    {
+                        continue;
+                    }
+
+                    var data = JsonSerializer.Serialize(ToEventDto(liveEvent));
+                    await Response.WriteAsync($"event: {liveEvent.Type}\n", ct);
+                    await Response.WriteAsync($"data: {data}\n\n", ct);
+                    await Response.Body.FlushAsync(ct);
+                }
             }
         }
         finally
         {
             eventBus.Unsubscribe(roomId, subscription.Id);
         }
+    }
+
+    private async Task WriteHeartbeatAsync(CancellationToken ct)
+    {
+        await Response.WriteAsync("event: heartbeat\n", ct);
+        await Response.WriteAsync("data: {}\n\n", ct);
+        await Response.Body.FlushAsync(ct);
     }
 
     private static HashSet<string>? NormalizeTypes(string[]? types)

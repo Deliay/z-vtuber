@@ -1,5 +1,5 @@
 using System.Net;
-using Z.Vtuber.Crawlers;
+using Z.Vtuber.Crawler.Crawlers;
 
 namespace Z.Vtuber.Tests;
 
