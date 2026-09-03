@@ -385,7 +385,8 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
     }
 
     private static async Task<string> RunSubscribeAsync(
-        BilibiliLiveController controller, LiveEventBus bus, long roomId, string[]? type, IEnumerable<LiveEvent> events)
+        BilibiliLiveController controller, LiveEventBus bus, long roomId, string[]? type, IEnumerable<LiveEvent> events,
+        TimeSpan? waitDuration = null, bool publishEvents = true)
     {
         using var body = new MemoryStream();
         var context = new DefaultHttpContext { Response = { Body = body } };
@@ -394,12 +395,15 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
         using var cts = new CancellationTokenSource();
         var subscribeTask = controller.Subscribe(roomId, type, cts.Token);
 
-        foreach (var evt in events)
+        if (publishEvents)
         {
-            bus.TryPublish(roomId, evt);
+            foreach (var evt in events)
+            {
+                bus.TryPublish(roomId, evt);
+            }
         }
 
-        await Task.Delay(300);
+        await Task.Delay(waitDuration ?? TimeSpan.FromMilliseconds(300));
         cts.Cancel();
         try
         {
@@ -725,5 +729,144 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IAsyncLifetim
         Assert.Equal(EventBaseDate.AddHours(3), items[0].GetProperty("occurredAt").GetDateTime());
         Assert.Equal(EventBaseDate.AddHours(2), items[1].GetProperty("occurredAt").GetDateTime());
         Assert.Equal(EventBaseDate.AddHours(1), items[2].GetProperty("occurredAt").GetDateTime());
+    }
+
+    [Fact]
+    public async Task Subscribe_FirstFrameIsHeartbeat()
+    {
+        var bus = new LiveEventBus();
+        var controller = new BilibiliLiveController(
+            new LiveStatusRepository(fixture.Database),
+            new LiveEventRepository(fixture.Database),
+            new LiveSessionRepository(fixture.Database),
+            new LiveEventTextIndexRepository(fixture.Database),
+            bus);
+
+        var content = await RunSubscribeAsync(controller, bus, 123456, null, [],
+            publishEvents: false);
+
+        Assert.StartsWith("event: heartbeat\n", content);
+        Assert.Contains("data: {}\n\n", content);
+    }
+
+    [Fact]
+    public async Task Subscribe_HeartbeatWithShortInterval()
+    {
+        var bus = new LiveEventBus();
+        var controller = new BilibiliLiveController(
+            new LiveStatusRepository(fixture.Database),
+            new LiveEventRepository(fixture.Database),
+            new LiveSessionRepository(fixture.Database),
+            new LiveEventTextIndexRepository(fixture.Database),
+            bus);
+
+        var originalInterval = BilibiliLiveController.HeartbeatInterval;
+        try
+        {
+            BilibiliLiveController.HeartbeatInterval = TimeSpan.FromMilliseconds(50);
+
+            var content = await RunSubscribeAsync(controller, bus, 123456, null, [],
+                waitDuration: TimeSpan.FromMilliseconds(250), publishEvents: false);
+
+            var heartbeatCount = CountOccurrences(content, "event: heartbeat\n");
+            Assert.True(heartbeatCount >= 3, $"Expected at least 3 heartbeats, got {heartbeatCount}");
+        }
+        finally
+        {
+            BilibiliLiveController.HeartbeatInterval = originalInterval;
+        }
+    }
+
+    [Fact]
+    public async Task Subscribe_Heartbeat不受TypeFilter影响()
+    {
+        var bus = new LiveEventBus();
+        var controller = new BilibiliLiveController(
+            new LiveStatusRepository(fixture.Database),
+            new LiveEventRepository(fixture.Database),
+            new LiveSessionRepository(fixture.Database),
+            new LiveEventTextIndexRepository(fixture.Database),
+            bus);
+
+        var originalInterval = BilibiliLiveController.HeartbeatInterval;
+        try
+        {
+            BilibiliLiveController.HeartbeatInterval = TimeSpan.FromMilliseconds(50);
+
+            var content = await RunSubscribeAsync(controller, bus, 123456, ["danmaku"],
+            [
+                new LiveEvent(123456, "danmaku", null, EventBaseDate.AddHours(1), "{}"),
+                new LiveEvent(123456, "gift", null, EventBaseDate.AddHours(2), "{}"),
+            ],
+            waitDuration: TimeSpan.FromMilliseconds(500));
+
+            Assert.Contains("event: heartbeat\n", content);
+            Assert.True(CountOccurrences(content, "event: danmaku\n") >= 1,
+                $"Expected at least 1 danmaku event, got {CountOccurrences(content, "event: danmaku\\n")}");
+            Assert.DoesNotContain("event: gift\n", content);
+        }
+        finally
+        {
+            BilibiliLiveController.HeartbeatInterval = originalInterval;
+        }
+    }
+
+    [Fact]
+    public async Task Subscribe_BusinessEventsAndHeartbeatInterleave()
+    {
+        var bus = new LiveEventBus();
+        var controller = new BilibiliLiveController(
+            new LiveStatusRepository(fixture.Database),
+            new LiveEventRepository(fixture.Database),
+            new LiveSessionRepository(fixture.Database),
+            new LiveEventTextIndexRepository(fixture.Database),
+            bus);
+
+        var content = await RunSubscribeAsync(controller, bus, 123456, null,
+        [
+            new LiveEvent(123456, "danmaku", null, EventBaseDate.AddHours(1), "{}"),
+            new LiveEvent(123456, "gift", null, EventBaseDate.AddHours(2), "{}"),
+        ]);
+
+        Assert.Contains("event: heartbeat\n", content);
+        Assert.Contains("event: danmaku\n", content);
+        Assert.Contains("event: gift\n", content);
+    }
+
+    [Fact]
+    public async Task Subscribe_AfterCancelNoMoreHeartbeats()
+    {
+        var bus = new LiveEventBus();
+        var controller = new BilibiliLiveController(
+            new LiveStatusRepository(fixture.Database),
+            new LiveEventRepository(fixture.Database),
+            new LiveSessionRepository(fixture.Database),
+            new LiveEventTextIndexRepository(fixture.Database),
+            bus);
+
+        using var body = new MemoryStream();
+        var context = new DefaultHttpContext { Response = { Body = body } };
+        controller.ControllerContext = new ControllerContext { HttpContext = context };
+
+        using var cts = new CancellationTokenSource();
+        var subscribeTask = controller.Subscribe(123456, null, cts.Token);
+
+        await Task.Delay(50);
+        cts.Cancel();
+        try
+        {
+            await subscribeTask;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        body.Position = 0;
+        using var reader = new StreamReader(body, Encoding.UTF8);
+        var content = await reader.ReadToEndAsync();
+
+        var heartbeatCount = CountOccurrences(content, "event: heartbeat\n");
+        Assert.True(heartbeatCount >= 1 && heartbeatCount <= 3,
+            $"Expected 1-3 heartbeats after cancel, got {heartbeatCount}");
     }
 }
