@@ -87,4 +87,46 @@ public sealed class LiveGuardRepository(IMongoDatabase database)
 
         return items.Select(e => e.Entry).ToList();
     }
+
+    public async Task<IReadOnlyList<long>> GetDistinctMidsAsync(CancellationToken ct = default)
+    {
+        var filter = Builders<LiveGuardRecord>.Filter.Empty;
+        var distinctValues = await _collection.DistinctAsync(r => r.Mid, filter, cancellationToken: ct);
+        return await distinctValues.ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<LiveGuardRecord>> GetSnapshotsByMidAsync(
+        long mid,
+        string beforeDateExclusive,
+        CancellationToken ct = default)
+    {
+        var filter = Builders<LiveGuardRecord>.Filter.And(
+            Builders<LiveGuardRecord>.Filter.Eq(r => r.Mid, mid),
+            Builders<LiveGuardRecord>.Filter.Lt(r => r.Date, beforeDateExclusive));
+        var sort = Builders<LiveGuardRecord>.Sort.Ascending(r => r.Date);
+        return await _collection.Find(filter)
+            .Sort(sort)
+            .ToListAsync(ct);
+    }
+
+    public async Task BackfillMissingEntriesAsync(
+        long mid,
+        string date,
+        IReadOnlyList<LiveGuardEntry> missing,
+        int finalGuardCount,
+        CancellationToken ct = default)
+    {
+        if (missing.Count == 0)
+        {
+            return;
+        }
+
+        var filter = Builders<LiveGuardRecord>.Filter.And(
+            Builders<LiveGuardRecord>.Filter.Eq(r => r.Mid, mid),
+            Builders<LiveGuardRecord>.Filter.Eq(r => r.Date, date));
+        var update = Builders<LiveGuardRecord>.Update
+            .PushEach(r => r.Guards, missing)
+            .Set(r => r.GuardCount, finalGuardCount);
+        await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
+    }
 }

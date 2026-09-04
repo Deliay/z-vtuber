@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Services;
@@ -65,6 +66,8 @@ builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventPublisher, RedisLiveEventPublisher>();
 builder.Services.AddSingleton<CrawlLockProvider>();
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<LiveGuardListFetcher>();
+builder.Services.AddSingleton<LiveGuardTop3BackfillService>();
 
 builder.Services.AddHostedService<CookieProbeJob>();
 builder.Services.AddHostedService<AccountInfoJob>();
@@ -91,5 +94,21 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapHealthChecks("/health");
+
+_ = Task.Run(async () =>
+{
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        var backfillService = scope.ServiceProvider.GetRequiredService<LiveGuardTop3BackfillService>();
+        var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+        await backfillService.ExecuteAsync(lifetime.ApplicationStopping);
+    }
+    catch (Exception ex)
+    {
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Top3 backfill failed.");
+    }
+});
 
 app.Run();
