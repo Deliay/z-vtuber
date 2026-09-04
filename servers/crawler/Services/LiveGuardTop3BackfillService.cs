@@ -110,7 +110,8 @@ public class LiveGuardTop3BackfillService
                     var missing = LiveGuardTop3BackfillPlanner.ComputeMissing(snapshot.Guards, top10);
                     if (missing.Count > 0)
                     {
-                        await _guardRepository.BackfillMissingEntriesAsync(mid, snapshot.Date, missing, ct);
+                        var finalGuardCount = snapshot.Guards.Count + missing.Count;
+                        await _guardRepository.BackfillMissingEntriesAsync(mid, snapshot.Date, missing, finalGuardCount, ct);
                         backfilledEntriesCount += missing.Count;
                     }
                 }

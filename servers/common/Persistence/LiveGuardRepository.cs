@@ -113,6 +113,7 @@ public sealed class LiveGuardRepository(IMongoDatabase database)
         long mid,
         string date,
         IReadOnlyList<LiveGuardEntry> missing,
+        int finalGuardCount,
         CancellationToken ct = default)
     {
         if (missing.Count == 0)
@@ -123,14 +124,9 @@ public sealed class LiveGuardRepository(IMongoDatabase database)
         var filter = Builders<LiveGuardRecord>.Filter.And(
             Builders<LiveGuardRecord>.Filter.Eq(r => r.Mid, mid),
             Builders<LiveGuardRecord>.Filter.Eq(r => r.Date, date));
-        var update = Builders<LiveGuardRecord>.Update.PushEach(r => r.Guards, missing);
+        var update = Builders<LiveGuardRecord>.Update
+            .PushEach(r => r.Guards, missing)
+            .Set(r => r.GuardCount, finalGuardCount);
         await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
-
-        var doc = await _collection.Find(filter).FirstOrDefaultAsync(ct);
-        if (doc is not null)
-        {
-            var countUpdate = Builders<LiveGuardRecord>.Update.Set(r => r.GuardCount, doc.Guards.Count);
-            await _collection.UpdateOneAsync(filter, countUpdate, cancellationToken: ct);
-        }
     }
 }

@@ -356,7 +356,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
             new() { Uid = 2, UserName = "b", GuardLevel = 2, MedalName = null, MedalLevel = 0 },
             new() { Uid = 3, UserName = "c", GuardLevel = 3, MedalName = null, MedalLevel = 0 },
         };
-        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 3);
 
         var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
@@ -377,7 +377,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
         {
             new() { Uid = 2, UserName = "b", GuardLevel = 2, MedalName = null, MedalLevel = 0 },
         };
-        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 2);
 
         var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
@@ -399,7 +399,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
         {
             new() { Uid = 2, UserName = "b", GuardLevel = 2, MedalName = null, MedalLevel = 0 },
         };
-        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 2);
 
         var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
@@ -417,7 +417,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
         {
             new() { Uid = 3, UserName = "c", GuardLevel = 3, MedalName = null, MedalLevel = 0 },
         };
-        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 2);
 
         var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
         var stored2 = await guards.Find(r => r.Mid == 1002 && r.Date == "2026-08-30").FirstOrDefaultAsync();
@@ -436,7 +436,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
         {
             new() { Uid = 3, UserName = "c", GuardLevel = 3, MedalName = null, MedalLevel = 0 },
         };
-        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 2);
 
         var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
         var stored29 = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-29").FirstOrDefaultAsync();
@@ -451,7 +451,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
         await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (1, "a", 1, null, 0)));
 
         var missing = new List<LiveGuardEntry>();
-        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 1);
 
         var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
