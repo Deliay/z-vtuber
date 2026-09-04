@@ -71,7 +71,6 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncL
     {
         var accountRepo = new AccountBasicInfoRepository(fixture.Database);
         var guardRepo = new LiveGuardRepository(fixture.Database);
-        var metaCollection = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
 
         return new LiveGuardTop3BackfillService(
             accountRepo,
@@ -83,7 +82,7 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncL
                 new LiveSessionRepository(fixture.Database),
                 new CrawlLockProvider(),
                 NullLogger<AccountInfoCrawler>.Instance),
-            metaCollection,
+            fixture.Database,
             new LiveGuardListFetcher(bili, new BilibiliCrawlerOptions(), NullLogger<LiveGuardListFetcher>.Instance),
             timeProvider ?? new FakeTimeProvider(utcNow ?? BeijingDateTime(2026, 9, 1, 23)),
             NullLogger<LiveGuardTop3BackfillService>.Instance);

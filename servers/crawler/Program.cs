@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Services;
@@ -100,7 +101,8 @@ _ = Task.Run(async () =>
     {
         using var scope = app.Services.CreateScope();
         var backfillService = scope.ServiceProvider.GetRequiredService<LiveGuardTop3BackfillService>();
-        await backfillService.ExecuteAsync(CancellationToken.None);
+        var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+        await backfillService.ExecuteAsync(lifetime.ApplicationStopping);
     }
     catch (Exception ex)
     {

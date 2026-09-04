@@ -52,6 +52,7 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         services.AddSingleton<CrawlLockProvider>();
         services.AddSingleton<LiveGuardListFetcher>();
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<LiveGuardTop3BackfillService>();
         services.AddHostedService<LiveGuardJob>();
 
         var provider = services.BuildServiceProvider();
@@ -59,5 +60,9 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         // 解析 IHostedService 实例以触发 LiveGuardJob 的构造（DI 依赖图完整）
         var hosted = provider.GetServices<IHostedService>().OfType<LiveGuardJob>().ToList();
         Assert.Single(hosted);
+
+        // 解析 LiveGuardTop3BackfillService 以验证其依赖可解析
+        var backfillService = provider.GetRequiredService<LiveGuardTop3BackfillService>();
+        Assert.NotNull(backfillService);
     }
 }
