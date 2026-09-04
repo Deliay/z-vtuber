@@ -23,11 +23,11 @@ graph LR
 独立抓取服务：专职周期任务、弹幕长连接与事件归一化、风控退避，持续向数据库写入。不承载对外 API。
 
 - `Crawlers/`：`IBiliApiClient`/`BiliApiClient`（直连）、`BrowserishBiliApiClient`（拟真通道）、`ResilientBiliApiClient`（自动切换装饰器）、`RiskControlHandler`/`RiskControlClassifier`（风控识别 DelegatingHandler）、`CrawlBackoffRegistry`（目标级退避/冷却）、`BilibiliAccountProvider`
-- `Jobs/`：`PeriodicJobBase`、`CrawlLockProvider`（per-key 锁）、`CookieProbeJob`/`AccountInfoJob`/`LiveStatusJob`/`SpaceTimelineJob`（捕获 `CrawlBackoffActiveException` 跳过退避期）
+- `Jobs/`：`PeriodicJobBase`、`CrawlLockProvider`（per-key 锁）、`CookieProbeJob`/`AccountInfoJob`/`LiveStatusJob`/`SpaceTimelineJob`（捕获 `CrawlBackoffActiveException` 跳过退避期）、`LiveGuardJob`（翻页逻辑已抽取至 `LiveGuardListFetcher`）
 - `Live/`：`LiveEventSource`（弹幕长连接，归一化落库 `bilibili_live_event` 同时向 Redis 发布）、`DanmakuClientFactory`、`DanmakuEventNormalizer`、`ILiveEventPublisher`/`RedisLiveEventPublisher`（频道 `live-event:{roomId}`）
-- `Services/`：`AccountInfoCrawler`（场次合并去重）、`CookieNavProbeService`（nav 探测 + 帐号信息落库 + 状态机处置，实现 common 的 `ICookieNavProbeService` 契约）
+- `Services/`：`AccountInfoCrawler`（场次合并去重）、`CookieNavProbeService`（nav 探测 + 帐号信息落库 + 状态机处置，实现 common 的 `ICookieNavProbeService` 契约）、`LiveGuardListFetcher`（翻页抓取 + top3 并入 + 页间延迟/退避，供 `LiveGuardJob` 与补录共用）、`LiveGuardTop3BackfillPlanner`（top10 选取与差异计算纯函数）、`LiveGuardTop3BackfillService`（补录编排 + per-mid 进度标记）
 - `Configuration/`：`BilibiliCrawlerOptions`（节 `BilibiliCrawler`：`FetchMode`/退避/冷却/拟真头参数）
-- `Program.cs`：`WebApplication` 宿主；注册 Mongo/Redis 客户端、Options 校验、仓储、共享服务、抓取通道/风控/退避、`ILiveEventPublisher`、4 个 Job 与 `LiveEventSource` 的 `AddHostedService`；启动执行幂等索引初始化与回填；`/health`（进程存活 + MongoDB 连通性，`MongoDbHealthCheck`）
+- `Program.cs`：`WebApplication` 宿主；注册 Mongo/Redis 客户端、Options 校验、仓储、共享服务、抓取通道/风控/退避、`ILiveEventPublisher`、4 个 Job 与 `LiveEventSource` 的 `AddHostedService`；`LiveGuardListFetcher` 与 `LiveGuardTop3BackfillService` 注册；启动执行幂等索引初始化与回填；启动 fire-and-forget 执行一次性 Top3 补录；`/health`（进程存活 + MongoDB 连通性，`MongoDbHealthCheck`）
 - `Dockerfile`：两阶段构建（aspnet 运行时，EXPOSE 8080），restore 前同时拷贝 common 与 crawler csproj
 - 镜像流水线：`.github/workflows/build-crawler-image.yml`（`zero-tools/z-vtuber-crawler`）
 
