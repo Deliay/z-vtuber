@@ -65,6 +65,8 @@ builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventPublisher, RedisLiveEventPublisher>();
 builder.Services.AddSingleton<CrawlLockProvider>();
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<LiveGuardListFetcher>();
+builder.Services.AddSingleton<LiveGuardTop3BackfillService>();
 
 builder.Services.AddHostedService<CookieProbeJob>();
 builder.Services.AddHostedService<AccountInfoJob>();
@@ -91,5 +93,20 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapHealthChecks("/health");
+
+_ = Task.Run(async () =>
+{
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        var backfillService = scope.ServiceProvider.GetRequiredService<LiveGuardTop3BackfillService>();
+        await backfillService.ExecuteAsync(CancellationToken.None);
+    }
+    catch (Exception ex)
+    {
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Top3 backfill failed.");
+    }
+});
 
 app.Run();

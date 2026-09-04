@@ -13,7 +13,6 @@ public class LiveGuardJob : PeriodicJobBase
     private const int BeijingOffsetHours = 8;
 
     private readonly ISubscriptionService _subscription;
-    private readonly IBiliApiClient _bili;
     private readonly ICookiePoolService _cookiePool;
     private readonly AccountBasicInfoRepository _accountRepository;
     private readonly LiveGuardRepository _guardRepository;
@@ -21,8 +20,8 @@ public class LiveGuardJob : PeriodicJobBase
     private readonly CrawlLockProvider _locks;
     private readonly BilibiliCrawlerOptions _options;
     private readonly TimeProvider _timeProvider;
-    private readonly Random _random = Random.Shared;
     private readonly ILogger<LiveGuardJob> _logger;
+    private readonly LiveGuardListFetcher _fetcher;
 
     public LiveGuardJob(
         ISubscriptionService subscription,
@@ -34,10 +33,10 @@ public class LiveGuardJob : PeriodicJobBase
         CrawlLockProvider locks,
         BilibiliCrawlerOptions options,
         TimeProvider timeProvider,
-        ILogger<LiveGuardJob> logger) : base(logger)
+        ILogger<LiveGuardJob> logger,
+        LiveGuardListFetcher fetcher) : base(logger)
     {
         _subscription = subscription;
-        _bili = bili;
         _cookiePool = cookiePool;
         _accountRepository = accountRepository;
         _guardRepository = guardRepository;
@@ -46,6 +45,7 @@ public class LiveGuardJob : PeriodicJobBase
         _options = options;
         _timeProvider = timeProvider;
         _logger = logger;
+        _fetcher = fetcher;
         subscription.Subscribed += OnSubscribed;
     }
 
@@ -157,7 +157,7 @@ public class LiveGuardJob : PeriodicJobBase
             }
         }
 
-        var entries = await FetchAllPagesAsync(cookie, mid, roomId.Value, ct);
+        var entries = await _fetcher.FetchAllAsync(cookie, mid, roomId.Value, ct);
         if (entries is null)
         {
             return;
@@ -175,69 +175,6 @@ public class LiveGuardJob : PeriodicJobBase
         await _guardRepository.UpsertDailySnapshotAsync(record, ct);
         _logger.LogInformation("Guard snapshot persisted for mid {Mid} on {Date}: {Count} guards.", mid, date, entries.Count);
     }
-
-    private async Task<List<LiveGuardEntry>?> FetchAllPagesAsync(string cookie, long mid, long roomId, CancellationToken ct)
-    {
-        var merged = new Dictionary<long, LiveGuardEntry>();
-        var page = 1;
-
-        while (page <= _options.GuardMaxPages)
-        {
-            GuardInfo info;
-            try
-            {
-                info = await _bili.GetRoomGuardListAsync(cookie, roomId, mid, page, ct);
-            }
-            catch (CrawlBackoffActiveException ex)
-            {
-                _logger.LogInformation(ex, "Guard crawl skipped for mid {Mid}: backoff active.", mid);
-                return null;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Guard crawl failed for mid {Mid} at page {Page}; abandoning this round.", mid, page);
-                return null;
-            }
-
-            foreach (var user in info.List)
-            {
-                merged.TryAdd(user.Uid, ToEntry(user));
-            }
-
-            if (page == 1 && info.Top3 is not null)
-            {
-                foreach (var user in info.Top3)
-                {
-                    merged.TryAdd(user.Uid, ToEntry(user));
-                }
-            }
-
-            if (info.List.Count == 0 || page >= info.Info.PageCount || page >= _options.GuardMaxPages)
-            {
-                break;
-            }
-
-            await DelayBetweenPagesAsync(ct);
-            page++;
-        }
-
-        return merged.Values.ToList();
-    }
-
-    internal virtual Task DelayBetweenPagesAsync(CancellationToken ct)
-    {
-        var seconds = _random.Next(_options.GuardPageDelayMinSeconds, _options.GuardPageDelayMaxSeconds + 1);
-        return Task.Delay(TimeSpan.FromSeconds(seconds), ct);
-    }
-
-    private static LiveGuardEntry ToEntry(GuardUserInfo user) => new()
-    {
-        Uid = user.Uid,
-        UserName = user.UserName,
-        GuardLevel = user.GuardType,
-        MedalName = string.IsNullOrEmpty(user.MedalInfo.Name) ? null : user.MedalInfo.Name,
-        MedalLevel = user.MedalInfo.Level,
-    };
 
     private DateTime BeijingNow() => _timeProvider.GetUtcNow().UtcDateTime.AddHours(BeijingOffsetHours);
 }

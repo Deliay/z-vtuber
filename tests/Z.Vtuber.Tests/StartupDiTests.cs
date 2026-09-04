@@ -50,7 +50,8 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
             sp.GetRequiredService<ILogger<ResilientBiliApiClient>>()));
         services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
         services.AddSingleton<CrawlLockProvider>();
-        services.AddSingleton<TimeProvider>(TimeProvider.System);
+        services.AddSingleton<LiveGuardListFetcher>();
+        services.AddSingleton(TimeProvider.System);
         services.AddHostedService<LiveGuardJob>();
 
         var provider = services.BuildServiceProvider();
