@@ -13,37 +13,31 @@ public class LiveGuardTop3BackfillService
 {
     private const int BeijingOffsetHours = 8;
 
-    private readonly IBiliApiClient _bili;
     private readonly AccountBasicInfoRepository _accountRepository;
     private readonly LiveGuardRepository _guardRepository;
     private readonly ICookiePoolService _cookiePool;
     private readonly IAccountInfoCrawler _accountInfoCrawler;
     private readonly IMongoCollection<MetaRecord> _metaCollection;
     private readonly LiveGuardListFetcher _fetcher;
-    private readonly BilibiliCrawlerOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<LiveGuardTop3BackfillService> _logger;
 
     public LiveGuardTop3BackfillService(
-        IBiliApiClient bili,
         AccountBasicInfoRepository accountRepository,
         LiveGuardRepository guardRepository,
         ICookiePoolService cookiePool,
         IAccountInfoCrawler accountInfoCrawler,
         IMongoCollection<MetaRecord> metaCollection,
         LiveGuardListFetcher fetcher,
-        BilibiliCrawlerOptions options,
         TimeProvider timeProvider,
         ILogger<LiveGuardTop3BackfillService> logger)
     {
-        _bili = bili;
         _accountRepository = accountRepository;
         _guardRepository = guardRepository;
         _cookiePool = cookiePool;
         _accountInfoCrawler = accountInfoCrawler;
         _metaCollection = metaCollection;
         _fetcher = fetcher;
-        _options = options;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -159,9 +153,8 @@ public class LiveGuardTop3BackfillService
     {
         var key = $"live_guard_top3_backfill_v1:{mid}";
         var filter = Builders<MetaRecord>.Filter.Eq(m => m.Key, key);
-        var update = Builders<MetaRecord>.Update
-            .Set(m => m.Key, key);
-        await _metaCollection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
+        var record = new MetaRecord { Key = key };
+        await _metaCollection.ReplaceOneAsync(filter, record, new ReplaceOptions { IsUpsert = true });
     }
 
     private DateTime BeijingNow() => _timeProvider.GetUtcNow().UtcDateTime.AddHours(BeijingOffsetHours);

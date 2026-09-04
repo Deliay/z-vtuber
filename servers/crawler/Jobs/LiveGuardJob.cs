@@ -13,7 +13,6 @@ public class LiveGuardJob : PeriodicJobBase
     private const int BeijingOffsetHours = 8;
 
     private readonly ISubscriptionService _subscription;
-    private readonly IBiliApiClient _bili;
     private readonly ICookiePoolService _cookiePool;
     private readonly AccountBasicInfoRepository _accountRepository;
     private readonly LiveGuardRepository _guardRepository;
@@ -38,7 +37,6 @@ public class LiveGuardJob : PeriodicJobBase
         LiveGuardListFetcher fetcher) : base(logger)
     {
         _subscription = subscription;
-        _bili = bili;
         _cookiePool = cookiePool;
         _accountRepository = accountRepository;
         _guardRepository = guardRepository;

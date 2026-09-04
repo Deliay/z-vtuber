@@ -91,11 +91,8 @@ public sealed class LiveGuardRepository(IMongoDatabase database)
     public async Task<IReadOnlyList<long>> GetDistinctMidsAsync(CancellationToken ct = default)
     {
         var filter = Builders<LiveGuardRecord>.Filter.Empty;
-        var projection = Builders<LiveGuardRecord>.Projection.Include(r => r.Mid);
-        var records = await _collection.Find(filter)
-            .Project<LiveGuardRecord>(projection)
-            .ToListAsync(ct);
-        return records.Select(r => r.Mid).Distinct().ToList();
+        var distinctValues = await _collection.DistinctAsync(r => r.Mid, filter, cancellationToken: ct);
+        return await distinctValues.ToListAsync(ct);
     }
 
     public async Task<IReadOnlyList<LiveGuardRecord>> GetSnapshotsByMidAsync(
@@ -126,19 +123,14 @@ public sealed class LiveGuardRepository(IMongoDatabase database)
         var filter = Builders<LiveGuardRecord>.Filter.And(
             Builders<LiveGuardRecord>.Filter.Eq(r => r.Mid, mid),
             Builders<LiveGuardRecord>.Filter.Eq(r => r.Date, date));
-        var update = Builders<LiveGuardRecord>.Update
-            .PushEach(r => r.Guards, missing)
-            .Set(r => r.GuardCount, missing.Count);
+        var update = Builders<LiveGuardRecord>.Update.PushEach(r => r.Guards, missing);
         await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
 
-        var setFilter = Builders<LiveGuardRecord>.Filter.And(
-            Builders<LiveGuardRecord>.Filter.Eq(r => r.Mid, mid),
-            Builders<LiveGuardRecord>.Filter.Eq(r => r.Date, date));
-        var doc = await _collection.Find(setFilter).FirstOrDefaultAsync(ct);
+        var doc = await _collection.Find(filter).FirstOrDefaultAsync(ct);
         if (doc is not null)
         {
-            var fixUpdate = Builders<LiveGuardRecord>.Update.Set(r => r.GuardCount, doc.Guards.Count);
-            await _collection.UpdateOneAsync(setFilter, fixUpdate, cancellationToken: ct);
+            var countUpdate = Builders<LiveGuardRecord>.Update.Set(r => r.GuardCount, doc.Guards.Count);
+            await _collection.UpdateOneAsync(filter, countUpdate, cancellationToken: ct);
         }
     }
 }

@@ -74,7 +74,6 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncL
         var metaCollection = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
 
         return new LiveGuardTop3BackfillService(
-            bili,
             accountRepo,
             guardRepo,
             cookiePool ?? new FakeCookiePoolService(),
@@ -86,7 +85,6 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncL
                 NullLogger<AccountInfoCrawler>.Instance),
             metaCollection,
             new LiveGuardListFetcher(bili, new BilibiliCrawlerOptions(), NullLogger<LiveGuardListFetcher>.Instance),
-            new BilibiliCrawlerOptions(),
             timeProvider ?? new FakeTimeProvider(utcNow ?? BeijingDateTime(2026, 9, 1, 23)),
             NullLogger<LiveGuardTop3BackfillService>.Instance);
     }
@@ -283,25 +281,20 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncL
 
         await service.ExecuteAsync(CancellationToken.None);
 
-        var writeCalls = 0;
-        bili.RoomGuardListProvider = (_, _) =>
+        bili.RoomGuardListProvider = (_, _) => new GuardInfo
         {
-            writeCalls++;
-            return new GuardInfo
-            {
-                Info = new GuardInfo.PageInfo { PageCount = 1 },
-                List = [
-                    new GuardUserInfo { Uid = 1, UserName = "user1", GuardType = 3, MedalInfo = new GuardUserInfo.Medal { Name = "星", Level = 5 } },
-                    new GuardUserInfo { Uid = 2, UserName = "user2", GuardType = 5, MedalInfo = new GuardUserInfo.Medal { Name = "舰", Level = 10 } },
-                ],
-            };
+            Info = new GuardInfo.PageInfo { PageCount = 1 },
+            List = [
+                new GuardUserInfo { Uid = 1, UserName = "user1", GuardType = 3, MedalInfo = new GuardUserInfo.Medal { Name = "星", Level = 5 } },
+                new GuardUserInfo { Uid = 2, UserName = "user2", GuardType = 5, MedalInfo = new GuardUserInfo.Medal { Name = "舰", Level = 10 } },
+            ],
         };
         service = CreateService(bili);
 
         await service.ExecuteAsync(CancellationToken.None);
 
         var snapshot29 = await repo.GetSnapshotsByMidAsync(Mid1, "2026-09-01");
-        Assert.Equal(1, snapshot29.Count);
+        Assert.Single(snapshot29);
         Assert.Equal(2, snapshot29[0].GuardCount);
     }
 
