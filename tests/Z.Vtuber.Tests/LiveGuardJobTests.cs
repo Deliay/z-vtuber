@@ -32,31 +32,17 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     private static DateTime BeijingDateTime(int year, int month, int day, int hour) =>
         new DateTime(year, month, day, hour, 0, 0, DateTimeKind.Utc).AddHours(-8);
 
-    private sealed class CountingGuardJob : LiveGuardJob
+    private sealed class FakeLiveGuardListFetcher : LiveGuardListFetcher
     {
-        public int DelayCount { get; private set; }
+        public Func<string, long, long, CancellationToken, Task<List<LiveGuardEntry>?>>? FetchFunc { get; set; }
 
-        public CountingGuardJob(
-            ISubscriptionService subscription,
-            IBiliApiClient bili,
-            ICookiePoolService cookiePool,
-            AccountBasicInfoRepository accountRepository,
-            LiveGuardRepository guardRepository,
-            IAccountInfoCrawler accountInfoCrawler,
-            CrawlLockProvider locks,
-            BilibiliCrawlerOptions options,
-            TimeProvider timeProvider,
-            ILogger<LiveGuardJob> logger)
-            : base(subscription, bili, cookiePool, accountRepository, guardRepository,
-                accountInfoCrawler, locks, options, timeProvider, logger)
+        public FakeLiveGuardListFetcher()
+            : base(new FakeBiliApiClient(), new BilibiliCrawlerOptions(), NullLogger<LiveGuardListFetcher>.Instance)
         {
         }
 
-        internal override Task DelayBetweenPagesAsync(CancellationToken ct)
-        {
-            DelayCount++;
-            return Task.CompletedTask;
-        }
+        internal override Task<List<LiveGuardEntry>?> FetchAllAsync(string cookie, long mid, long roomId, CancellationToken ct)
+            => FetchFunc?.Invoke(cookie, mid, roomId, ct) ?? Task.FromResult<List<LiveGuardEntry>?>([]);
     }
 
     private BilibiliCrawlerOptions GuardOptions() => new()
@@ -90,8 +76,8 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         });
     }
 
-    private CountingGuardJob CreateJob(
-        FakeBiliApiClient bili,
+    private LiveGuardJob CreateJob(
+        FakeLiveGuardListFetcher fetcher,
         DateTime? utcNow = null,
         AccountBasicInfoRepository? accountRepo = null,
         BilibiliCrawlerOptions? options = null,
@@ -101,15 +87,15 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     {
         accountRepo ??= new AccountBasicInfoRepository(fixture.Database);
         var accountInfoCrawler = new AccountInfoCrawler(
-            bili,
+            new FakeBiliApiClient(),
             accountRepo,
             new LiveSessionRepository(fixture.Database),
             new CrawlLockProvider(),
             NullLogger<AccountInfoCrawler>.Instance);
 
-        return new CountingGuardJob(
+        return new LiveGuardJob(
             subscription ?? new SubscriptionService(fixture.Database),
-            bili,
+            new FakeBiliApiClient(),
             cookiePool ?? new FakeCookiePoolService(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
@@ -117,7 +103,8 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             new CrawlLockProvider(),
             options ?? GuardOptions(),
             timeProvider ?? new FakeTimeProvider(utcNow ?? BeijingDateTime(2026, 8, 31, 23)),
-            NullLogger<LiveGuardJob>.Instance);
+            NullLogger<LiveGuardJob>.Instance,
+            fetcher);
     }
 
     private static async Task WaitForAsync(Func<Task<bool>> condition)
@@ -137,8 +124,11 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     public async Task Run_BeforeDailyHour_DoesNotCrawl()
     {
         await SeedSubscriptionAsync(SubscriptionType.Guard);
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new Exception("should not be called") };
-        var job = CreateJob(bili, utcNow: BeijingDateTime(2026, 8, 31, 22));
+        var fetcher = new FakeLiveGuardListFetcher
+        {
+            FetchFunc = (_, _, _, _) => throw new Exception("should not be called")
+        };
+        var job = CreateJob(fetcher, utcNow: BeijingDateTime(2026, 8, 31, 22));
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -151,15 +141,13 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     {
         await SeedSubscriptionAsync(SubscriptionType.Guard);
         await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient
+        var fetcher = new FakeLiveGuardListFetcher
         {
-            RoomGuardListProvider = (_, _) => new GuardInfo
-            {
-                Info = new GuardInfo.PageInfo { Count = 1, Current = 1, PageCount = 1 },
-                List = [new GuardUserInfo { Uid = 1, UserName = "a", GuardType = 3, MedalInfo = new GuardUserInfo.Medal { Name = "星", Level = 5 } }],
-            }
+            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([
+                new LiveGuardEntry { Uid = 1, UserName = "a", GuardLevel = 3, MedalName = "星", MedalLevel = 5 },
+            ])
         };
-        var job = CreateJob(bili);
+        var job = CreateJob(fetcher);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -193,13 +181,20 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             FetchedAt = DateTime.UtcNow,
         });
 
-        var calls = 0;
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => { calls++; return new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] }; } };
-        var job = CreateJob(bili);
+        var fetchCalls = 0;
+        var fetcher = new FakeLiveGuardListFetcher
+        {
+            FetchFunc = (_, _, _, _) =>
+            {
+                fetchCalls++;
+                return Task.FromResult<List<LiveGuardEntry>?>([]);
+            }
+        };
+        var job = CreateJob(fetcher);
 
         await job.RunOnceAsync(CancellationToken.None);
 
-        Assert.Equal(0, calls);
+        Assert.Equal(0, fetchCalls);
     }
 
     [Fact]
@@ -210,13 +205,20 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         var guardRepo = new LiveGuardRepository(fixture.Database);
         await guardRepo.UpsertDailySnapshotAsync(new LiveGuardRecord { Mid = Mid, RoomId = RoomId, Date = "2026-08-31", Guards = [], GuardCount = 0, FetchedAt = DateTime.UtcNow });
 
-        var calls = 0;
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => { calls++; return new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] }; } };
-        var job = CreateJob(bili);
+        var fetchCalls = 0;
+        var fetcher = new FakeLiveGuardListFetcher
+        {
+            FetchFunc = (_, _, _, _) =>
+            {
+                fetchCalls++;
+                return Task.FromResult<List<LiveGuardEntry>?>([]);
+            }
+        };
+        var job = CreateJob(fetcher);
 
         await job.RunOnceAsync(CancellationToken.None);
 
-        Assert.Equal(0, calls);
+        Assert.Equal(0, fetchCalls);
     }
 
     [Fact]
@@ -224,9 +226,12 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     {
         await SeedSubscriptionAsync(SubscriptionType.Danmaku);
         await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new Exception("should not be called") };
+        var fetcher = new FakeLiveGuardListFetcher
+        {
+            FetchFunc = (_, _, _, _) => throw new Exception("should not be called")
+        };
         var subscription = new SubscriptionService(fixture.Database);
-        var job = CreateJob(bili, subscription: subscription);
+        var job = CreateJob(fetcher, subscription: subscription);
 
         await subscription.SubscribeAsync(Mid, SubscriptionType.Danmaku);
 
@@ -241,18 +246,20 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     {
         await SeedAccountAsync(RoomId);
         var calls = 0;
-        var bili = new FakeBiliApiClient
+        var fetcher = new FakeLiveGuardListFetcher
         {
-            RoomGuardListProvider = (_, _) =>
+            FetchFunc = (_, _, _, _) =>
             {
                 calls++;
-                return new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [new GuardUserInfo { Uid = 1 }] };
+                return Task.FromResult<List<LiveGuardEntry>?>([
+                    new LiveGuardEntry { Uid = 1 },
+                ]);
             }
         };
         var subscription = new SubscriptionService(fixture.Database);
         // 北京时间 2026-09-01 02:00，处于 00:00–03:00 凌晨补抓窗口
         var timeProvider = new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 2));
-        var job = CreateJob(bili, subscription: subscription, timeProvider: timeProvider);
+        var job = CreateJob(fetcher, subscription: subscription, timeProvider: timeProvider);
 
         await subscription.SubscribeAsync(Mid, SubscriptionType.Guard);
 
@@ -285,25 +292,35 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             FetchedAt = DateTime.UtcNow,
         });
 
-        var calls = 0;
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => { calls++; return new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] }; } };
+        var fetchCalls = 0;
+        var fetcher = new FakeLiveGuardListFetcher
+        {
+            FetchFunc = (_, _, _, _) =>
+            {
+                fetchCalls++;
+                return Task.FromResult<List<LiveGuardEntry>?>([]);
+            }
+        };
         var subscription = new SubscriptionService(fixture.Database);
-        var job = CreateJob(bili, subscription: subscription, timeProvider: new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 2)));
+        var job = CreateJob(fetcher, subscription: subscription, timeProvider: new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 2)));
 
         await subscription.SubscribeAsync(Mid, SubscriptionType.Guard);
         await Task.Delay(300);
 
-        Assert.Equal(0, calls);
+        Assert.Equal(0, fetchCalls);
     }
 
     [Fact]
     public async Task OnSubscribed_AfterCatchUpHourBeforeDailyHour_DoesNotCrawl()
     {
         await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new Exception("should not be called") };
+        var fetcher = new FakeLiveGuardListFetcher
+        {
+            FetchFunc = (_, _, _, _) => throw new Exception("should not be called")
+        };
         var subscription = new SubscriptionService(fixture.Database);
         // 北京时间 2026-09-01 04:00，过了凌晨补抓窗口、未到当日 23:00
-        var job = CreateJob(bili, subscription: subscription, timeProvider: new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 4)));
+        var job = CreateJob(fetcher, subscription: subscription, timeProvider: new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 4)));
 
         await subscription.SubscribeAsync(Mid, SubscriptionType.Guard);
         await Task.Delay(300);
@@ -318,12 +335,36 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     {
         await SeedSubscriptionAsync(SubscriptionType.Guard);
         // 不预置 account，roomId 缺失
+        var fetcher = new FakeLiveGuardListFetcher
+        {
+            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([
+                new LiveGuardEntry { Uid = 1 },
+            ])
+        };
         var bili = new FakeBiliApiClient
         {
             AccountInfoProvider = _ => JsonDoc($"{{\"roomId\":{RoomId}}}"),
-            RoomGuardListProvider = (_, _) => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [new GuardUserInfo { Uid = 1 }] },
         };
-        var job = CreateJob(bili);
+        var accountRepo = new AccountBasicInfoRepository(fixture.Database);
+        var accountInfoCrawler = new AccountInfoCrawler(
+            bili,
+            accountRepo,
+            new LiveSessionRepository(fixture.Database),
+            new CrawlLockProvider(),
+            NullLogger<AccountInfoCrawler>.Instance);
+
+        var job = new LiveGuardJob(
+            new SubscriptionService(fixture.Database),
+            bili,
+            new FakeCookiePoolService(),
+            accountRepo,
+            new LiveGuardRepository(fixture.Database),
+            accountInfoCrawler,
+            new CrawlLockProvider(),
+            GuardOptions(),
+            new FakeTimeProvider(BeijingDateTime(2026, 8, 31, 23)),
+            NullLogger<LiveGuardJob>.Instance,
+            fetcher);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -335,12 +376,34 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     public async Task Crawl_MissingRoomId_AccountCrawlFails_SkipsWithoutSnapshot()
     {
         await SeedSubscriptionAsync(SubscriptionType.Guard);
+        var fetcher = new FakeLiveGuardListFetcher
+        {
+            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([])
+        };
         var bili = new FakeBiliApiClient
         {
             AccountInfoProvider = _ => throw new Exception("crawl failed"),
-            RoomGuardListProvider = (_, _) => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
         };
-        var job = CreateJob(bili);
+        var accountRepo = new AccountBasicInfoRepository(fixture.Database);
+        var accountInfoCrawler = new AccountInfoCrawler(
+            bili,
+            accountRepo,
+            new LiveSessionRepository(fixture.Database),
+            new CrawlLockProvider(),
+            NullLogger<AccountInfoCrawler>.Instance);
+
+        var job = new LiveGuardJob(
+            new SubscriptionService(fixture.Database),
+            bili,
+            new FakeCookiePoolService(),
+            accountRepo,
+            new LiveGuardRepository(fixture.Database),
+            accountInfoCrawler,
+            new CrawlLockProvider(),
+            GuardOptions(),
+            new FakeTimeProvider(BeijingDateTime(2026, 8, 31, 23)),
+            NullLogger<LiveGuardJob>.Instance,
+            fetcher);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -349,67 +412,15 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Crawl_MultiPage_MergesAllPages()
+    public async Task Crawl_FetcherReturnsNull_DoesNotUpsert()
     {
         await SeedSubscriptionAsync(SubscriptionType.Guard);
         await SeedAccountAsync(RoomId);
-        var pageData = new Dictionary<int, GuardInfo>
+        var fetcher = new FakeLiveGuardListFetcher
         {
-            [1] = new() { Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 2 }, List = [new GuardUserInfo { Uid = 1 }, new GuardUserInfo { Uid = 2 }] },
-            [2] = new() { Info = new GuardInfo.PageInfo { Count = 2, Current = 2, PageCount = 2 }, List = [new GuardUserInfo { Uid = 3 }] },
+            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>(null)
         };
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, page) => pageData[page] };
-        var job = CreateJob(bili);
-
-        await job.RunOnceAsync(CancellationToken.None);
-
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
-        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
-        Assert.NotNull(stored);
-        Assert.Equal(3, stored.GuardCount);
-        Assert.Equal([1L, 2L, 3L], stored.Guards.Select(g => g.Uid).OrderBy(u => u).ToList());
-        // 2 页 → 1 次页间延迟
-        Assert.Equal(1, job.DelayCount);
-    }
-
-    [Fact]
-    public async Task Crawl_EmptyFirstPage_PersistsEmptySnapshot()
-    {
-        await SeedSubscriptionAsync(SubscriptionType.Guard);
-        await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => new GuardInfo { Info = new GuardInfo.PageInfo { Count = 0, Current = 1, PageCount = 1 }, List = [] } };
-        var job = CreateJob(bili);
-
-        await job.RunOnceAsync(CancellationToken.None);
-
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
-        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
-        Assert.NotNull(stored);
-        Assert.Empty(stored.Guards);
-        Assert.Equal(0, stored.GuardCount);
-    }
-
-    [Fact]
-    public async Task Crawl_SinglePageFailure_DoesNotUpsert()
-    {
-        await SeedSubscriptionAsync(SubscriptionType.Guard);
-        await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new Exception("boom") };
-        var job = CreateJob(bili);
-
-        await job.RunOnceAsync(CancellationToken.None);
-
-        var guardRepo = new LiveGuardRepository(fixture.Database);
-        Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-08-31"));
-    }
-
-    [Fact]
-    public async Task Crawl_BackoffActive_SkipsRoundWithoutUpsert()
-    {
-        await SeedSubscriptionAsync(SubscriptionType.Guard);
-        await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new CrawlBackoffActiveException("backoff", TimeSpan.FromMinutes(1)) };
-        var job = CreateJob(bili);
+        var job = CreateJob(fetcher);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -422,9 +433,12 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     {
         await SeedSubscriptionAsync(SubscriptionType.Guard);
         await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new Exception("should not be called") };
+        var fetcher = new FakeLiveGuardListFetcher
+        {
+            FetchFunc = (_, _, _, _) => throw new Exception("should not be called")
+        };
         var cookiePool = new NoCookiePoolService();
-        var job = CreateJob(bili, cookiePool: cookiePool);
+        var job = CreateJob(fetcher, cookiePool: cookiePool);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -433,191 +447,23 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Crawl_PageCountCap_LimitsRequests()
+    public async Task Crawl_EmptyFetchResult_PersistsEmptySnapshot()
     {
         await SeedSubscriptionAsync(SubscriptionType.Guard);
         await SeedAccountAsync(RoomId);
-        var options = GuardOptions();
-        options.GuardMaxPages = 2;
-        var pagesRequested = 0;
-        var bili = new FakeBiliApiClient
+        var fetcher = new FakeLiveGuardListFetcher
         {
-            RoomGuardListProvider = (_, _) =>
-            {
-                pagesRequested++;
-                return new GuardInfo { Info = new GuardInfo.PageInfo { Count = 100, Current = pagesRequested, PageCount = 100 }, List = [new GuardUserInfo { Uid = pagesRequested }] };
-            }
+            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([])
         };
-        var job = CreateJob(bili, options: options);
-
-        await job.RunOnceAsync(CancellationToken.None);
-
-        Assert.Equal(2, pagesRequested);
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
-        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
-        Assert.Equal(2, stored.GuardCount);
-        Assert.Equal(1, job.DelayCount);
-    }
-
-    [Fact]
-    public async Task Crawl_FirstPageTop3_MergesIntoGuardList()
-    {
-        await SeedSubscriptionAsync(SubscriptionType.Guard);
-        await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient
-        {
-            RoomGuardListProvider = (_, page) => page switch
-            {
-                1 => new GuardInfo
-                {
-                    Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 1 },
-                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }, new GuardUserInfo { Uid = 2, UserName = "user2" }],
-                    Top3 = [new GuardUserInfo { Uid = 3, UserName = "top3_user", GuardType = 5, MedalInfo = new GuardUserInfo.Medal { Name = "medal", Level = 10 } }],
-                },
-                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
-            }
-        };
-        var job = CreateJob(bili);
+        var job = CreateJob(fetcher);
 
         await job.RunOnceAsync(CancellationToken.None);
 
         var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
         Assert.NotNull(stored);
-        Assert.Equal(3, stored.GuardCount);
-        Assert.Equal(3, stored.Guards.Count);
-        var uids = stored.Guards.Select(g => g.Uid).OrderBy(u => u).ToList();
-        Assert.Equal([1L, 2L, 3L], uids);
-        var top3Entry = stored.Guards.First(g => g.Uid == 3);
-        Assert.Equal("top3_user", top3Entry.UserName);
-        Assert.Equal(5, top3Entry.GuardLevel);
-        Assert.Equal("medal", top3Entry.MedalName);
-        Assert.Equal(10, top3Entry.MedalLevel);
-    }
-
-    [Fact]
-    public async Task Crawl_Top3OverlapWithList_DeduplicatesByUid()
-    {
-        await SeedSubscriptionAsync(SubscriptionType.Guard);
-        await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient
-        {
-            RoomGuardListProvider = (_, page) => page switch
-            {
-                1 => new GuardInfo
-                {
-                    Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 1 },
-                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }, new GuardUserInfo { Uid = 2, UserName = "user2" }],
-                    Top3 = [new GuardUserInfo { Uid = 1, UserName = "top3_user1_dup" }],
-                },
-                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
-            }
-        };
-        var job = CreateJob(bili);
-
-        await job.RunOnceAsync(CancellationToken.None);
-
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
-        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
-        Assert.NotNull(stored);
-        Assert.Equal(2, stored.GuardCount);
-        Assert.Equal(2, stored.Guards.Count);
-        var uids = stored.Guards.Select(g => g.Uid).OrderBy(u => u).ToList();
-        Assert.Equal([1L, 2L], uids);
-    }
-
-    [Fact]
-    public async Task Crawl_Top3Null_FallsBackToGuardListOnly()
-    {
-        await SeedSubscriptionAsync(SubscriptionType.Guard);
-        await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient
-        {
-            RoomGuardListProvider = (_, page) => page switch
-            {
-                1 => new GuardInfo
-                {
-                    Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 1 },
-                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }, new GuardUserInfo { Uid = 2, UserName = "user2" }],
-                    Top3 = null!,
-                },
-                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
-            }
-        };
-        var job = CreateJob(bili);
-
-        await job.RunOnceAsync(CancellationToken.None);
-
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
-        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
-        Assert.NotNull(stored);
-        Assert.Equal(2, stored.GuardCount);
-        Assert.Equal(2, stored.Guards.Count);
-    }
-
-    [Fact]
-    public async Task Crawl_Top3EmptyList_FallsBackToGuardListOnly()
-    {
-        await SeedSubscriptionAsync(SubscriptionType.Guard);
-        await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient
-        {
-            RoomGuardListProvider = (_, page) => page switch
-            {
-                1 => new GuardInfo
-                {
-                    Info = new GuardInfo.PageInfo { Count = 2, Current = 1, PageCount = 1 },
-                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }, new GuardUserInfo { Uid = 2, UserName = "user2" }],
-                    Top3 = [],
-                },
-                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
-            }
-        };
-        var job = CreateJob(bili);
-
-        await job.RunOnceAsync(CancellationToken.None);
-
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
-        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
-        Assert.NotNull(stored);
-        Assert.Equal(2, stored.GuardCount);
-        Assert.Equal(2, stored.Guards.Count);
-    }
-
-    [Fact]
-    public async Task Crawl_MultiPageTop3_NotMergedBeyondFirstPage()
-    {
-        await SeedSubscriptionAsync(SubscriptionType.Guard);
-        await SeedAccountAsync(RoomId);
-        var bili = new FakeBiliApiClient
-        {
-            RoomGuardListProvider = (_, page) => page switch
-            {
-                1 => new GuardInfo
-                {
-                    Info = new GuardInfo.PageInfo { Count = 1, Current = 1, PageCount = 2 },
-                    List = [new GuardUserInfo { Uid = 1, UserName = "user1" }],
-                    Top3 = [new GuardUserInfo { Uid = 10, UserName = "top3_page1" }],
-                },
-                2 => new GuardInfo
-                {
-                    Info = new GuardInfo.PageInfo { Count = 1, Current = 2, PageCount = 2 },
-                    List = [new GuardUserInfo { Uid = 2, UserName = "user2" }],
-                    Top3 = [new GuardUserInfo { Uid = 20, UserName = "top3_page2_should_not_merge" }],
-                },
-                _ => new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] },
-            }
-        };
-        var job = CreateJob(bili);
-
-        await job.RunOnceAsync(CancellationToken.None);
-
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
-        var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
-        Assert.NotNull(stored);
-        Assert.Equal(3, stored.GuardCount);
-        var uids = stored.Guards.Select(g => g.Uid).OrderBy(u => u).ToList();
-        Assert.Equal([1L, 2L, 10L], uids);
+        Assert.Empty(stored.Guards);
+        Assert.Equal(0, stored.GuardCount);
     }
 
     private sealed class NoCookiePoolService : ICookiePoolService

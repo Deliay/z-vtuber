@@ -269,4 +269,193 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Equal(2, result[1].Uid);
         Assert.Equal(3, result[2].Uid);
     }
+
+    [Fact]
+    public async Task GetDistinctMidsAsync_MultiMidsMultiDays_ReturnsDistinct()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (1, "a", 1, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-31", 123456, (2, "b", 2, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1002, "2026-08-30", 123456, (3, "c", 3, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1003, "2026-08-31", 123456, (4, "d", 4, null, 0)));
+
+        var result = await repository.GetDistinctMidsAsync();
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal([1001L, 1002L, 1003L], result.OrderBy(m => m).ToList());
+    }
+
+    [Fact]
+    public async Task GetDistinctMidsAsync_NoData_ReturnsEmpty()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        var result = await repository.GetDistinctMidsAsync();
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetSnapshotsByMidAsync_ReturnsOnlySpecifiedMid()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-29", 123456, (1, "a", 1, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (2, "b", 2, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1002, "2026-08-29", 123456, (3, "c", 3, null, 0)));
+
+        var result = await repository.GetSnapshotsByMidAsync(1001, "2026-08-31");
+
+        Assert.Equal(2, result.Count);
+        Assert.All(result, r => Assert.Equal(1001, r.Mid));
+    }
+
+    [Fact]
+    public async Task GetSnapshotsByMidAsync_ExcludesBeforeDateExclusive()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-29", 123456, (1, "a", 1, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (2, "b", 2, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-31", 123456, (3, "c", 3, null, 0)));
+
+        var result = await repository.GetSnapshotsByMidAsync(1001, "2026-08-31");
+
+        Assert.Equal(2, result.Count);
+        Assert.All(result, r => Assert.True(string.Compare(r.Date, "2026-08-31", StringComparison.Ordinal) < 0));
+    }
+
+    [Fact]
+    public async Task GetSnapshotsByMidAsync_OrderByDateAscending()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-31", 123456, (3, "c", 3, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-29", 123456, (1, "a", 1, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (2, "b", 2, null, 0)));
+
+        var result = await repository.GetSnapshotsByMidAsync(1001, "2026-09-01");
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal("2026-08-29", result[0].Date);
+        Assert.Equal("2026-08-30", result[1].Date);
+        Assert.Equal("2026-08-31", result[2].Date);
+    }
+
+    [Fact]
+    public async Task GetSnapshotsByMidAsync_NoData_ReturnsEmpty()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        var result = await repository.GetSnapshotsByMidAsync(1001, "2026-08-31");
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task BackfillMissingEntriesAsync_AppendsEntries()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (1, "a", 1, null, 0)));
+
+        var missing = new List<LiveGuardEntry>
+        {
+            new() { Uid = 2, UserName = "b", GuardLevel = 2, MedalName = null, MedalLevel = 0 },
+            new() { Uid = 3, UserName = "c", GuardLevel = 3, MedalName = null, MedalLevel = 0 },
+        };
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
+        Assert.NotNull(stored);
+        Assert.Equal(3, stored.GuardCount);
+        Assert.Equal(3, stored.Guards.Count);
+        var uids = stored.Guards.Select(g => g.Uid).OrderBy(u => u).ToList();
+        Assert.Equal([1L, 2L, 3L], uids);
+    }
+
+    [Fact]
+    public async Task BackfillMissingEntriesAsync_ExistingEntriesUnchanged()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (1, "a", 3, "星", 5)));
+
+        var missing = new List<LiveGuardEntry>
+        {
+            new() { Uid = 2, UserName = "b", GuardLevel = 2, MedalName = null, MedalLevel = 0 },
+        };
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
+        Assert.NotNull(stored);
+        var entry1 = stored.Guards.First(g => g.Uid == 1);
+        Assert.Equal("a", entry1.UserName);
+        Assert.Equal(3, entry1.GuardLevel);
+        Assert.Equal("星", entry1.MedalName);
+        Assert.Equal(5, entry1.MedalLevel);
+    }
+
+    [Fact]
+    public async Task BackfillMissingEntriesAsync_GuardCountSync()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (1, "a", 1, null, 0)));
+
+        var missing = new List<LiveGuardEntry>
+        {
+            new() { Uid = 2, UserName = "b", GuardLevel = 2, MedalName = null, MedalLevel = 0 },
+        };
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
+        Assert.Equal(stored.Guards.Count, stored.GuardCount);
+    }
+
+    [Fact]
+    public async Task BackfillMissingEntriesAsync_OtherMidNotAffected()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (1, "a", 1, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1002, "2026-08-30", 123456, (2, "b", 2, null, 0)));
+
+        var missing = new List<LiveGuardEntry>
+        {
+            new() { Uid = 3, UserName = "c", GuardLevel = 3, MedalName = null, MedalLevel = 0 },
+        };
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored2 = await guards.Find(r => r.Mid == 1002 && r.Date == "2026-08-30").FirstOrDefaultAsync();
+        Assert.Single(stored2.Guards);
+        Assert.Equal(2L, stored2.Guards[0].Uid);
+    }
+
+    [Fact]
+    public async Task BackfillMissingEntriesAsync_OtherDateNotAffected()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-29", 123456, (1, "a", 1, null, 0)));
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (2, "b", 2, null, 0)));
+
+        var missing = new List<LiveGuardEntry>
+        {
+            new() { Uid = 3, UserName = "c", GuardLevel = 3, MedalName = null, MedalLevel = 0 },
+        };
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored29 = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-29").FirstOrDefaultAsync();
+        Assert.Single(stored29.Guards);
+        Assert.Equal(1L, stored29.Guards[0].Uid);
+    }
+
+    [Fact]
+    public async Task BackfillMissingEntriesAsync_EmptyMissing_DoesNotWrite()
+    {
+        var repository = new LiveGuardRepository(fixture.Database);
+        await repository.UpsertDailySnapshotAsync(Record(1001, "2026-08-30", 123456, (1, "a", 1, null, 0)));
+
+        var missing = new List<LiveGuardEntry>();
+        await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing);
+
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
+        Assert.Single(stored.Guards);
+        Assert.Equal(1, stored.GuardCount);
+    }
 }
