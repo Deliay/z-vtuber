@@ -27,7 +27,7 @@ public class LiveGuardTop3BackfillService
         LiveGuardRepository guardRepository,
         ICookiePoolService cookiePool,
         IAccountInfoCrawler accountInfoCrawler,
-        IMongoCollection<MetaRecord> metaCollection,
+        IMongoDatabase database,
         LiveGuardListFetcher fetcher,
         TimeProvider timeProvider,
         ILogger<LiveGuardTop3BackfillService> logger)
@@ -36,7 +36,7 @@ public class LiveGuardTop3BackfillService
         _guardRepository = guardRepository;
         _cookiePool = cookiePool;
         _accountInfoCrawler = accountInfoCrawler;
-        _metaCollection = metaCollection;
+        _metaCollection = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
         _fetcher = fetcher;
         _timeProvider = timeProvider;
         _logger = logger;

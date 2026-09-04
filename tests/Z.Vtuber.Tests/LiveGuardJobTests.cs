@@ -95,7 +95,6 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
 
         return new LiveGuardJob(
             subscription ?? new SubscriptionService(fixture.Database),
-            new FakeBiliApiClient(),
             cookiePool ?? new FakeCookiePoolService(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
@@ -355,7 +354,6 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
 
         var job = new LiveGuardJob(
             new SubscriptionService(fixture.Database),
-            bili,
             new FakeCookiePoolService(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
@@ -394,7 +392,6 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
 
         var job = new LiveGuardJob(
             new SubscriptionService(fixture.Database),
-            bili,
             new FakeCookiePoolService(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),

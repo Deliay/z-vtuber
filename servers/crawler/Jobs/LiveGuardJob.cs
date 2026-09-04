@@ -25,7 +25,6 @@ public class LiveGuardJob : PeriodicJobBase
 
     public LiveGuardJob(
         ISubscriptionService subscription,
-        IBiliApiClient bili,
         ICookiePoolService cookiePool,
         AccountBasicInfoRepository accountRepository,
         LiveGuardRepository guardRepository,
