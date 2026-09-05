@@ -470,7 +470,6 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         public Task MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.CompletedTask;
         public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
         public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<CookieRecord>>([]);
-        public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) => Task.FromResult<CookieRecord?>(null);
     }
 
     private static System.Text.Json.JsonElement JsonDoc(string channelBody)
