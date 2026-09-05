@@ -9,6 +9,10 @@ export default defineConfig({
     port: Number(process.env.PORT) || 5173,
     strictPort: true,
     proxy: {
+      '/api/notify': {
+        target: process.env.VITE_NOTIFY_URL || 'http://localhost:5100',
+        changeOrigin: true,
+      },
       '/api': {
         target: process.env.VITE_API_URL || 'http://localhost:5000',
         changeOrigin: true,

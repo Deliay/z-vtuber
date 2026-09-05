@@ -174,7 +174,7 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
         var resolvedBili = bili ?? new NavBiliApiClient();
         var repo = new MockCookieAccountInfoRepository();
         provider.Probe = new CookieNavProbeService(
-            resolvedBili, pool, repo, Options, NullLogger<CookieNavProbeService>.Instance);
+            resolvedBili, pool, repo, new FakeCookieInvalidEventPublisher(), Options, NullLogger<CookieNavProbeService>.Instance);
         return (pool, resolvedBili, repo);
     }
 

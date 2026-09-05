@@ -38,8 +38,9 @@ public sealed class CookieNavProbeServiceTests
     private static CookieNavProbeService CreateService(
         IBiliApiClient bili,
         ICookiePoolService pool,
-        ICookieAccountInfoRepository repo) =>
-        new(bili, pool, repo, Options, NullLogger<CookieNavProbeService>.Instance);
+        ICookieAccountInfoRepository repo,
+        ICookieInvalidEventPublisher? eventPublisher = null) =>
+        new(bili, pool, repo, eventPublisher ?? new FakeCookieInvalidEventPublisher(), Options, NullLogger<CookieNavProbeService>.Instance);
 
     private static CookieRecord Record() => new()
     {

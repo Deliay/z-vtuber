@@ -5,6 +5,7 @@ using Mikibot.Crawler.Http;
 using Mikibot.Crawler.Http.Bilibili;
 using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
+using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Common.Services;
 
 namespace Z.Vtuber.Tests;
@@ -23,7 +24,7 @@ public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifeti
     [Fact]
     public void GetProviderAsync_CreatesProviderWithCorrectOptions()
     {
-        var provider = new BilibiliAccountProvider(Options, CreateMockPool());
+        var provider = new BilibiliAccountProvider(Options, CreateMockPool(), new FakeCookieInvalidEventPublisher(), Microsoft.Extensions.Logging.Abstractions.NullLogger<BilibiliAccountProvider>.Instance);
 
         Assert.NotNull(provider);
     }
@@ -46,7 +47,7 @@ public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifeti
         private int _buildCount;
 
         public FailingProvider(BilibiliCrawlerOptions options, ICookiePoolService pool, Func<Exception> failureFactory, int failTimes)
-            : base(options, pool)
+            : base(options, pool, new FakeCookieInvalidEventPublisher(), Microsoft.Extensions.Logging.Abstractions.NullLogger<BilibiliAccountProvider>.Instance)
         {
             _failureFactory = failureFactory;
             _failTimes = failTimes;
