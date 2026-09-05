@@ -1,5 +1,5 @@
 ---
-description: Cookie 失效通知 PRD——新增 Z.Vtuber.Notifier 通知服务接入 Satori 客户端；crawler 在 cookie 失效时向 Redis 发布失效事件，通知服务订阅事件并按配置将通知推送到指定 Satori 频道；Web 管理后台新增「通知」模块，展示已绑定通知并通过弹窗新增/删除绑定
+description: Cookie 失效通知 PRD——新增 Z.Vtuber.Notifier 通知服务，直接实现 Satori 协议 v1 HTTP API（不依赖第三方 SDK）；crawler 在 cookie 失效时向 Redis 发布失效事件，通知服务订阅事件并按配置将通知推送到指定 Satori 频道；Web 管理后台新增「通知」模块，展示已绑定通知并通过弹窗新增/删除绑定
 type: Permanent
 ---
 
@@ -18,7 +18,7 @@ type: Permanent
 
 ### 1.2 目标
 
-- 新增独立通知服务 **Z.Vtuber.Notifier**（C# 编写），接入 Satori 客户端（[Satori.NET](https://github.com/bsdayo/Satori.NET)），具备向 Satori 频道发送消息的能力；
+- 新增独立通知服务 **Z.Vtuber.Notifier**（C# 编写），直接实现 [Satori 协议 v1 HTTP API](https://satori.js.org/zh-CN/protocol/)（不引入第三方 SDK），具备向 Satori 频道发送消息的能力；
 - cookie 失效时，crawler 除更新数据库外，向 Redis 发布一条失效事件；通知服务订阅该事件，按已配置的通知订阅将「cookie 失效」通知推送到指定 Satori 频道；
 - 通知服务提供配置 API：查询 Satori 中可用的频道、管理通知订阅（将通知类型绑定到目标频道）；
 - Web 管理后台新增「通知」模块：展示已绑定的通知列表，可通过弹窗新增通知绑定（选择通知类型与目标频道）、删除绑定；
@@ -52,13 +52,13 @@ type: Permanent
 
 ### 3.1 功能概述
 
-新增通知服务 Z.Vtuber.Notifier：启动时连接 Satori 服务器（endpoint 由环境变量 `Z_VTUBER_SATORI_ENDPOINT` 注入，缺失则启动失败）；提供配置 API 用于查询可用频道与管理通知订阅；订阅 Redis 中 crawler 发布的 cookie 失效事件，命中已配置的订阅时通过 Satori 客户端向目标频道发送通知消息。Web 管理后台新增「通知」模块，基于配置 API 提供绑定列表展示与新增/删除绑定的操作入口。当前支持的通知类型为「cookie 失效」，通知类型集合可扩展。
+新增通知服务 Z.Vtuber.Notifier：启动时连接 Satori 服务器（endpoint 由环境变量 `Z_VTUBER_SATORI_ENDPOINT` 注入，缺失则启动失败）；提供配置 API 用于查询可用频道与管理通知订阅；订阅 Redis 中 crawler 发布的 cookie 失效事件，命中已配置的订阅时通过 Satori 协议 HTTP API 向目标频道发送通知消息。Web 管理后台新增「通知」模块，基于配置 API 提供绑定列表展示与新增/删除绑定的操作入口。当前支持的通知类型为「cookie 失效」，通知类型集合可扩展。
 
 ### 3.2 功能列表
 
 #### 功能点 1: 通知服务接入 Satori
 
-- **描述**: 新增 C# 服务 Z.Vtuber.Notifier，使用 Satori.NET 客户端连接 Satori 服务器；服务器地址通过环境变量 `Z_VTUBER_SATORI_ENDPOINT` 注入，未配置时服务启动失败（fail-fast）。服务纳入 Aspire 编排，并提供 Dockerfile 与 GitHub Action 镜像构建 workflow。
+- **描述**: 新增 C# 服务 Z.Vtuber.Notifier，通过 Satori 协议 v1 HTTP API 连接 Satori 服务器（以 `HttpClient` 直接实现协议，不引入第三方 SDK）；服务器地址通过环境变量 `Z_VTUBER_SATORI_ENDPOINT` 注入，未配置时服务启动失败（fail-fast）。服务纳入 Aspire 编排，并提供 Dockerfile 与 GitHub Action 镜像构建 workflow。
 - **用户价值**: 获得独立、可部署的通知投递能力，与现有 api/crawler 解耦。
 - **验收标准**:
   - [ ] 注入合法 `Z_VTUBER_SATORI_ENDPOINT` 时服务正常启动并通过健康检查；
@@ -68,7 +68,7 @@ type: Permanent
 
 #### 功能点 2: 可用频道查询 API
 
-- **描述**: 通知服务提供配置 API，返回 Satori 客户端当前可用的频道列表（含所属群组/平台信息），供后台配置通知订阅时选择目标频道。
+- **描述**: 通知服务提供配置 API，返回 Satori 机器人当前可用的频道列表（含所属群组/平台信息），供后台配置通知订阅时选择目标频道。
 - **用户价值**: 配置者无需手工打听频道 ID，从列表中直接选择。
 - **验收标准**:
   - [ ] 调用频道查询 API 可获取 Satori 机器人可见的频道列表，每个频道包含平台、群组、频道 ID、频道名称等定位信息；
@@ -86,7 +86,7 @@ type: Permanent
 
 #### 功能点 4: Cookie 失效事件发布与通知投递
 
-- **描述**: cookie 失效时（crawler 将 cookie 标记为 offline 的既有路径），crawler 除更新数据库外，向 Redis 发布一条失效事件（含失效 cookie 的账号信息、失效时间）；通知服务订阅该事件，检查是否存在对应通知类型的已启用订阅：存在则通过 Satori 客户端向各目标频道发送通知消息，不存在则忽略。
+- **描述**: cookie 失效时（crawler 将 cookie 标记为 offline 的既有路径），crawler 除更新数据库外，向 Redis 发布一条失效事件（含失效 cookie 的账号信息、失效时间）；通知服务订阅该事件，检查是否存在对应通知类型的已启用订阅：存在则通过 Satori 协议 HTTP API 向各目标频道发送通知消息，不存在则忽略。
 - **用户价值**: cookie 失效秒级触达 IM 频道，运维可及时介入。
 - **验收标准**:
   - [ ] cookie 被标记失效后，已配置订阅的频道收到一条通知消息，消息内容包含失效账号标识（昵称/MID）、失效时间等可读信息；
@@ -148,7 +148,7 @@ Web 管理后台（`apps/web`）侧边栏在既有「订阅管理」「Cookie �
 | 情况 | 预期行为 |
 |------|---------|
 | 未配置 `Z_VTUBER_SATORI_ENDPOINT` | 通知服务启动失败，日志明确指出缺失配置 |
-| Satori 服务器不可达/连接断开 | 服务保持运行并按客户端重连机制恢复；频道查询 API 返回明确错误 |
+| Satori 服务器不可达 | 通知发送与频道查询按失败处理并记录日志，恢复后自行可用；频道查询 API 返回明确错误 |
 | 无任何通知订阅时收到失效事件 | 事件被忽略，不产生外发消息，不报错 |
 | 订阅指向的频道已失效（机器人退出群组等） | 该条投递失败并记录日志，不影响其他订阅的投递 |
 | Redis 发布/订阅链路异常 | crawler 侧发布失败仅记录日志，不影响数据库更新；通知服务侧断线后自动重订阅 |
@@ -183,7 +183,7 @@ Web 管理后台（`apps/web`）侧边栏在既有「订阅管理」「Cookie �
 - 既有 crawler cookie 池与探活能力（cookie 失效判定与状态更新）——本需求在其失效路径上增加事件发布；
 - Redis（既有 `messaging` 实例）作为事件发布/订阅通道；
 - 外部 Satori 服务器（部署与账号接入不在本需求范围内，假定已可用）；
-- [Satori.NET](https://github.com/bsdayo/Satori.NET) 客户端库。
+- [Satori 协议 v1](https://satori.js.org/zh-CN/protocol/)——通知服务以 HTTP API 直连，不依赖第三方 SDK。
 
 ### 5.2 约束
 
