@@ -396,7 +396,7 @@ describe('API Client', () => {
       })
 
       await expect(createNotificationBinding({
-        eventType: 'invalid',
+        eventType: 'invalid' as 'cookie_invalid',
         platform: 'onebot',
         guildId: 'g1',
         channelId: 'c1',
