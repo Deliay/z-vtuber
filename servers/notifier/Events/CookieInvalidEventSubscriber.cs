@@ -1,17 +1,12 @@
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 using StackExchange.Redis;
 using Z.Vtuber.Common.Live;
 using Z.Vtuber.Notifier.Dispatch;
 
 namespace Z.Vtuber.Notifier.Events;
 
-public interface ICookieInvalidEventSubscriber
-{
-    Task StartAsync(CancellationToken ct = default);
-    Task StopAsync(CancellationToken ct = default);
-}
-
-public sealed class CookieInvalidEventSubscriber : ICookieInvalidEventSubscriber
+public sealed class CookieInvalidEventSubscriber : BackgroundService
 {
     private readonly IConnectionMultiplexer _redis;
     private readonly INotificationDispatchService _dispatchService;
@@ -29,7 +24,7 @@ public sealed class CookieInvalidEventSubscriber : ICookieInvalidEventSubscriber
         _logger = logger;
     }
 
-    public async Task StartAsync(CancellationToken ct = default)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _subscriber = _redis.GetSubscriber();
         var channel = new RedisChannel(CookieEventChannels.Invalid, RedisChannel.PatternMode.Literal);
@@ -37,35 +32,32 @@ public sealed class CookieInvalidEventSubscriber : ICookieInvalidEventSubscriber
 
         _logger.LogInformation("Subscribed to cookie-invalid channel");
 
-        _ = Task.Run(async () =>
+        while (!stoppingToken.IsCancellationRequested)
         {
-            while (!ct.IsCancellationRequested)
+            try
             {
-                try
+                var message = await _queue.ReadAsync(stoppingToken);
+                var evt = JsonSerializer.Deserialize<CookieInvalidEvent>((string)message.Message!);
+                if (evt is null)
                 {
-                    var message = await _queue.ReadAsync(ct);
-                    var evt = JsonSerializer.Deserialize<CookieInvalidEvent>((string)message.Message!);
-                    if (evt is null)
-                    {
-                        _logger.LogWarning("Failed to deserialize cookie invalid event; discarding.");
-                        continue;
-                    }
+                    _logger.LogWarning("Failed to deserialize cookie invalid event; discarding.");
+                    continue;
+                }
 
-                    await _dispatchService.DispatchAsync(evt, ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to process cookie invalid event; continuing.");
-                }
+                await _dispatchService.DispatchAsync(evt, stoppingToken);
             }
-        }, ct);
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to process cookie invalid event; continuing.");
+            }
+        }
     }
 
-    public Task StopAsync(CancellationToken ct = default)
+    public override async Task StopAsync(CancellationToken cancellationToken)
     {
         if (_queue is not null)
         {
@@ -73,6 +65,6 @@ public sealed class CookieInvalidEventSubscriber : ICookieInvalidEventSubscriber
             _logger.LogInformation("Unsubscribed from cookie-invalid channel");
         }
 
-        return Task.CompletedTask;
+        await base.StopAsync(cancellationToken);
     }
 }

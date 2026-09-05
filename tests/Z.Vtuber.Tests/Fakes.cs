@@ -135,13 +135,15 @@ public sealed class MockCookiePoolService : ICookiePoolService
 
 public sealed class FakeSatoriApiClient : ISatoriApiClient
 {
-    public Func<string, Task<LoginInfo>>? LoginGetFunc { get; set; }
+    public Func<Task<LoginInfo>>? LoginGetFunc { get; set; }
     public Func<Task<IReadOnlyList<Guild>>>? GuildListFunc { get; set; }
     public Func<string, Task<IReadOnlyList<Channel>>>? ChannelListFunc { get; set; }
     public Func<string, string, Task>? SendMessageFunc { get; set; }
+    public string? CachedPlatform { get; set; }
+    public string? CachedSelfId { get; set; }
 
     public Task<LoginInfo> LoginGetAsync(CancellationToken ct = default)
-        => LoginGetFunc?.Invoke(string.Empty) ?? Task.FromResult(new LoginInfo { Platform = "test", User = new UserInfo { Id = "123" }, Status = "ONLINE" });
+        => LoginGetFunc?.Invoke() ?? Task.FromResult(new LoginInfo { Platform = "test", User = new UserInfo { Id = "123" }, Status = 1 });
 
     public Task<IReadOnlyList<Guild>> GetGuildListAsync(CancellationToken ct = default)
         => GuildListFunc?.Invoke() ?? Task.FromResult<IReadOnlyList<Guild>>([]);
@@ -151,6 +153,9 @@ public sealed class FakeSatoriApiClient : ISatoriApiClient
 
     public Task SendMessageAsync(string channelId, string content, CancellationToken ct = default)
         => SendMessageFunc?.Invoke(channelId, content) ?? Task.CompletedTask;
+
+    public string? GetCachedPlatform() => CachedPlatform;
+    public string? GetCachedSelfId() => CachedSelfId;
 }
 
 public sealed class FakeCookieInvalidEventPublisher : ICookieInvalidEventPublisher

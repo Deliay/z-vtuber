@@ -14,8 +14,15 @@ builder.Services.AddHealthChecks();
 builder.AddMongoDBClient("mongo");
 builder.AddRedisClient("messaging");
 
+// 显式映射环境变量到 SatoriOptions
 builder.Services.AddOptions<SatoriOptions>()
-    .Bind(builder.Configuration.GetSection(SatoriOptions.SectionName))
+    .Configure(o =>
+    {
+        o.Endpoint = builder.Configuration["Z_VTUBER_SATORI_ENDPOINT"] ?? string.Empty;
+        o.Token = builder.Configuration["Z_VTUBER_SATORI_TOKEN"];
+        o.Platform = builder.Configuration["Z_VTUBER_SATORI_PLATFORM"];
+        o.SelfId = builder.Configuration["Z_VTUBER_SATORI_SELF_ID"];
+    })
     .Validate(o => !string.IsNullOrWhiteSpace(o.Endpoint),
         "缺少必需环境变量 Z_VTUBER_SATORI_ENDPOINT")
     .ValidateOnStart();
@@ -25,8 +32,8 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
 
 builder.Services.AddSingleton<MongoDbInitializer>();
 builder.Services.AddSingleton<INotificationSubscriptionRepository, NotificationSubscriptionRepository>();
-builder.Services.AddSingleton<ISatoriApiClient, SatoriApiClient>();
-builder.Services.AddSingleton<ICookieInvalidEventSubscriber, CookieInvalidEventSubscriber>();
+builder.Services.AddHttpClient<ISatoriApiClient, SatoriApiClient>();
+builder.Services.AddHostedService<CookieInvalidEventSubscriber>();
 builder.Services.AddSingleton<INotificationDispatchService, NotificationDispatchService>();
 
 builder.Services.AddControllers();

@@ -54,7 +54,7 @@ public sealed class NotificationDispatchService : INotificationDispatchService
     {
         var accountInfo = evt.Uname is not null && evt.Mid.HasValue
             ? $"{evt.Uname}（MID {evt.Mid.Value}）"
-            : $"CookieId {evt.CookieId[..8]}...";
+            : $"CookieId {evt.CookieId[..Math.Min(8, evt.CookieId.Length)]}...";
 
         return $"""
             【Z.Vtuber】Cookie 失效通知

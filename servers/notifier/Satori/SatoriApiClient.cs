@@ -44,20 +44,22 @@ public sealed class SatoriApiClient : ISatoriApiClient
             var response = await _httpClient.SendAsync(request, ct);
             response.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<LoginGetResponse>(cancellationToken: ct);
-            if (result?.Data is null)
+            // Satori 协议直接返回 Login 对象，不是 { "data": Login }
+            var loginInfo = await response.Content.ReadFromJsonAsync<LoginInfo>(cancellationToken: ct);
+            if (loginInfo is null)
             {
-                throw new InvalidOperationException("login.get returned empty data");
+                throw new InvalidOperationException("login.get returned null");
             }
 
-            if (result.Data.Status != "ONLINE")
+            // status 是数值枚举：OFFLINE=0, ONLINE=1
+            if (loginInfo.Status != 1) // ONLINE = 1
             {
-                throw new InvalidOperationException($"login.get returned status {result.Data.Status}, expected ONLINE");
+                throw new InvalidOperationException($"login.get returned status {loginInfo.Status}, expected ONLINE (1)");
             }
 
-            _cachedLoginInfo = result.Data;
-            _platform = result.Data.Platform;
-            _selfId = result.Data.User.Id;
+            _cachedLoginInfo = loginInfo;
+            _platform = loginInfo.Platform;
+            _selfId = loginInfo.User.Id;
 
             _logger.LogInformation("Login discovery successful: platform={Platform}, selfId={SelfId}", _platform, _selfId);
             return _cachedLoginInfo;
@@ -68,6 +70,9 @@ public sealed class SatoriApiClient : ISatoriApiClient
             throw;
         }
     }
+
+    public string? GetCachedPlatform() => _platform;
+    public string? GetCachedSelfId() => _selfId;
 
     public async Task<IReadOnlyList<Guild>> GetGuildListAsync(CancellationToken ct = default)
     {
@@ -207,11 +212,6 @@ public sealed class SatoriApiClient : ISatoriApiClient
         }
         return sb.ToString();
     }
-}
-
-internal sealed class LoginGetResponse
-{
-    public LoginInfo? Data { get; set; }
 }
 
 internal sealed class GuildListResponse

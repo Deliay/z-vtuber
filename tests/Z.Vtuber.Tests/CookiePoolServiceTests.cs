@@ -262,4 +262,42 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Equal("cookie-a", next.Cookie);
         Assert.Empty(repo.Upserts);
     }
+
+    [Fact]
+    public async Task FindByCookieAsync_ExistingCookie_ReturnsRecord()
+    {
+        var provider = new ProbeServiceProvider();
+        var pool = new CookiePoolService(fixture.Database, provider);
+        await pool.AddAsync("test-cookie");
+
+        var result = await pool.FindByCookieAsync("test-cookie");
+
+        Assert.NotNull(result);
+        Assert.Equal("test-cookie", result!.Cookie);
+    }
+
+    [Fact]
+    public async Task FindByCookieAsync_NonExistingCookie_ReturnsNull()
+    {
+        var provider = new ProbeServiceProvider();
+        var pool = new CookiePoolService(fixture.Database, provider);
+
+        var result = await pool.FindByCookieAsync("non-existing");
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task FindByCookieAsync_OfflineCookie_ReturnsRecord()
+    {
+        var provider = new ProbeServiceProvider();
+        var pool = new CookiePoolService(fixture.Database, provider);
+        await pool.AddAsync("offline-cookie");
+        await pool.MarkOfflineAsync("offline-cookie");
+
+        var result = await pool.FindByCookieAsync("offline-cookie");
+
+        Assert.NotNull(result);
+        Assert.Equal("offline-cookie", result!.Cookie);
+    }
 }

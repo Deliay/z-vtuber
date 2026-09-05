@@ -29,6 +29,7 @@ public sealed class NotifyConfigController : ControllerBase
     {
         try
         {
+            var platform = _satoriClient.GetCachedPlatform() ?? "satori";
             var guilds = await _satoriClient.GetGuildListAsync(ct);
             var allChannels = new List<NotifyChannelResponse>();
 
@@ -41,7 +42,7 @@ public sealed class NotifyConfigController : ControllerBase
                     {
                         allChannels.Add(new NotifyChannelResponse
                         {
-                            Platform = "satori",
+                            Platform = platform,
                             GuildId = guild.Id,
                             GuildName = guild.Name,
                             ChannelId = channel.Id,

@@ -165,4 +165,38 @@ public sealed class CookieNavProbeServiceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => CreateService(bili, pool, repo).ProbeAsync(Record()));
     }
+
+    [Fact]
+    public async Task ProbeAsync_Offline_PublishesEvent()
+    {
+        var bili = new MockBiliApiClient { NavInfoFunc = (_, _) => throw new InvalidOperationException("boom") };
+        var pool = new MockCookiePoolService();
+        var repo = new MockCookieAccountInfoRepository();
+        var publisher = new FakeCookieInvalidEventPublisher();
+        var record = Record();
+
+        var outcome = await CreateService(bili, pool, repo, publisher).ProbeAsync(record);
+
+        Assert.Equal(CookieProbeOutcome.Offline, outcome);
+        Assert.Single(publisher.PublishCalls);
+        Assert.Equal(record.Id.ToString(), publisher.PublishCalls[0].CookieId);
+        Assert.Equal("nav_probe_failed", publisher.PublishCalls[0].Reason);
+    }
+
+    [Fact]
+    public async Task ProbeAsync_Cooldown_DoesNotPublish()
+    {
+        var bili = new MockBiliApiClient
+        {
+            NavInfoFunc = (_, _) => throw new RiskControlException("risk", "http://test", "cookie1")
+        };
+        var pool = new MockCookiePoolService();
+        var repo = new MockCookieAccountInfoRepository();
+        var publisher = new FakeCookieInvalidEventPublisher();
+
+        var outcome = await CreateService(bili, pool, repo, publisher).ProbeAsync(Record());
+
+        Assert.Equal(CookieProbeOutcome.Cooldown, outcome);
+        Assert.Empty(publisher.PublishCalls);
+    }
 }
