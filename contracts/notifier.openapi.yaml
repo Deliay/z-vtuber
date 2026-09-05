@@ -1,0 +1,184 @@
+openapi: 3.1.0
+info:
+  title: Z.Vtuber Notifier API
+  version: 1.0.0
+  description: Cookie 失效通知服务配置 API（统一前缀 /api/notify）
+servers:
+  - url: /
+paths:
+  /api/notify/channels:
+    get:
+      summary: 查询 Satori 机器人当前可见的频道列表
+      description: 聚合 Satori 的 guild.list + 各 guild 的 channel.list，返回可用于通知投递的频道列表。Satori 不可达或未配置登录信息时返回 503。
+      operationId: listNotifyChannels
+      responses:
+        "200":
+          description: 频道列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotifyChannelList"
+        "503":
+          description: Satori 不可达或登录发现失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/notify/subscriptions:
+    get:
+      summary: 查询全部通知订阅
+      operationId: listNotificationSubscriptions
+      responses:
+        "200":
+          description: 订阅列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSubscriptionList"
+    post:
+      summary: 创建通知订阅
+      operationId: createNotificationSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNotificationSubscriptionRequest"
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSubscription"
+        "200":
+          description: 幂等返回已有订阅
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSubscription"
+        "400":
+          description: eventType 非法（当前仅支持 cookie_invalid）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/notify/subscriptions/{id}:
+    delete:
+      summary: 删除通知订阅
+      operationId: deleteNotificationSubscription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: 删除成功
+        "404":
+          description: 订阅不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  schemas:
+    NotifyChannel:
+      type: object
+      description: Satori 频道定位信息
+      properties:
+        platform:
+          type: string
+          description: Satori 平台标识
+        guildId:
+          type: string
+          description: 群组 ID
+        guildName:
+          type: string
+          nullable: true
+          description: 群组名称
+        channelId:
+          type: string
+          description: 频道 ID
+        channelName:
+          type: string
+          nullable: true
+          description: 频道名称
+    NotifyChannelList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotifyChannel"
+    NotificationSubscription:
+      type: object
+      description: 通知订阅记录
+      properties:
+        id:
+          type: string
+          description: 订阅 ID
+        eventType:
+          type: string
+          description: 通知类型（当前仅 cookie_invalid）
+          enum: [cookie_invalid]
+        platform:
+          type: string
+          description: Satori 平台标识
+        guildId:
+          type: string
+          description: 群组 ID
+        guildName:
+          type: string
+          nullable: true
+          description: 群组名称
+        channelId:
+          type: string
+          description: 频道 ID
+        channelName:
+          type: string
+          nullable: true
+          description: 频道名称
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间（UTC）
+    NotificationSubscriptionList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotificationSubscription"
+    CreateNotificationSubscriptionRequest:
+      type: object
+      required: [eventType, platform, guildId, channelId]
+      properties:
+        eventType:
+          type: string
+          description: 通知类型（当前仅支持 cookie_invalid）
+          enum: [cookie_invalid]
+        platform:
+          type: string
+          description: Satori 平台标识
+        guildId:
+          type: string
+          description: 群组 ID
+        guildName:
+          type: string
+          nullable: true
+          description: 群组名称
+        channelId:
+          type: string
+          description: 频道 ID
+        channelName:
+          type: string
+          nullable: true
+          description: 频道名称
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+          description: 错误消息

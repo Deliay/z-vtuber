@@ -1,4 +1,5 @@
 import type { components } from './schema'
+import type { components as notifyComponents } from './schema-notify'
 
 const BASE_URL = '/api'
 
@@ -8,6 +9,10 @@ type BackstageSubscriptionItem = components['schemas']['BackstageSubscriptionIte
 type BackstageCookieItem = components['schemas']['BackstageCookieItem']
 type SubscribeRequest = components['schemas']['SubscribeRequest']
 type CookieAddRequest = components['schemas']['CookieAddRequest']
+
+type NotifyChannel = notifyComponents['schemas']['NotifyChannel']
+type NotificationSubscription = notifyComponents['schemas']['NotificationSubscription']
+type CreateNotificationSubscriptionRequest = notifyComponents['schemas']['CreateNotificationSubscriptionRequest']
 
 interface ApiError extends Error {
   status?: number
@@ -104,4 +109,27 @@ export async function listBackstageCookies(): Promise<BackstageCookieItem[]> {
     '/b/backstage/cookie',
   )
   return data.items ?? []
+}
+
+export async function listNotifyChannels(): Promise<NotifyChannel[]> {
+  const data = await request<{ items: NotifyChannel[] }>('/notify/channels')
+  return data.items ?? []
+}
+
+export async function listNotificationBindings(): Promise<NotificationSubscription[]> {
+  const data = await request<{ items: NotificationSubscription[] }>('/notify/subscriptions')
+  return data.items ?? []
+}
+
+export async function createNotificationBinding(
+  params: CreateNotificationSubscriptionRequest,
+): Promise<NotificationSubscription> {
+  return request<NotificationSubscription>('/notify/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function deleteNotificationBinding(id: string): Promise<void> {
+  return request<void>(`/notify/subscriptions/${id}`, { method: 'DELETE' })
 }

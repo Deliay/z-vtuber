@@ -10,6 +10,10 @@ vi.mock('./pages/cookie/CookiePage', () => ({
   CookiePage: () => <div data-testid="cookie-page">Cookie 管理页面</div>,
 }))
 
+vi.mock('./pages/notification/NotificationPage', () => ({
+  NotificationPage: () => <div data-testid="notification-page">通知管理页面</div>,
+}))
+
 describe('App', () => {
   it('should render sidebar with menu items', () => {
     render(<App />)
@@ -17,6 +21,7 @@ describe('App', () => {
     expect(screen.getByText('Z.Vtuber 管理后台')).toBeInTheDocument()
     expect(screen.getByText('订阅管理')).toBeInTheDocument()
     expect(screen.getByText('Cookie 管理')).toBeInTheDocument()
+    expect(screen.getByText('通知')).toBeInTheDocument()
   })
 
   it('should render subscription page by default', () => {
@@ -24,6 +29,7 @@ describe('App', () => {
 
     expect(screen.getByTestId('subscription-page')).toBeInTheDocument()
     expect(screen.queryByTestId('cookie-page')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('notification-page')).not.toBeInTheDocument()
   })
 
   it('should switch to cookie page when menu item is clicked', () => {
@@ -32,6 +38,15 @@ describe('App', () => {
     fireEvent.click(screen.getByText('Cookie 管理'))
 
     expect(screen.getByTestId('cookie-page')).toBeInTheDocument()
+    expect(screen.queryByTestId('subscription-page')).not.toBeInTheDocument()
+  })
+
+  it('should switch to notification page when menu item is clicked', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByText('通知'))
+
+    expect(screen.getByTestId('notification-page')).toBeInTheDocument()
     expect(screen.queryByTestId('subscription-page')).not.toBeInTheDocument()
   })
 

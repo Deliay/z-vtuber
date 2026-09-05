@@ -64,6 +64,7 @@ builder.Services.AddSingleton<IBiliApiClient>(sp => new ResilientBiliApiClient(
 builder.Services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
 builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventPublisher, RedisLiveEventPublisher>();
+builder.Services.AddSingleton<ICookieInvalidEventPublisher, RedisCookieInvalidEventPublisher>();
 builder.Services.AddSingleton<CrawlLockProvider>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<LiveGuardListFetcher>();

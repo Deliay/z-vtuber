@@ -4,6 +4,7 @@ using Mikibot.Crawler;
 using Mikibot.Crawler.Http;
 using Mikibot.Crawler.Http.Bilibili;
 using Z.Vtuber.Crawler.Configuration;
+using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Common.Services;
 
 namespace Z.Vtuber.Crawler.Crawlers;
@@ -21,7 +22,9 @@ public interface IBilibiliAccountProvider
 /// </summary>
 public class BilibiliAccountProvider(
     BilibiliCrawlerOptions options,
-    ICookiePoolService cookiePool) : IBilibiliAccountProvider
+    ICookiePoolService cookiePool,
+    ICookieInvalidEventPublisher eventPublisher,
+    ILogger<BilibiliAccountProvider> logger) : IBilibiliAccountProvider
 {
     private readonly ConcurrentDictionary<string, Lazy<Task<IServiceProvider>>> _providers = new();
 
@@ -48,6 +51,25 @@ public class BilibiliAccountProvider(
         {
             _providers.TryRemove(new KeyValuePair<string, Lazy<Task<IServiceProvider>>>(cookie, lazy));
             await cookiePool.MarkOfflineAsync(cookie, ct);
+
+            // 反查 cookie 记录并发布失效事件
+            try
+            {
+                var record = await cookiePool.FindByCookieAsync(cookie, ct);
+                if (record is not null)
+                {
+                    await eventPublisher.PublishAsync(record.Id.ToString(), "account_provider_offline", ct);
+                }
+                else
+                {
+                    logger.LogWarning("Cookie record not found for cookie string; skipping event publish.");
+                }
+            }
+            catch (Exception publishEx)
+            {
+                logger.LogWarning(publishEx, "Failed to publish cookie invalid event for cookie; continuing.");
+            }
+
             throw;
         }
     }
