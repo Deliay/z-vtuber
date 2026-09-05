@@ -78,7 +78,7 @@ graph TD
 | 层级 | 技术选型 | 说明 |
 |------|---------|------|
 | 新服务 | .NET 10 / C#，Worker SDK + `FrameworkReference Microsoft.AspNetCore.App` | 与 crawler 同形态：后台泵 + minimal Kestrel 暴露配置 API 与 `/health`（8080） |
-| Satori 接入 | 直接实现 Satori 协议 v1 HTTP API（`HttpClient` + `System.Text.Json`，无第三方包） | 仅需 `guild.list` / `channel.list` / `message.create` 三个端点；不消费 Satori 事件流（事件来自 Redis），无需 WebSocket |
+| Satori 接入 | 直接实现 Satori 协议 v1 HTTP API（`HttpClient` + `System.Text.Json`，无第三方包） | 仅需 `login.get` / `guild.list` / `channel.list` / `message.create` 四个端点；不消费 Satori 事件流（事件来自 Redis），登录发现也走 HTTP（`login.get`），完全无需 WebSocket |
 | 消息通道 | Redis pub/sub（既有 `messaging`，`Aspire.StackExchange.Redis`） | 发布/订阅模式分别复用 `RedisLiveEventPublisher` / `LiveEventBus` 既有模式 |
 | 持久化 | MongoDB（既有 `mongo`，`Aspire.MongoDB.Driver`） | 新集合 `notification_subscriptions`，仓储与初始化走 `servers/common/Persistence` 既有模式 |
 | 前端 | React 19 + Vite（既有 `apps/web`） | 新增「通知」页面与绑定弹窗；契约类型由 openapi-typescript 生成 |
@@ -249,22 +249,21 @@ builder.Services.AddOptions<SatoriOptions>()
     .ValidateOnStart();
 ```
 
-- `Endpoint` 为唯一强制项（需求约束）；`Platform`/`SelfId` 无需配置——缺失时启动阶段经 WebSocket `READY` 信令自动发现（实现点 2），仅在发现失败时频道查询返回 503、投递记警告日志并跳过（见 6.1 决策）。
+- `Endpoint` 为唯一强制项（需求约束）；`Platform`/`SelfId` 无需配置——缺失时启动阶段经 `login.get` 自动发现（实现点 2），仅在发现失败时频道查询返回 503、投递记警告日志并跳过（见 6.1 决策）。
 - **风险点**: `ValidateOnStart` 在 Aspire 下表现为副本反复重启且日志清晰，符合 PRD「启动失败」语义。
 
 #### 实现点 2: Satori 协议客户端（SatoriApiClient）与登录发现
 
-- **描述**: 以 `HttpClient` 直接实现 [Satori 协议 v1 HTTP API](https://satori.js.org/zh-CN/protocol/api.html)，不引入第三方 SDK。`SatoriApiClient` 封装三个端点：`POST /v1/guild.list`、`POST /v1/channel.list`（频道查询 API 使用）、`POST /v1/message.create`（投递使用）。Bot 登录信息（platform/self-id）通过**登录发现**自动获取，环境变量仅作为可选覆盖。
+- **描述**: 以 `HttpClient` 直接实现 [Satori 协议 v1 HTTP API](https://satori.js.org/zh-CN/protocol/api.html)，不引入第三方 SDK。`SatoriApiClient` 封装四个端点：`POST /v1/login.get`（登录发现）、`POST /v1/guild.list`、`POST /v1/channel.list`（频道查询 API 使用）、`POST /v1/message.create`（投递使用）。Bot 登录信息（platform/self-id）通过**登录发现**自动获取，环境变量仅作为可选覆盖。
 - **技术细节**:
   - 请求：JSON body（snake_case），请求头 `Authorization: Bearer {token}`（token 可空则不携带）、`Satori-Platform: {platform}`、`Satori-User-ID: {selfId}`；
-  - **登录发现（SatoriLoginDiscovery）**：`SatoriOptions.Platform`/`SelfId` 未配置时，服务启动阶段建立一次**短暂的** WebSocket 连接（`/{endpoint}/v1/events`，`ClientWebSocket`），发送 `IDENTIFY` 信令（body 仅含 `token`），等待 `READY` 信令（超时 10 秒）——按[协议事件规范](https://satori.js.org/zh-CN/protocol/events.html)，`READY` 的 `logins: Login[]` 携带全部登录信息，取 `status == ONLINE` 的登录的 `platform` + `user.id` 作为 (platform, selfId)；拿到后立即关闭连接。**不持续监听、不消费任何事件**——发现握手是唯一一次 WebSocket 使用。发现结果缓存于内存，Satori 侧登录变化（login-removed 等）需重启服务重新发现（低频运维操作，可接受）；
-  - 多登录处理：发现到多个 ONLINE 登录时，若配置了 `Z_VTUBER_SATORI_PLATFORM` 则按 platform 匹配选择，否则取第一个并记 warning 日志；
-  - 注意 `POST /v1/login.get` **不能**用于自举发现：按协议规范 HTTP API 请求需携带 `Satori-Platform`/`Satori-User-ID` 头，`login.get` 返回的是「请求头所标识的登录」——不知道登录信息就无法调用，存在循环依赖（部分 SDK 实现允许省略头，但属未规范行为，不作为设计依据）；规范保证的发现入口是 WebSocket `READY` 信令；
-  - 发现失败（连接失败/超时/无 ONLINE 登录）：记 error 日志，服务保持运行（`/health` 正常），频道查询 API 返回 503、投递跳过并记警告——与原先「未配置登录信息」的降级行为一致；
+  - **登录发现（login.get）**：`SatoriOptions.Platform`/`SelfId` 未配置时，服务启动阶段调用 `POST /v1/login.get`（仅携带 `Authorization` 头，**无需** `Satori-Platform`/`Satori-User-ID` 头——该端点返回当前请求（token）对应的 [Login 对象](https://satori.js.org/zh-CN/resources/login.html)），要求 `status == ONLINE`，取其 `platform` + `user.id` 作为 (platform, selfId)；发现结果缓存于内存，后续业务请求的 `Satori-Platform`/`Satori-User-ID` 头取自缓存。全程纯 HTTP，**不建立任何 WebSocket 连接、不消费事件流**。Satori 侧登录变化（login-removed 等）需重启服务重新发现（低频运维操作，可接受）；
+  - 多登录注意：`login.get` 返回与请求 token 对应的单个登录；多登录号服务器上该对应关系依赖服务器实现，特殊部署经 `Z_VTUBER_SATORI_PLATFORM`/`Z_VTUBER_SATORI_SELF_ID` 显式覆盖（配置即跳过发现）；
+  - 发现失败（调用失败/超时/`status` 非 ONLINE）：记 error 日志，服务保持运行（`/health` 正常），频道查询 API 返回 503、投递跳过并记警告——与原先「未配置登录信息」的降级行为一致；
   - 响应：snake_case 反序列化；`guild.list` / `channel.list` 返回分页 `List` 对象（`data` + `next` 游标），实现需循环翻页直至 `next` 为空；
   - 发送：通知为纯文本，`message.create` 的 `content` 为消息元素字符串——纯文本只需按协议做 XML 转义（`&` `<` `>` `"`），无需实现完整元素模型；
   - 错误映射：401 → 鉴权配置错误（记 error 日志并对配置 API 返回 503）；404 → 平台不支持该 API（同上）；5xx/网络异常 → 抛出由调用方按「投递失败记日志、查询返回 503」处理。
-- **风险点**: 不同 Satori 服务器实现的鉴权与分页行为可能有差异，集成验证以真实服务器为准；单元测试以 stub `HttpMessageHandler` 锁定请求头、请求体与翻页逻辑，登录发现以 fake 传输层验证 IDENTIFY/READY 握手与多登录选择逻辑。
+- **风险点**: 不同 Satori 服务器实现的鉴权、分页与 `login.get` 行为可能有差异，集成验证以真实服务器为准；单元测试以 stub `HttpMessageHandler` 锁定请求头、请求体、翻页逻辑与 `login.get` 发现/缓存/降级行为。
 
 #### 实现点 3: crawler 失效事件发布
 
@@ -313,8 +312,8 @@ var notifier = builder.AddProject<Projects.Z_Vtuber_Notifier>("notifier")
 |------|--------|--------|---------|------|
 | 事件挂接点 | 两个 `MarkOfflineAsync` 调用点分别发布 | 在 `CookiePoolService.MarkOfflineAsync` 内发布 | A | common 不引用 Redis 包（AGENTS.md 约束 common 不依赖基础设施）；发布器属 crawler 基础设施，挂接调用点最直观 |
 | 失效事件语义 | 仅 offline 发布，cooldown 不发布 | 风控冷却也发布 | A | PRD 范围为「cookie 失效」；冷却可自动恢复，通知会造成打扰 |
-| Satori 接入方式 | `HttpClient` 直接实现 Satori 协议 v1 HTTP API | 引入 Satori.NET（NuGet `Satori.Client`） | A | 本服务只需 `guild.list`/`channel.list`/`message.create` 三个简单 HTTP 端点，且不消费 Satori 事件流、无需 WebSocket——库的核心价值（事件服务）用不上；Satori.NET 尚不成熟：`guild.list`/`channel.list` 为注释掉的未实现方法，`EventService` 为 internal 无法订阅登录事件，且其请求头（`X-Platform`/`X-Self-ID`）与现行协议规范（`Satori-Platform`/`Satori-User-ID`）不一致；协议直连约一个类的实现量，零新增依赖，行为完全自控 |
-| Bot 登录信息来源 | 启动时经 WebSocket `READY` 信令自动发现（`logins` 列表取 ONLINE 登录的 `platform` + `user.id`），环境变量作可选覆盖 | 仅环境变量 `Z_VTUBER_SATORI_PLATFORM`/`SELF_ID` 配置 | A | `READY` 信令的 `logins` 是协议规范保证的登录发现入口，IDENTIFY 仅需 token、无需预先知道登录头；发现握手为一次短连接，不消费事件流，成本极低。`login.get` 无法自举：按规范 HTTP API 需携带登录头，其返回的是请求头所标识的登录，存在循环依赖（部分 SDK 允许省略头属未规范行为）。保留 env 覆盖用于多登录选择与特殊部署 |
+| Satori 接入方式 | `HttpClient` 直接实现 Satori 协议 v1 HTTP API | 引入 Satori.NET（NuGet `Satori.Client`） | A | 本服务只需 `login.get`/`guild.list`/`channel.list`/`message.create` 四个简单 HTTP 端点，且不消费 Satori 事件流、无需 WebSocket——库的核心价值（事件服务）用不上；Satori.NET 尚不成熟：`guild.list`/`channel.list` 为注释掉的未实现方法，`EventService` 为 internal 无法订阅登录事件，且其请求头（`X-Platform`/`X-Self-ID`）与现行协议规范（`Satori-Platform`/`Satori-User-ID`）不一致；协议直连约一个类的实现量，零新增依赖，行为完全自控 |
+| Bot 登录信息来源 | 启动时经 `login.get` 自动发现（纯 HTTP，仅需 `Authorization` 头、无需 `Satori-Platform`/`Satori-User-ID` 头，返回当前 token 对应 Login 的 `platform` + `user.id`，要求 `status == ONLINE`），环境变量作可选覆盖 | 仅环境变量 `Z_VTUBER_SATORI_PLATFORM`/`SELF_ID` 配置 | A | `login.get` 是纯 HTTP 端点，无需预先知道 platform/self-id、无需建立 WebSocket 连接即可返回当前登录信息，是成本最低的发现路径，且与本服务「纯 HTTP、无 WS」的接入形态完全一致；保留 env 覆盖用于多登录号部署（`login.get` 与 token 的对应关系依赖服务器实现）与特殊场景 |
 | 订阅存储 | Mongo 新集合 | Redis 哈希 | A | 订阅为低频读写的配置数据，Mongo 持久化语义与既有后台数据一致，且 notifier 已需 mongo 连接反查空间小 |
 | 订阅模式 | notifier 常驻订阅 `cookie-invalid` | 按需订阅（有订阅配置才 SUBSCRIBE） | A | 配置变化需联动订阅管理，常驻订阅一个频道成本可忽略，实现最简单 |
 | 失效事件可靠性 | fire-and-forget pub/sub | 引入持久化事件队列 | A | 对齐仓库既有语义（Mongo 为事实源，pub/sub 仅通知）；失效状态本身落库，通知丢失可通过后台数据兜底，低频场景可接受 |
@@ -358,9 +357,8 @@ servers/
     ├── Dockerfile
     ├── Satori/
     │   ├── SatoriOptions.cs                     # Endpoint/Token/Platform/SelfId（后两者可选）
-    │   ├── SatoriApiClient.cs                   # 协议直连：guild.list / channel.list / message.create
-    │   ├── SatoriLoginDiscovery.cs              # 登录发现：WS IDENTIFY→READY 握手（一次性短连接）
-    │   └── SatoriModels.cs                      # Guild / Channel / Login / 信令 / 分页 List 模型
+    │   ├── SatoriApiClient.cs                   # 协议直连：login.get（登录发现）/ guild.list / channel.list / message.create
+    │   └── SatoriModels.cs                      # Guild / Channel / Login / 分页 List 模型
     ├── Events/
     │   └── CookieInvalidEventSubscriber.cs      # Redis 订阅泵
     ├── Dispatch/
@@ -397,8 +395,7 @@ tests/Z.Vtuber.Tests/
 ├── CookieInvalidEventSubscriberTests.cs         # 新增
 ├── NotificationDispatchServiceTests.cs          # 新增
 ├── NotificationSubscriptionRepositoryTests.cs   # 新增
-├── SatoriApiClientTests.cs                      # 新增
-├── SatoriLoginDiscoveryTests.cs                 # 新增
+├── SatoriApiClientTests.cs                      # 新增（含 login.get 登录发现用例）
 └── NotifyConfigControllerTests.cs               # 新增
 ```
 
@@ -413,7 +410,7 @@ tests/Z.Vtuber.Tests/
 
 | 类型 | 工具 | 覆盖范围 |
 |------|------|---------|
-| 单元测试 | xUnit + 手写 fake（`Fakes.cs` 模式） | 发布器：调用后 Redis 收到结构与字段正确的 payload、异常时静默不抛；订阅泵：收到事件→反序列化→转发，脏消息丢弃不阻塞；投递：有/无订阅、多订阅、单条失败不影响其余、登录发现失败降级；配置 API：增删查、幂等创建、非法 eventType 400；`SatoriApiClient`：stub `HttpMessageHandler` 验证请求头（`Authorization`/`Satori-Platform`/`Satori-User-ID`）、snake_case 请求体、分页翻页、错误状态码映射；`SatoriLoginDiscovery`：fake 传输层验证 IDENTIFY/READY 握手、ONLINE 过滤、多登录选择（env 覆盖优先）、超时/无登录降级 |
+| 单元测试 | xUnit + 手写 fake（`Fakes.cs` 模式） | 发布器：调用后 Redis 收到结构与字段正确的 payload、异常时静默不抛；订阅泵：收到事件→反序列化→转发，脏消息丢弃不阻塞；投递：有/无订阅、多订阅、单条失败不影响其余、登录发现失败降级；配置 API：增删查、幂等创建、非法 eventType 400；`SatoriApiClient`：stub `HttpMessageHandler` 验证请求头（`Authorization`/`Satori-Platform`/`Satori-User-ID`）、snake_case 请求体、分页翻页、错误状态码映射；登录发现（`login.get`）：请求不携带登录头、ONLINE 校验、结果缓存（后续调用不重复请求）、env 覆盖跳过发现、调用失败/非 ONLINE 降级 |
 | 集成测试 | Testcontainers MongoDB + Redis（复用 `MongoDbFixture`/`RedisFixture`） | 发布→订阅→投递链路（Satori 以 stub `HttpMessageHandler` 假服务器验证 `message.create` 请求体与频道 ID）；订阅仓储唯一索引与幂等；`ValidateOnStart` 缺 endpoint 时宿主构建失败 |
 | 前端测试 | Vitest + React Testing Library（`apps/web` 既有模式） | 「通知」页：绑定列表渲染与空态；新增绑定弹窗打开时加载频道下拉、提交后刷新列表；频道/列表加载失败的错误态与重试；删除二次确认；`client.ts` 新增 notify 函数的请求路径与错误处理 |
 | 手工验证 | 本地 Aspire + 真实 Satori | 配置订阅后将测试 cookie 置失效，观察频道消息；缺 `Z_VTUBER_SATORI_ENDPOINT` 启动失败；断网重连后投递恢复 |
@@ -433,7 +430,7 @@ tests/Z.Vtuber.Tests/
 |--------|---------|------|
 | `Z_VTUBER_SATORI_ENDPOINT` | 环境变量 / Aspire Parameter | 是（缺失启动失败） |
 | `Z_VTUBER_SATORI_TOKEN` | 环境变量 / Aspire Parameter | 视 Satori 服务器鉴权配置 |
-| `Z_VTUBER_SATORI_PLATFORM` / `Z_VTUBER_SATORI_SELF_ID` | 环境变量 / Aspire Parameter | 可选；未配置时启动时经 WebSocket `READY` 自动发现，配置则作为覆盖/多登录选择依据 |
+| `Z_VTUBER_SATORI_PLATFORM` / `Z_VTUBER_SATORI_SELF_ID` | 环境变量 / Aspire Parameter | 可选；未配置时启动时经 `login.get` 自动发现，配置则作为覆盖（跳过发现） |
 | `ConnectionStrings__mongo` / `ConnectionStrings__messaging` | Aspire `WithReference` 自动注入 | 是 |
 
 无数据迁移；Mongo 新集合与索引随服务启动由 `MongoDbInitializer` 建立。
@@ -454,6 +451,6 @@ tests/Z.Vtuber.Tests/
 - 关联 PRD: `docs/product/draft/20260904-cookie-invalid-notification-prd.md`
 - 关联 Contract: `contracts/notifier.openapi.yaml`
 - 参考实现: `servers/crawler/Live/RedisLiveEventPublisher.cs`（发布模式）、`servers/api/Live/LiveEventBus.cs`（订阅泵模式）
-- Satori 协议: https://satori.js.org/zh-CN/protocol/ （API 规范: https://satori.js.org/zh-CN/protocol/api.html ；事件/信令: https://satori.js.org/zh-CN/protocol/events.html ；Login 资源: https://satori.js.org/zh-CN/resources/login.html ）
+- Satori 协议: https://satori.js.org/zh-CN/protocol/ （API 规范: https://satori.js.org/zh-CN/protocol/api.html ；Login 资源: https://satori.js.org/zh-CN/resources/login.html ）
 - 评估记录: Satori.NET（https://github.com/bsdayo/Satori.NET ）经评估不采用——`guild.list`/`channel.list` 未实现、`EventService` internal 无法做登录发现、请求头与现行协议规范不一致，且本服务无需 WebSocket 事件流（见 6.1「Satori 接入方式」决策）
 - 开发规范: `docs/engineering/common-rules.md`、`docs/engineering/backend-rules.md`、`docs/engineering/frontend-rules.md`、`servers/common/AGENTS.md`、`servers/crawler/AGENTS.md`、`apps/web/AGENTS.md`
