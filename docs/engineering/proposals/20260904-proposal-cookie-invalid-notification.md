@@ -1,5 +1,5 @@
 ---
-description: Cookie 失效通知技术提案——新增 Z.Vtuber.Notifier 服务（Worker SDK + minimal Kestrel）接入 Satori.NET；crawler 在 MarkOffline 路径经 Redis 频道 cookie-invalid 发布失效事件（fire-and-forget）；notifier 订阅事件、按 Mongo notification_subscriptions 集合中的订阅配置经 Satori 客户端投递到目标频道；配置 API 提供频道查询与订阅增删查
+description: Cookie 失效通知技术提案——新增 Z.Vtuber.Notifier 服务（Worker SDK + minimal Kestrel）接入 Satori.NET；crawler 在 MarkOffline 路径经 Redis 频道 cookie-invalid 发布失效事件（fire-and-forget）；notifier 订阅事件、按 Mongo notification_subscriptions 集合中的订阅配置经 Satori 客户端投递到目标频道；配置 API 提供频道查询与订阅增删查；Web 管理后台新增「通知」模块（绑定列表 + 新增绑定弹窗），经同源代理访问 notifier
 type: Permanent
 ---
 
@@ -25,16 +25,17 @@ crawler 的 cookie 探活（`CookieNavProbeService.ProbeAsync`，`servers/crawle
 - crawler 失效路径新增 Redis 发布（频道 `cookie-invalid`，fire-and-forget，发布失败仅记日志）；
 - notifier 订阅 `cookie-invalid`，查询 Mongo 中的订阅配置，命中则经 Satori 客户端发送通知消息；
 - notifier 提供配置 API：可用频道查询、订阅增删查；订阅持久化于 Mongo 新集合 `notification_subscriptions`；
-- 新增 `contracts/notifier.openapi.yaml` 描述配置 API。
+- Web 管理后台新增「通知」模块：绑定列表 + 新增绑定弹窗 + 删除绑定，经同源代理访问 notifier 配置 API；
+- 新增 `contracts/notifier.openapi.yaml` 描述配置 API，前端据此生成契约类型。
 
 ### 1.3 范围
 
-- **做**：notifier 服务全量（Satori 接入、Redis 订阅、配置 API、Mongo 持久化）；crawler 失效事件发布；common 新增事件模型/频道常量/订阅实体与仓储；Aspire/slnx/Dockerfile/GitHub Action 接入；契约文件；测试覆盖；
+- **做**：notifier 服务全量（Satori 接入、Redis 订阅、配置 API、Mongo 持久化）；crawler 失效事件发布；common 新增事件模型/频道常量/订阅实体与仓储；Web 前端「通知」模块（列表/新增绑定弹窗/删除）；Aspire/slnx/Dockerfile/GitHub Action 接入；契约文件；测试覆盖；
 - **不做**：
-  - 前端管理界面（PRD 明确本期仅交付 API）；
   - 通知类型的通用框架化（仅落地 `cookie_invalid` 一种，模型预留 `EventType` 字段）；
   - 配置 API 鉴权（与既有后台接口一致，内网匿名，后续统一接入）；
-  - 失效事件去重/聚合（失效为低频事件，重复投递可接受）。
+  - 失效事件去重/聚合（失效为低频事件，重复投递可接受）；
+  - 在 api 服务中聚合/转发 notifier API（前端经同源代理直连 notifier，见 6.1 决策）。
 
 ## 2. 技术架构
 
@@ -57,13 +58,17 @@ graph TD
     end
     SATORI[Satori 服务器]
     OPS[后台配置者]
+    subgraph web [apps/web 管理后台]
+        NP[「通知」模块页面<br/>绑定列表 + 新增绑定弹窗]
+    end
 
     PROBE --> POOL --> MONGO
     PROBE --> PUB -->|PUBLISH fire-and-forget| REDIS
     REDIS -->|SUBSCRIBE| SUB --> SVC
     SVC -->|查询订阅| MONGO
     SVC -->|message.create| SCLIENT --> SATORI
-    OPS -->|频道查询 / 订阅增删查| CFG
+    OPS --> NP
+    NP -->|同源 /api/notify/*<br/>（vite/nginx 代理）| CFG
     CFG -->|guild.list / channel.list| SCLIENT
     CFG --> MONGO
 ```
@@ -76,6 +81,7 @@ graph TD
 | Satori 客户端 | `Satori.Client`（Satori.NET，NuGet） | `SatoriClient(endpoint, token)` + `Bot(platform, selfId).CreateMessageAsync(...)`；频道列表走原生 HTTP API（见 6.1） |
 | 消息通道 | Redis pub/sub（既有 `messaging`，`Aspire.StackExchange.Redis`） | 发布/订阅模式分别复用 `RedisLiveEventPublisher` / `LiveEventBus` 既有模式 |
 | 持久化 | MongoDB（既有 `mongo`，`Aspire.MongoDB.Driver`） | 新集合 `notification_subscriptions`，仓储与初始化走 `servers/common/Persistence` 既有模式 |
+| 前端 | React 19 + Vite（既有 `apps/web`） | 新增「通知」页面与绑定弹窗；契约类型由 openapi-typescript 生成 |
 | 契约 | OpenAPI YAML | 新增 `contracts/notifier.openapi.yaml` |
 
 ### 2.3 模块划分
@@ -88,6 +94,7 @@ graph TD
 | `servers/crawler/Services/RedisCookieInvalidEventPublisher.cs`（新） | 失效事件发布 | 仿 `RedisLiveEventPublisher`：catch-all 记日志、永不阻断 |
 | `servers/crawler`（改） | 失效路径挂接发布 | `CookieNavProbeService` offline 分支与 `BilibiliAccountProvider` 失效分支调用发布器 |
 | `servers/notifier`（新） | Satori 接入、Redis 订阅泵、投递、配置 API | 见第 5 节 |
+| `apps/web`（改） | 「通知」模块：绑定列表、新增绑定弹窗、删除绑定 | 侧边栏新增菜单项；API 访问走同源 `/api/notify/*`（vite/nginx 代理到 notifier） |
 
 ## 3. API 设计
 
@@ -280,6 +287,16 @@ var notifier = builder.AddProject<Projects.Z_Vtuber_Notifier>("notifier")
 - **Dockerfile**：`servers/notifier/Dockerfile`，与 api/crawler 相同的两阶段模板（restore common+notifier → publish → aspnet:10.0 运行时，`EXPOSE 8080`，入口 `Z.Vtuber.Notifier.dll`）；
 - **CI**：`.github/workflows/build-notifier-image.yml`，复用既有模板（buildx + 私有 registry 登录 + `zero-tools/z-vtuber-notifier:{sha},:latest`），路径过滤 `servers/notifier/**` 与 `servers/common/**`。
 
+#### 实现点 6: 前端「通知」模块与同源代理
+
+- **描述**: `apps/web` 侧边栏新增「通知」菜单项（`App.tsx` 的 `menuItems` 扩展），新页面 `src/pages/notification/NotificationPage.tsx`：加载绑定列表渲染表格（通知类型、平台/群组/频道名称、绑定时间、行内删除）；「新增绑定」按钮打开弹窗组件，弹窗挂载时调用频道查询接口填充下拉，提交时调用创建接口；删除前二次确认（沿用 `SubscriptionPage` 的确认交互惯例）。
+- **技术细节**:
+  - **同源代理**：前端不直接感知 notifier 地址。notifier 配置 API 前缀 `/api/notify` 与 api 服务的 `/api/b` 互不冲突，代理层按前缀分流——vite `server.proxy` 新增 `'/api/notify': { target: process.env.VITE_NOTIFY_URL || 'http://localhost:5100', changeOrigin: true }`；`nginx.conf.template` 在 `location /api` 之前新增 `location /api/notify { proxy_pass http://${NOTIFY_BACKEND}; }`（沿用既有的 Upgrade/Host 头配置），`docker-entrypoint.sh` 的 `envsubst` 变量增加 `NOTIFY_BACKEND`（默认 `notifier:8080`）；Aspire 中 web 资源 `.WithEnvironment("VITE_NOTIFY_URL", notifier.GetEndpoint("http"))` 并 `WithReference(notifier)`；
+  - **API 客户端**：`src/api/client.ts` 复用既有 `request<T>` 封装新增 `listNotifyChannels` / `listNotificationBindings` / `createNotificationBinding` / `deleteNotificationBinding`，路径为 `/notify/...`（`BASE_URL='/api'` 不变）；
+  - **契约类型**：`package.json` 的 `codegen` 扩展为两条 openapi-typescript 命令，新增从 `contracts/notifier.openapi.yaml` 生成 `src/api/schema-notify.d.ts`（自动生成勿手改，与 `schema.d.ts` 并列）；
+  - **交互细节**：频道下拉选项 label 为 `{guildName ?? guildId} / {channelName ?? channelId}`，value 携带完整定位信息（platform/guildId/channelId/名称），提交体即契约的创建请求；创建成功（含幂等 200）后关闭弹窗并刷新列表；接口报错在页面/弹窗内展示 `serverMessage` 与重试按钮。
+- **风险点**: nginx `location /api/notify` 必须置于 `location /api` 之前（前缀匹配优先级）；弹窗打开时频道加载失败需有明确错误态与重试入口，避免空白下拉。
+
 ## 6. 技术决策
 
 ### 6.1 决策列表
@@ -294,6 +311,8 @@ var notifier = builder.AddProject<Projects.Z_Vtuber_Notifier>("notifier")
 | 订阅模式 | notifier 常驻订阅 `cookie-invalid` | 按需订阅（有订阅配置才 SUBSCRIBE） | A | 配置变化需联动订阅管理，常驻订阅一个频道成本可忽略，实现最简单 |
 | 失效事件可靠性 | fire-and-forget pub/sub | 引入持久化事件队列 | A | 对齐仓库既有语义（Mongo 为事实源，pub/sub 仅通知）；失效状态本身落库，通知丢失可通过后台数据兜底，低频场景可接受 |
 | 重复创建订阅 | 唯一索引幂等返回已有 | 直接报错 409 | A | 配置操作幂等对后台更友好；唯一索引兜底并发 |
+| 前端如何访问 notifier | 同源代理按前缀分流（vite/nginx 将 `/api/notify` 代理到 notifier） | api 服务聚合转发 notifier API | A | web 保持单源无 CORS；api 服务不引入对 notifier 的耦合与转发代码；前缀 `/api/notify` 与 `/api/b` 天然不冲突 |
+| 前端契约类型 | codegen 生成第二个 schema 文件（`schema-notify.d.ts`） | 手写类型 | A | 保持「契约式开发、自动生成勿手改」的既有约定 |
 
 ### 6.2 依赖与约束
 
@@ -304,7 +323,8 @@ var notifier = builder.AddProject<Projects.Z_Vtuber_Notifier>("notifier")
 | 约束 | common 归属约定 | 事件模型/频道常量/订阅实体放 common；Redis/Satori 依赖只在 crawler/notifier |
 | 约束 | fire-and-forget | 发布失败不阻断落库与采集；投递失败不影响其他订阅 |
 | 约束 | 敏感信息 | 事件 payload、通知文案、日志均不得出现 cookie 原始字符串（沿用 `CookieTag` 短哈希惯例） |
-| 约束 | Aspire 注入 | `ConnectionStrings__mongo` / `ConnectionStrings__messaging` 经 `WithReference` 自动注入；Satori 参数经 `AddParameter` + `WithEnvironment` |
+| 约束 | Aspire 注入 | `ConnectionStrings__mongo` / `ConnectionStrings__messaging` 经 `WithReference` 自动注入；Satori 参数经 `AddParameter` + `WithEnvironment`；web 经 `VITE_NOTIFY_URL` 指向 notifier |
+| 约束 | 前端同源 | 浏览器侧只访问 web 同源 `/api/notify/*`，不直接暴露 notifier 地址；nginx 中 `location /api/notify` 必须先于 `location /api` |
 
 ## 7. 项目结构
 
@@ -342,9 +362,23 @@ servers/
 contracts/
 └── notifier.openapi.yaml                        # 新增：配置 API 契约
 
+apps/web/
+├── src/
+│   ├── App.tsx                                  # 修改：侧边栏新增「通知」菜单项
+│   ├── api/
+│   │   ├── client.ts                            # 修改：新增 notify 相关 API 函数
+│   │   └── schema-notify.d.ts                   # 新增：notifier 契约生成（自动生成勿手改）
+│   └── pages/notification/
+│       ├── NotificationPage.tsx                 # 新增：绑定列表 + 新增绑定弹窗 + 删除
+│       └── NotificationPage.test.tsx            # 新增
+├── vite.config.ts                               # 修改：proxy 新增 /api/notify → VITE_NOTIFY_URL
+├── nginx.conf.template                          # 修改：location /api/notify → NOTIFY_BACKEND
+├── docker-entrypoint.sh                         # 修改：envsubst 增加 NOTIFY_BACKEND
+└── package.json                                 # 修改：codegen 增加 notifier 契约生成
+
 infra/apphost/
 ├── Z.Vtuber.AppHost.csproj                      # 修改：ProjectReference
-└── AppHost.cs                                   # 修改：notifier 编排 + satori 参数
+└── AppHost.cs                                   # 修改：notifier 编排 + satori 参数；web 注入 VITE_NOTIFY_URL
 
 .github/workflows/
 └── build-notifier-image.yml                     # 新增：镜像构建 workflow
@@ -370,6 +404,7 @@ tests/Z.Vtuber.Tests/
 |------|------|---------|
 | 单元测试 | xUnit + 手写 fake（`Fakes.cs` 模式） | 发布器：调用后 Redis 收到结构与字段正确的 payload、异常时静默不抛；订阅泵：收到事件→反序列化→转发，脏消息丢弃不阻塞；投递：有/无订阅、多订阅、单条失败不影响其余、Satori 未登录降级；配置 API：增删查、幂等创建、非法 eventType 400 |
 | 集成测试 | Testcontainers MongoDB + Redis（复用 `MongoDbFixture`/`RedisFixture`） | 发布→订阅→投递链路（Satori 以 stub `HttpMessageHandler` 假服务器验证 `message.create` 请求体与频道 ID）；订阅仓储唯一索引与幂等；`ValidateOnStart` 缺 endpoint 时宿主构建失败 |
+| 前端测试 | Vitest + React Testing Library（`apps/web` 既有模式） | 「通知」页：绑定列表渲染与空态；新增绑定弹窗打开时加载频道下拉、提交后刷新列表；频道/列表加载失败的错误态与重试；删除二次确认；`client.ts` 新增 notify 函数的请求路径与错误处理 |
 | 手工验证 | 本地 Aspire + 真实 Satori | 配置订阅后将测试 cookie 置失效，观察频道消息；缺 `Z_VTUBER_SATORI_ENDPOINT` 启动失败；断网重连后投递恢复 |
 
 ## 9. 部署方案
@@ -398,9 +433,10 @@ tests/Z.Vtuber.Tests/
 - [ ] Contract 评审通过（`contracts/notifier.openapi.yaml`）
 - [ ] notifier 服务完成：Satori 接入（endpoint 缺失 fail-fast）、Redis 订阅、投递、配置 API 全链路可用
 - [ ] crawler 失效路径发布事件，且发布失败不影响既有落库与采集
+- [ ] 前端「通知」模块完成：绑定列表、新增绑定弹窗（频道下拉）、删除二次确认；经同源代理访问 notifier，vite/nginx 两套路由均可用
 - [ ] slnx / Aspire / Dockerfile / GitHub Action 接入完成，镜像可构建推送
-- [ ] 单元与集成测试覆盖达标，既有测试无回归
-- [ ] 手工验证：配置订阅后失效 cookie 秒级收到频道通知；无订阅时静默；缺 endpoint 启动失败
+- [ ] 单元、集成与前端测试覆盖达标，既有测试无回归
+- [ ] 手工验证：配置订阅后失效 cookie 秒级收到频道通知；无订阅时静默；缺 endpoint 启动失败；后台界面完成一次绑定新增与删除
 
 ## 11. 相关文档
 
@@ -408,4 +444,4 @@ tests/Z.Vtuber.Tests/
 - 关联 Contract: `contracts/notifier.openapi.yaml`
 - 参考实现: `servers/crawler/Live/RedisLiveEventPublisher.cs`（发布模式）、`servers/api/Live/LiveEventBus.cs`（订阅泵模式）
 - Satori.NET: https://github.com/bsdayo/Satori.NET （Example: `examples/Satori.Client.Example/Program.cs`）
-- 开发规范: `docs/engineering/common-rules.md`、`docs/engineering/backend-rules.md`、`servers/common/AGENTS.md`、`servers/crawler/AGENTS.md`
+- 开发规范: `docs/engineering/common-rules.md`、`docs/engineering/backend-rules.md`、`docs/engineering/frontend-rules.md`、`servers/common/AGENTS.md`、`servers/crawler/AGENTS.md`、`apps/web/AGENTS.md`
