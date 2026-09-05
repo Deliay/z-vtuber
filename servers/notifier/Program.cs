@@ -32,7 +32,16 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
 
 builder.Services.AddSingleton<MongoDbInitializer>();
 builder.Services.AddSingleton<INotificationSubscriptionRepository, NotificationSubscriptionRepository>();
-builder.Services.AddHttpClient<ISatoriApiClient, SatoriApiClient>();
+// 使用 Singleton 工厂注册，统一 SatoriApiClient 缓存（登录发现结果在生命周期内共享）
+builder.Services.AddSingleton<ISatoriApiClient>(sp =>
+{
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SatoriOptions>>();
+    var logger = sp.GetRequiredService<ILogger<SatoriApiClient>>();
+    var httpClient = httpClientFactory.CreateClient(nameof(SatoriApiClient));
+    return new SatoriApiClient(httpClient, options, logger);
+});
+builder.Services.AddHttpClient(nameof(SatoriApiClient));
 builder.Services.AddHostedService<CookieInvalidEventSubscriber>();
 builder.Services.AddSingleton<INotificationDispatchService, NotificationDispatchService>();
 

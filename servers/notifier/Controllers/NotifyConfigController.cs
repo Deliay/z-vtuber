@@ -29,8 +29,9 @@ public sealed class NotifyConfigController : ControllerBase
     {
         try
         {
-            var platform = _satoriClient.GetCachedPlatform() ?? "satori";
             var guilds = await _satoriClient.GetGuildListAsync(ct);
+            // 登录发现完成后缓存即就绪，此时读取 platform
+            var platform = _satoriClient.GetCachedPlatform() ?? "satori";
             var allChannels = new List<NotifyChannelResponse>();
 
             foreach (var guild in guilds)
