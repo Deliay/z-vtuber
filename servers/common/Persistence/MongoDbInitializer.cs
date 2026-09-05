@@ -16,7 +16,6 @@ public sealed class MongoCollectionNames
     public const string LiveEventTextIndex = "bilibili_live_event_text_index";
     public const string CookieAccountInfo = "bilibili_cookie_account_info";
     public const string LiveGuards = "bilibili_live_guards";
-    public const string NotificationSubscriptions = "notification_subscriptions";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -36,7 +35,6 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureCookieAccountInfoIndexesAsync(ct);
         await EnsureLiveGuardIndexesAsync(ct);
         await EnsureLiveGuardRoomDateIndexAsync(ct);
-        await EnsureNotificationSubscriptionIndexesAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -671,18 +669,6 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         // 使用 upsert 避免重复键错误（回滚场景 / 双服务并发）
         await MarkMigrationAppliedAsync(SubscriptionTypeSplitMigrationKey, ct);
         logger.LogInformation("Subscription type split migration completed and marked as applied.");
-    }
-
-    private async Task EnsureNotificationSubscriptionIndexesAsync(CancellationToken ct)
-    {
-        var collection = database.GetCollection<NotificationSubscriptionRecord>(MongoCollectionNames.NotificationSubscriptions);
-        var keys = Builders<NotificationSubscriptionRecord>.IndexKeys
-            .Ascending(n => n.EventType)
-            .Ascending(n => n.Platform)
-            .Ascending(n => n.ChannelId);
-        var options = new CreateIndexOptions { Unique = true, Name = "EventType_1_Platform_1_ChannelId_1" };
-        await collection.Indexes.CreateOneAsync(new CreateIndexModel<NotificationSubscriptionRecord>(keys, options), cancellationToken: ct);
-        logger.LogInformation("Ensured (EventType, Platform, ChannelId) composite unique index on notification_subscriptions.");
     }
 }
 

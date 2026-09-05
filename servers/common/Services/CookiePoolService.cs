@@ -12,7 +12,6 @@ public interface ICookiePoolService
     Task MarkOfflineAsync(string cookie, CancellationToken ct = default);
     Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default);
     Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default);
-    Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default);
 }
 
 public sealed class NoAvailableCookieException : InvalidOperationException
@@ -131,11 +130,5 @@ public sealed class CookiePoolService(IMongoDatabase database, IServiceProvider 
         var update = Builders<CookieRecord>.Update
             .Set(c => c.CooldownUntil, DateTime.UtcNow + duration);
         return _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
-    }
-
-    public async Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default)
-    {
-        var filter = Builders<CookieRecord>.Filter.Eq(c => c.Cookie, cookie);
-        return await _collection.Find(filter).FirstOrDefaultAsync(ct);
     }
 }

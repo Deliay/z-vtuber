@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "codegen": "openapi-typescript ../../contracts/bilibili-crawler.openapi.yaml -o src/api/schema.d.ts && openapi-typescript ../../contracts/notifier.openapi.yaml -o src/api/schema-notify.d.ts"
+    "codegen": "openapi-typescript ../../contracts/bilibili-crawler.openapi.yaml -o src/api/schema.d.ts"
   },
   "dependencies": {
     "react": "^19.2.8",
