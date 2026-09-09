@@ -33,6 +33,10 @@ builder.Services.AddSingleton<MongoDbInitializer>();
 
 builder.Services.AddBackstageDataAggregation();
 
+builder.Services.AddSingleton<WeiboSubscriptionRepository>();
+builder.Services.AddSingleton<WeiboTimelineRepository>();
+builder.Services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionService>();
+
 builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 

@@ -23,11 +23,12 @@ graph LR
 独立抓取服务：专职周期任务、弹幕长连接与事件归一化、风控退避，持续向数据库写入。不承载对外 API。
 
 - `Crawlers/`：`IBiliApiClient`/`BiliApiClient`（直连）、`BrowserishBiliApiClient`（拟真通道）、`ResilientBiliApiClient`（自动切换装饰器）、`RiskControlHandler`/`RiskControlClassifier`（风控识别 DelegatingHandler）、`CrawlBackoffRegistry`（目标级退避/冷却）、`BilibiliAccountProvider`
-- `Jobs/`：`PeriodicJobBase`、`CrawlLockProvider`（per-key 锁）、`CookieProbeJob`/`AccountInfoJob`/`LiveStatusJob`/`SpaceTimelineJob`（捕获 `CrawlBackoffActiveException` 跳过退避期）、`LiveGuardJob`（翻页逻辑已抽取至 `LiveGuardListFetcher`）
+- `Jobs/`：`PeriodicJobBase`、`CrawlLockProvider`（per-key 锁）、`CookieProbeJob`/`AccountInfoJob`/`LiveStatusJob`/`SpaceTimelineJob`（捕获 `CrawlBackoffActiveException` 跳过退避期）、`LiveGuardJob`（翻页逻辑已抽取至 `LiveGuardListFetcher`）、`WeiboTimelineJob`（微博动态周期抓取：订阅驱动 + 即时补抓 + 退避门控 `weibo:{uid}` + 收敛式翻页 + MblogId 幂等落库）
+- `Weibo/`：微博抓取链路（与 B 站隔离）：`WeiboApiClient`/`IWeiboApiClient`（m.weibo.cn getIndex）、`WeiboVisitorCookieProvider`（访客 SUB/SUBP，genvisitor2 一步 + 三步握手 fallback、定时刷新、失效重建）、`WeiboRiskControlClassifier`/`WeiboRiskControlException`（风控识别）、`WeiboMblogParser`（Ruby `created_at` 解析 + card 提取）
 - `Live/`：`LiveEventSource`（弹幕长连接，归一化落库 `bilibili_live_event` 同时向 Redis 发布）、`DanmakuClientFactory`、`DanmakuEventNormalizer`、`ILiveEventPublisher`/`RedisLiveEventPublisher`（频道 `live-event:{roomId}`）
 - `Services/`：`AccountInfoCrawler`（场次合并去重）、`CookieNavProbeService`（nav 探测 + 帐号信息落库 + 状态机处置，实现 common 的 `ICookieNavProbeService` 契约）、`LiveGuardListFetcher`（翻页抓取 + top3 并入 + 页间延迟/退避，供 `LiveGuardJob` 与补录共用）、`LiveGuardTop3BackfillPlanner`（top10 选取与差异计算纯函数）、`LiveGuardTop3BackfillService`（补录编排 + per-mid 进度标记）
-- `Configuration/`：`BilibiliCrawlerOptions`（节 `BilibiliCrawler`：`FetchMode`/退避/冷却/拟真头参数）
-- `Program.cs`：`WebApplication` 宿主；注册 Mongo/Redis 客户端、Options 校验、仓储、共享服务、抓取通道/风控/退避、`ILiveEventPublisher`、4 个 Job 与 `LiveEventSource` 的 `AddHostedService`；`LiveGuardListFetcher` 与 `LiveGuardTop3BackfillService` 注册；启动执行幂等索引初始化与回填；启动 fire-and-forget 执行一次性 Top3 补录；`/health`（进程存活 + MongoDB 连通性，`MongoDbHealthCheck`）
+- `Configuration/`：`BilibiliCrawlerOptions`（节 `BilibiliCrawler`：`FetchMode`/退避/冷却/拟真头参数）、`WeiboCrawlerOptions`（节 `WeiboCrawler`：`TimelineIntervalSeconds`/超时/凭证刷新周期/`MaxPagesPerCrawl`/UA/独立退避参数）
+- `Program.cs`：`WebApplication` 宿主；注册 Mongo/Redis 客户端、Options 校验、仓储、共享服务、抓取通道/风控/退避、`ILiveEventPublisher`、4 个 Job 与 `LiveEventSource` 的 `AddHostedService`；`LiveGuardListFetcher` 与 `LiveGuardTop3BackfillService` 注册；微博链路注册（`WeiboSubscriptionRepository`/`WeiboTimelineRepository`/`WeiboSubscriptionService`/`WeiboVisitorCookieProvider`/`WeiboApiClient`/`WeiboTimelineJob`）；启动执行幂等索引初始化与回填；启动 fire-and-forget 执行一次性 Top3 补录；`/health`（进程存活 + MongoDB 连通性，`MongoDbHealthCheck`）
 - `Dockerfile`：两阶段构建（aspnet 运行时，EXPOSE 8080），restore 前同时拷贝 common 与 crawler csproj
 - 镜像流水线：`.github/workflows/build-crawler-image.yml`（`zero-tools/z-vtuber-crawler`）
 
@@ -40,6 +41,7 @@ crawler 在事件落库同时 `PUBLISH live-event:{roomId}`；api 侧按需订�
 - `ConnectionStrings:mongo`：MongoDB 连接串
 - `ConnectionStrings:messaging`：Redis 连接串
 - `BilibiliCrawler` 节：抓取周期/风控/退避配置（`ValidateOnStart`）
+- `WeiboCrawler` 节：微博抓取间隔/凭证刷新/退避等配置（`ValidateOnStart`）
 - 健康检查端口：默认 8080（Kestrel）
 
 ## 开发流程

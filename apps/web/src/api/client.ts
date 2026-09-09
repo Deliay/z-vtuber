@@ -1,4 +1,5 @@
 import type { components } from './schema'
+import type { components as weiboComponents } from './schema-weibo'
 
 const BASE_URL = '/api'
 
@@ -8,6 +9,8 @@ type BackstageSubscriptionItem = components['schemas']['BackstageSubscriptionIte
 type BackstageCookieItem = components['schemas']['BackstageCookieItem']
 type SubscribeRequest = components['schemas']['SubscribeRequest']
 type CookieAddRequest = components['schemas']['CookieAddRequest']
+type WeiboSubscriptionItem = weiboComponents['schemas']['WeiboSubscriptionItem']
+type WeiboSubscribeRequest = weiboComponents['schemas']['WeiboSubscribeRequest']
 
 interface ApiError extends Error {
   status?: number
@@ -104,4 +107,42 @@ export async function listBackstageCookies(): Promise<BackstageCookieItem[]> {
     '/b/backstage/cookie',
   )
   return data.items ?? []
+}
+
+export async function listWeiboSubscriptions(): Promise<WeiboSubscriptionItem[]> {
+  const data = await request<weiboComponents['schemas']['WeiboSubscriptionList']>(
+    '/weibo/subscription',
+  )
+  return data.items ?? []
+}
+
+export async function subscribeWeibo(
+  params: WeiboSubscribeRequest,
+): Promise<WeiboSubscriptionItem> {
+  return request<WeiboSubscriptionItem>('/weibo/subscription', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function unsubscribeWeibo(uid: number): Promise<void> {
+  return request<void>(`/weibo/subscription/${uid}`, { method: 'DELETE' })
+}
+
+export async function getWeiboTimeline(
+  uid: number,
+  params: {
+    page?: number
+    pageSize?: number
+    startedAt?: string
+    endedAt?: string
+  } = {},
+): Promise<weiboComponents['schemas']['WeiboTimelinePage']> {
+  const query = new URLSearchParams()
+  if (params.page) query.set('page', String(params.page))
+  if (params.pageSize) query.set('pageSize', String(params.pageSize))
+  if (params.startedAt) query.set('startedAt', params.startedAt)
+  if (params.endedAt) query.set('endedAt', params.endedAt)
+  const qs = query.toString()
+  return request(`/weibo/user/${uid}/timeline${qs ? `?${qs}` : ''}`)
 }

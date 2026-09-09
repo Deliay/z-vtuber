@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Services;
@@ -8,6 +9,7 @@ using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Crawler.Weibo;
 
 namespace Z.Vtuber.Tests;
 
@@ -64,5 +66,38 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         // 解析 LiveGuardTop3BackfillService 以验证其依赖可解析
         var backfillService = provider.GetRequiredService<LiveGuardTop3BackfillService>();
         Assert.NotNull(backfillService);
+    }
+
+    [Fact]
+    public void WeiboTimelineJob_ResolvesFromServiceCollection()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IMongoDatabase>(fixture.Database);
+        services.AddSingleton(new BilibiliCrawlerOptions());
+        services.AddSingleton(new WeiboCrawlerOptions());
+        services.AddSingleton(Options.Create(new BilibiliCrawlerOptions()));
+        services.AddSingleton<WeiboSubscriptionRepository>();
+        services.AddSingleton<WeiboTimelineRepository>();
+        services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionService>();
+        services.AddSingleton<IWeiboVisitorCookieProvider, WeiboVisitorCookieProvider>();
+        services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
+        // B 站共享退避实例（接口）
+        services.AddSingleton<ICrawlBackoffRegistry>(new CrawlBackoffRegistry(Options.Create(new BilibiliCrawlerOptions())));
+        // 微博链路独立的退避实例（按 WeiboCrawlerOptions 独立参数构造）
+        services.AddSingleton(new CrawlBackoffRegistry(
+            TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5));
+        services.AddSingleton<CrawlLockProvider>();
+        services.AddHostedService<WeiboTimelineJob>();
+
+        var provider = services.BuildServiceProvider();
+
+        var hosted = provider.GetServices<IHostedService>().OfType<WeiboTimelineJob>().ToList();
+        Assert.Single(hosted);
+
+        // 微博退避实例必须与 B 站共享实例不同（独立参数生效）
+        var weiboBackoff = provider.GetRequiredService<CrawlBackoffRegistry>();
+        var bilibiliBackoff = provider.GetRequiredService<ICrawlBackoffRegistry>();
+        Assert.NotSame(bilibiliBackoff, weiboBackoff);
     }
 }

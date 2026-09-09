@@ -12,8 +12,8 @@
 
 ## 模块结构
 
-- `Persistence/`：10 个 MongoDB 集合实体（9 实体 + Meta）、仓储（含 `CookieAccountInfoRepository`：按 `CookieId` upsert 帐号昵称、批量查询；`AccountBasicInfoRepository.GetLatestByMidsAsync` 批量取最新主播资料；`LiveGuardRepository.GetOnboardGuardEntriesAsync`：聚合管道查询在舰用户，支持 any/all 统计口径，`RoomId_1_Date_1` 复合索引加速查询，补录方法 `GetDistinctMidsAsync`/`GetSnapshotsByMidAsync`/`BackfillMissingEntriesAsync`）、`MongoDbInitializer`（幂等索引初始化 + 各类回填 + 订阅类型拆分迁移）、`BsonConvert`、`BackstageDataAggregationExtensions`（注册 `ICookieAccountInfoRepository`）
-- `Services/`：`ICookiePoolService`（三态：在线/冷却/离线，round-robin）、`ISubscriptionService`、`ILiveSessionTracker`、`LiveStatusStateMachine`（场次划分）、`PubTsExtractor`、`SpaceTimelinePaging`、`ICookieNavProbeService` 契约（具体实现 `CookieNavProbeService` 在 crawler）
+- `Persistence/`：MongoDB 集合实体（B 站 9 实体 + Meta；微博 `WeiboSubscriptionRecord`/`WeiboTimelineRecord`）、仓储（含 `CookieAccountInfoRepository`：按 `CookieId` upsert 帐号昵称、批量查询；`AccountBasicInfoRepository.GetLatestByMidsAsync` 批量取最新主播资料；`LiveGuardRepository.GetOnboardGuardEntriesAsync`：聚合管道查询在舰用户，支持 any/all 统计口径，`RoomId_1_Date_1` 复合索引加速查询，补录方法 `GetDistinctMidsAsync`/`GetSnapshotsByMidAsync`/`BackfillMissingEntriesAsync`；微博 `WeiboSubscriptionRepository`（按 Uid upsert/删除/列举）、`WeiboTimelineRepository`（按 MblogId SetOnInsert 幂等落库 + 按 PubTs 过滤分页））、`MongoDbInitializer`（幂等索引初始化 + 各类回填 + 订阅类型拆分迁移；含微博 2 集合索引初始化）、`BsonConvert`、`BackstageDataAggregationExtensions`（注册 `ICookieAccountInfoRepository`）
+- `Services/`：`ICookiePoolService`（三态：在线/冷却/离线，round-robin）、`ISubscriptionService`、`ILiveSessionTracker`、`LiveStatusStateMachine`（场次划分）、`PubTsExtractor`、`SpaceTimelinePaging`、`IWeiboSubscriptionService`/`WeiboSubscriptionService`（Uid upsert 幂等 + `Subscribed` 事件，与 B 站订阅隔离）、`ICookieNavProbeService` 契约（具体实现 `CookieNavProbeService` 在 crawler）
 - `Live/`：共享事件模型 `LiveEvent`、弹幕文本/价格提取器（`LiveEventTextExtractor`、`GiftPriceExtractor`，供 crawler 归一化与 common 回填共用）、事件频道名约定 `LiveEventChannels`
 
 ## 归属约定
