@@ -556,6 +556,42 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Contains("RoomId_1_OccurredAt_-1_Type_1", names);
     }
 
+    [Fact]
+    public async Task EnsureIndexes_CreatesWeiboSubscriptionUniqueIndex()
+    {
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+
+        var collection = fixture.Database.GetCollection<WeiboSubscriptionRecord>(MongoCollectionNames.WeiboSubscriptions);
+        var names = await ListIndexNamesAsync(collection);
+        Assert.Contains("Uid_1", names);
+    }
+
+    [Fact]
+    public async Task EnsureIndexes_CreatesWeiboTimelineUniqueIndex()
+    {
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+
+        var collection = fixture.Database.GetCollection<WeiboTimelineRecord>(MongoCollectionNames.WeiboUserTimeline);
+        var names = await ListIndexNamesAsync(collection);
+        Assert.Contains("MblogId_1", names);
+        Assert.Contains("Uid_1_PubTs_-1", names);
+        Assert.Contains("Uid_1_MblogId_-1", names);
+    }
+
+    [Fact]
+    public async Task EnsureIndexes_IsIdempotent_ForWeiboCollections()
+    {
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+        await initializer.EnsureIndexesAsync();
+
+        var subscriptionCollection = fixture.Database.GetCollection<WeiboSubscriptionRecord>(MongoCollectionNames.WeiboSubscriptions);
+        var names = await ListIndexNamesAsync(subscriptionCollection);
+        Assert.Single(names, n => n == "Uid_1");
+    }
+
     private static async Task<List<string>> ListIndexNamesAsync<T>(IMongoCollection<T> collection)
     {
         using var cursor = await collection.Indexes.ListAsync();

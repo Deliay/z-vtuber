@@ -7,6 +7,10 @@ import {
   addCookie,
   listBackstageSubscriptions,
   listBackstageCookies,
+  listWeiboSubscriptions,
+  subscribeWeibo,
+  unsubscribeWeibo,
+  getWeiboTimeline,
 } from './client'
 
 const mockFetch = vi.fn()
@@ -15,6 +19,77 @@ vi.stubGlobal('fetch', mockFetch)
 describe('API Client', () => {
   beforeEach(() => {
     mockFetch.mockReset()
+  })
+
+  describe('Weibo', () => {
+    it('listWeiboSubscriptions should fetch weibo subscription list', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ items: [{ uid: 123, subscribedAt: '2024-01-01T00:00:00Z' }] }),
+      })
+
+      const result = await listWeiboSubscriptions()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/weibo/subscription'),
+        expect.anything(),
+      )
+      expect(result).toEqual([{ uid: 123, subscribedAt: '2024-01-01T00:00:00Z' }])
+    })
+
+    it('subscribeWeibo should POST with uid body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ uid: 123, subscribedAt: '2024-01-01T00:00:00Z' }),
+      })
+
+      const result = await subscribeWeibo({ uid: 123 })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/weibo/subscription'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ uid: 123 }),
+        }),
+      )
+      expect(result.uid).toBe(123)
+    })
+
+    it('unsubscribeWeibo should DELETE by uid path', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+      await unsubscribeWeibo(123)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/weibo/subscription/123'),
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+    })
+
+    it('getWeiboTimeline should append query params', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ total: 0, page: 1, pageSize: 20, items: [] }),
+      })
+
+      await getWeiboTimeline(123, { page: 2, pageSize: 50 })
+
+      const urlArg = mockFetch.mock.calls[0][0] as string
+      expect(urlArg).toContain('/weibo/user/123/timeline')
+      expect(urlArg).toContain('page=2')
+      expect(urlArg).toContain('pageSize=50')
+    })
+
+    it('should throw error on non-2xx response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: () => Promise.resolve('uid must be positive'),
+      })
+
+      await expect(subscribeWeibo({ uid: 0 })).rejects.toThrow('API request failed')
+    })
   })
 
   describe('listSubscriptions', () => {

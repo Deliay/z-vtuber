@@ -8,11 +8,15 @@ vi.mock('../../api/client')
 const mockListSubscriptions = vi.mocked(client.listBackstageSubscriptions)
 const mockSubscribe = vi.mocked(client.subscribe)
 const mockUnsubscribe = vi.mocked(client.unsubscribe)
+const mockListWeiboSubscriptions = vi.mocked(client.listWeiboSubscriptions)
+const mockSubscribeWeibo = vi.mocked(client.subscribeWeibo)
+const mockUnsubscribeWeibo = vi.mocked(client.unsubscribeWeibo)
 
 describe('SubscriptionPage', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     mockListSubscriptions.mockResolvedValue([])
+    mockListWeiboSubscriptions.mockResolvedValue([])
   })
 
   it('should render subscription page title', async () => {
@@ -383,6 +387,87 @@ describe('SubscriptionPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('该订阅已不存在')).toBeInTheDocument()
+    })
+  })
+
+  it('should display weibo subscription with platform label', async () => {
+    mockListWeiboSubscriptions.mockResolvedValue([
+      { uid: 555, subscribedAt: '2024-01-01T00:00:00Z' },
+    ])
+
+    render(<SubscriptionPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('555')).toBeInTheDocument()
+      expect(screen.getAllByText('微博').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('微博动态').length).toBeGreaterThan(0)
+    })
+  })
+
+  it('should subscribe a weibo account', async () => {
+    mockSubscribeWeibo.mockResolvedValue({
+      uid: 777,
+      subscribedAt: '2024-01-02T00:00:00Z',
+    })
+    mockListWeiboSubscriptions
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ uid: 777, subscribedAt: '2024-01-02T00:00:00Z' }])
+
+    render(<SubscriptionPage />)
+
+    const platformSelect = screen.getByLabelText('订阅平台')
+    fireEvent.change(platformSelect, { target: { value: 'weibo' } })
+
+    const uidInput = screen.getByPlaceholderText('微博用户 ID (uid)')
+    fireEvent.change(uidInput, { target: { value: '777' } })
+
+    const submitButton = screen.getByText('新增订阅')
+    fireEvent.click(submitButton)
+
+    await waitFor(() => {
+      expect(mockSubscribeWeibo).toHaveBeenCalledWith({ uid: 777 })
+      expect(screen.getByText('777')).toBeInTheDocument()
+    })
+  })
+
+  it('should reject invalid weibo uid before submission', async () => {
+    render(<SubscriptionPage />)
+
+    const platformSelect = screen.getByLabelText('订阅平台')
+    fireEvent.change(platformSelect, { target: { value: 'weibo' } })
+
+    const uidInput = screen.getByPlaceholderText('微博用户 ID (uid)')
+    fireEvent.change(uidInput, { target: { value: '12ab' } })
+
+    const submitButton = screen.getByText('新增订阅')
+    fireEvent.click(submitButton)
+
+    await waitFor(() => {
+      expect(screen.getByText('请输入有效的微博用户 ID（纯数字）')).toBeInTheDocument()
+    })
+  })
+
+  it('should cancel a weibo subscription', async () => {
+    mockListWeiboSubscriptions
+      .mockResolvedValueOnce([{ uid: 333, subscribedAt: '2024-01-03T00:00:00Z' }])
+      .mockResolvedValueOnce([])
+    mockUnsubscribeWeibo.mockResolvedValue(undefined)
+
+    render(<SubscriptionPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('333')).toBeInTheDocument()
+    })
+
+    const cancelButton = screen.getByText('取消')
+    fireEvent.click(cancelButton)
+
+    const confirmButton = screen.getByText('确认取消')
+    fireEvent.click(confirmButton)
+
+    await waitFor(() => {
+      expect(mockUnsubscribeWeibo).toHaveBeenCalledWith(333)
+      expect(screen.getByText('暂无订阅')).toBeInTheDocument()
     })
   })
 })

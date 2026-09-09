@@ -21,7 +21,8 @@ src/
 ├── api/
 │   ├── client.ts          # API 客户端封装
 │   ├── client.test.ts     # API 客户端单元测试
-│   └── schema.d.ts        # OpenAPI 生成的类型定义（自动生成勿手改）
+│   ├── schema.d.ts        # OpenAPI 生成的类型定义（B 站，自动生成勿手改）
+│   └── schema-weibo.d.ts  # OpenAPI 生成的类型定义（微博，自动生成勿手改）
 ├── pages/
 │   ├── subscription/
 │   │   ├── SubscriptionPage.tsx      # 订阅管理页
@@ -40,8 +41,9 @@ src/
 ## 开发流程
 
 - TDD 开发（先写测试再实现）
-- 契约式开发（基于 OpenAPI 契约生成客户端）
+- 契约式开发（基于 OpenAPI 契约生成客户端；`codegen` 同时从 `contracts/bilibili-crawler.openapi.yaml` 与 `contracts/weibo-crawler.openapi.yaml` 生成 `schema.d.ts` 与 `schema-weibo.d.ts`）
 - 后台聚合：订阅/Cookie 管理页使用 `listBackstageSubscriptions`/`listBackstageCookies` 聚合接口，分别展示主播/帐号昵称列（昵称缺失显示「暂无资料」），现有增删/录入操作不变
+- 订阅管理页（`SubscriptionPage.tsx`）：新增订阅表单含平台选择（B站/微博）；选微博时仅填 uid；列表含平台标识列，存量条目默认 B站；取消/创建按平台调用对应接口
 - 参考：`docs/engineering/common-rules.md`
 
 ## 常用命令

@@ -8,6 +8,7 @@ using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Crawler.Live;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Crawler.Weibo;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,6 +25,14 @@ builder.Services.AddOptions<BilibiliCrawlerOptions>()
 
 builder.Services.AddSingleton(sp =>
     sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<BilibiliCrawlerOptions>>().Value);
+
+builder.Services.AddOptions<WeiboCrawlerOptions>()
+    .Bind(builder.Configuration.GetSection(WeiboCrawlerOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddSingleton(sp =>
+    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WeiboCrawlerOptions>>().Value);
 
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
@@ -42,6 +51,13 @@ builder.Services.AddBackstageDataAggregation();
 builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 builder.Services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
+
+// 微博链路：独立集合/仓储/订阅服务/访客凭证/客户端，与 B 站隔离
+builder.Services.AddSingleton<WeiboSubscriptionRepository>();
+builder.Services.AddSingleton<WeiboTimelineRepository>();
+builder.Services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionService>();
+builder.Services.AddSingleton<IWeiboVisitorCookieProvider, WeiboVisitorCookieProvider>();
+builder.Services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
 
 builder.Services.AddSingleton<ICookieNavProbeService, CookieNavProbeService>();
 builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
@@ -62,6 +78,17 @@ builder.Services.AddSingleton<IBiliApiClient>(sp => new ResilientBiliApiClient(
     sp.GetRequiredService<ICrawlBackoffRegistry>(),
     sp.GetRequiredService<ILogger<ResilientBiliApiClient>>()));
 builder.Services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
+// 微博链路使用按 WeiboCrawlerOptions 独立配置的退避实例（与 B 站参数隔离）
+builder.Services.AddSingleton<CrawlBackoffRegistry>(sp =>
+{
+    var options = sp.GetRequiredService<WeiboCrawlerOptions>();
+    return new CrawlBackoffRegistry(
+        TimeSpan.FromSeconds(options.BackoffBaseSeconds),
+        TimeSpan.FromMinutes(options.BackoffMaxMinutes),
+        TimeSpan.FromMinutes(options.CooldownMinutes),
+        options.RiskControlCooldownThreshold,
+        sp.GetRequiredService<TimeProvider>());
+});
 builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventPublisher, RedisLiveEventPublisher>();
 builder.Services.AddSingleton<CrawlLockProvider>();
@@ -75,6 +102,7 @@ builder.Services.AddHostedService<LiveStatusJob>();
 builder.Services.AddHostedService<SpaceTimelineJob>();
 builder.Services.AddHostedService<LiveGuardJob>();
 builder.Services.AddHostedService<LiveEventSource>();
+builder.Services.AddHostedService<WeiboTimelineJob>();
 
 var app = builder.Build();
 
