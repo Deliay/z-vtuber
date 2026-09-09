@@ -130,6 +130,32 @@ public sealed class WeiboRiskControlClassifierTests
     }
 
     [Fact]
+    public void IsRiskControl_False_OnMblogTextContainingKeywords()
+    {
+        // 回归：关键词仅在 msg/error 字段判断，不得扫描正文（避免误杀正常微博）
+        Assert.False(Classifier.IsRiskControl(
+            System.Net.HttpStatusCode.OK,
+            "application/json",
+            """{"ok":1,"data":{"text":"please login with your auth cookie to continue","user":{"id":1}}}"""));
+    }
+
+    [Fact]
+    public void IsRiskControl_False_OnNonJsonHtmlSuccessBody()
+    {
+        // 非 JSON body 不做关键词判断，避免把含 login 等词的正常 HTML 判为风控
+        Assert.False(Classifier.IsRiskControl(
+            System.Net.HttpStatusCode.OK, "text/html", "<html>login form</html>"));
+    }
+
+    [Fact]
+    public void IsRiskControl_True_OnMsgKeyword_WithOkOne()
+    {
+        // ok==1 但 msg 明示登录态失效 → 判风控
+        Assert.True(Classifier.IsRiskControl(
+            System.Net.HttpStatusCode.OK, "application/json", """{"ok":1,"msg":"cookie 已失效，请重新登录"}"""));
+    }
+
+    [Fact]
     public void IsRiskControl_False_OnEmptyBody()
     {
         Assert.False(Classifier.IsRiskControl(System.Net.HttpStatusCode.OK, null, ""));

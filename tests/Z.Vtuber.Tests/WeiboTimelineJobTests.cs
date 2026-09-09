@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Services;
@@ -24,14 +23,15 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IAsyncLifetime
         IWeiboSubscriptionService subscription,
         WeiboTimelineRepository repository,
         FakeWeiboVisitorCookieProvider cookies,
-        ICrawlBackoffRegistry? backoff = null,
+        CrawlBackoffRegistry? backoff = null,
         WeiboCrawlerOptions? options = null) => new(
         api,
         subscription,
         repository,
         cookies,
         new CrawlLockProvider(),
-        backoff ?? new CrawlBackoffRegistry(Options.Create(new BilibiliCrawlerOptions())),
+        backoff ?? new CrawlBackoffRegistry(
+            TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5),
         options ?? new WeiboCrawlerOptions { MaxPagesPerCrawl = 5 },
         NullLogger<WeiboTimelineJob>.Instance);
 
@@ -130,7 +130,7 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IAsyncLifetime
     {
         var subscription = SubscribeService(fixture.Database);
         await subscription.SubscribeAsync(Uid);
-        var backoff = new CrawlBackoffRegistry(Options.Create(new BilibiliCrawlerOptions()));
+        var backoff = new CrawlBackoffRegistry(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5);
         backoff.ReportRiskControl($"weibo:{Uid}");
         var api = new FakeWeiboApiClient { PageProvider = _ => Page("m1") };
         var repo = new WeiboTimelineRepository(fixture.Database);
@@ -146,7 +146,7 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IAsyncLifetime
     {
         var subscription = SubscribeService(fixture.Database);
         await subscription.SubscribeAsync(Uid);
-        var backoff = new CrawlBackoffRegistry(Options.Create(new BilibiliCrawlerOptions()));
+        var backoff = new CrawlBackoffRegistry(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5);
         var cookies = new FakeWeiboVisitorCookieProvider();
         var api = new FakeWeiboApiClient
         {

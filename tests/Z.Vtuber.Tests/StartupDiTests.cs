@@ -82,7 +82,11 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionService>();
         services.AddSingleton<IWeiboVisitorCookieProvider, WeiboVisitorCookieProvider>();
         services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
-        services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
+        // B 站共享退避实例（接口）
+        services.AddSingleton<ICrawlBackoffRegistry>(new CrawlBackoffRegistry(Options.Create(new BilibiliCrawlerOptions())));
+        // 微博链路独立的退避实例（按 WeiboCrawlerOptions 独立参数构造）
+        services.AddSingleton(new CrawlBackoffRegistry(
+            TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5));
         services.AddSingleton<CrawlLockProvider>();
         services.AddHostedService<WeiboTimelineJob>();
 
@@ -90,5 +94,10 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
 
         var hosted = provider.GetServices<IHostedService>().OfType<WeiboTimelineJob>().ToList();
         Assert.Single(hosted);
+
+        // 微博退避实例必须与 B 站共享实例不同（独立参数生效）
+        var weiboBackoff = provider.GetRequiredService<CrawlBackoffRegistry>();
+        var bilibiliBackoff = provider.GetRequiredService<ICrawlBackoffRegistry>();
+        Assert.NotSame(bilibiliBackoff, weiboBackoff);
     }
 }
