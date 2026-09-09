@@ -5,6 +5,7 @@ using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Crawler.Weibo;
 
 namespace Z.Vtuber.Tests;
 
@@ -122,5 +123,37 @@ public sealed class MockCookiePoolService : ICookiePoolService
     {
         CooldownCalls.Add((cookie, duration));
         return Task.CompletedTask;
+    }
+}
+
+public sealed class FakeWeiboVisitorCookieProvider : IWeiboVisitorCookieProvider
+{
+    public string CookieHeader { get; set; } = "SUB=fake; SUBP=fake";
+    public int RenewCount { get; private set; }
+    public Func<CancellationToken, string>? CookieFunc { get; set; }
+
+    public Task<string> GetOrRefreshAsync(CancellationToken ct = default) =>
+        Task.FromResult(CookieFunc?.Invoke(ct) ?? CookieHeader);
+
+    public Task RenewAsync(CancellationToken ct = default)
+    {
+        RenewCount++;
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class FakeWeiboApiClient : IWeiboApiClient
+{
+    public Func<string?, WeiboTimelinePage>? PageProvider { get; set; }
+    public Func<string?, WeiboTimelinePage>? OnRiskProvider { get; set; }
+    public List<string?> CalledSinceIds { get; } = [];
+
+    public Task<WeiboTimelinePage> GetUserTimelineAsync(long uid, string? sinceId = null, CancellationToken ct = default)
+    {
+        CalledSinceIds.Add(sinceId);
+        var provider = sinceId is null ? OnRiskProvider : null;
+        return Task.FromResult(provider?.Invoke(sinceId)
+            ?? PageProvider?.Invoke(sinceId)
+            ?? new WeiboTimelinePage());
     }
 }

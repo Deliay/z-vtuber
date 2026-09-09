@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Services;
@@ -8,6 +9,7 @@ using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Crawler.Weibo;
 
 namespace Z.Vtuber.Tests;
 
@@ -64,5 +66,29 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         // 解析 LiveGuardTop3BackfillService 以验证其依赖可解析
         var backfillService = provider.GetRequiredService<LiveGuardTop3BackfillService>();
         Assert.NotNull(backfillService);
+    }
+
+    [Fact]
+    public void WeiboTimelineJob_ResolvesFromServiceCollection()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IMongoDatabase>(fixture.Database);
+        services.AddSingleton(new BilibiliCrawlerOptions());
+        services.AddSingleton(new WeiboCrawlerOptions());
+        services.AddSingleton(Options.Create(new BilibiliCrawlerOptions()));
+        services.AddSingleton<WeiboSubscriptionRepository>();
+        services.AddSingleton<WeiboTimelineRepository>();
+        services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionService>();
+        services.AddSingleton<IWeiboVisitorCookieProvider, WeiboVisitorCookieProvider>();
+        services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
+        services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
+        services.AddSingleton<CrawlLockProvider>();
+        services.AddHostedService<WeiboTimelineJob>();
+
+        var provider = services.BuildServiceProvider();
+
+        var hosted = provider.GetServices<IHostedService>().OfType<WeiboTimelineJob>().ToList();
+        Assert.Single(hosted);
     }
 }
