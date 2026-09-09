@@ -13,7 +13,10 @@ public interface ICrawlBackoffRegistry
 
 public sealed class CrawlBackoffRegistry : ICrawlBackoffRegistry
 {
-    private readonly BilibiliCrawlerOptions _options;
+    private readonly TimeSpan _backoffBase;
+    private readonly TimeSpan _backoffMax;
+    private readonly TimeSpan _cooldown;
+    private readonly int _riskControlCooldownThreshold;
     private readonly TimeProvider _timeProvider;
     private readonly Random _random;
     private readonly ConcurrentDictionary<string, BackoffEntry> _entries = new();
@@ -22,8 +25,29 @@ public sealed class CrawlBackoffRegistry : ICrawlBackoffRegistry
         IOptions<BilibiliCrawlerOptions> options,
         TimeProvider? timeProvider = null,
         Random? random = null)
+        : this(
+            TimeSpan.FromSeconds(options.Value.BackoffBaseSeconds),
+            TimeSpan.FromMinutes(options.Value.BackoffMaxMinutes),
+            TimeSpan.FromMinutes(options.Value.CooldownMinutes),
+            options.Value.RiskControlCooldownThreshold,
+            timeProvider,
+            random)
     {
-        _options = options.Value;
+    }
+
+    /// <summary>以显式退避/冷却参数构造独立实例（供微博等使用自身 Options 的链路）。</summary>
+    public CrawlBackoffRegistry(
+        TimeSpan backoffBase,
+        TimeSpan backoffMax,
+        TimeSpan cooldown,
+        int riskControlCooldownThreshold,
+        TimeProvider? timeProvider = null,
+        Random? random = null)
+    {
+        _backoffBase = backoffBase;
+        _backoffMax = backoffMax;
+        _cooldown = cooldown;
+        _riskControlCooldownThreshold = riskControlCooldownThreshold;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _random = random ?? Random.Shared;
     }
@@ -95,7 +119,7 @@ public sealed class CrawlBackoffRegistry : ICrawlBackoffRegistry
             // If in cooldown, reset cooldown from now (don't increase level)
             if (entry.CooldownUntil.HasValue && now < entry.CooldownUntil.Value)
             {
-                entry.CooldownUntil = now + TimeSpan.FromMinutes(_options.CooldownMinutes);
+                entry.CooldownUntil = now + _cooldown;
                 return;
             }
 
@@ -103,9 +127,9 @@ public sealed class CrawlBackoffRegistry : ICrawlBackoffRegistry
             entry.LastRiskControlAt = now;
 
             // Check if we should enter cooldown
-            if (entry.ConsecutiveRiskControls >= _options.RiskControlCooldownThreshold)
+            if (entry.ConsecutiveRiskControls >= _riskControlCooldownThreshold)
             {
-                entry.CooldownUntil = now + TimeSpan.FromMinutes(_options.CooldownMinutes);
+                entry.CooldownUntil = now + _cooldown;
                 entry.Level = 0;
                 entry.ConsecutiveRiskControls = 0;
                 return;
@@ -117,8 +141,8 @@ public sealed class CrawlBackoffRegistry : ICrawlBackoffRegistry
 
     private double CalculateBackoffSeconds(int level)
     {
-        var baseSeconds = _options.BackoffBaseSeconds;
-        var maxSeconds = _options.BackoffMaxMinutes * 60.0;
+        var baseSeconds = _backoffBase.TotalSeconds;
+        var maxSeconds = _backoffMax.TotalSeconds;
 
         // base * 2^(level-1), capped at max; level 1 = base, level 2 = 2*base, etc.
         var raw = baseSeconds * Math.Pow(2, Math.Max(0, level - 1));

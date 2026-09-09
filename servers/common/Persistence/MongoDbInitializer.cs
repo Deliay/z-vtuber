@@ -16,6 +16,8 @@ public sealed class MongoCollectionNames
     public const string LiveEventTextIndex = "bilibili_live_event_text_index";
     public const string CookieAccountInfo = "bilibili_cookie_account_info";
     public const string LiveGuards = "bilibili_live_guards";
+    public const string WeiboSubscriptions = "weibo_subscriptions";
+    public const string WeiboUserTimeline = "weibo_user_timeline";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -35,6 +37,8 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureCookieAccountInfoIndexesAsync(ct);
         await EnsureLiveGuardIndexesAsync(ct);
         await EnsureLiveGuardRoomDateIndexAsync(ct);
+        await EnsureWeiboSubscriptionIndexesAsync(ct);
+        await EnsureWeiboTimelineIndexesAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -235,6 +239,34 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             .Ascending(l => l.RoomId)
             .Descending(l => l.StartDate);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveSessionRecord>(roomKeys), cancellationToken: ct);
+    }
+
+    private Task EnsureWeiboSubscriptionIndexesAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<WeiboSubscriptionRecord>(MongoCollectionNames.WeiboSubscriptions);
+        var keys = Builders<WeiboSubscriptionRecord>.IndexKeys.Ascending(s => s.Uid);
+        var options = new CreateIndexOptions { Unique = true, Name = "Uid_1" };
+        return collection.Indexes.CreateOneAsync(new CreateIndexModel<WeiboSubscriptionRecord>(keys, options), cancellationToken: ct);
+    }
+
+    private async Task EnsureWeiboTimelineIndexesAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<WeiboTimelineRecord>(MongoCollectionNames.WeiboUserTimeline);
+
+        var mblogIdKeys = Builders<WeiboTimelineRecord>.IndexKeys.Ascending(t => t.MblogId);
+        await collection.Indexes.CreateOneAsync(
+            new CreateIndexModel<WeiboTimelineRecord>(mblogIdKeys, new CreateIndexOptions { Unique = true }),
+            cancellationToken: ct);
+
+        var uidPubTsKeys = Builders<WeiboTimelineRecord>.IndexKeys
+            .Ascending(t => t.Uid)
+            .Descending(t => t.PubTs);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<WeiboTimelineRecord>(uidPubTsKeys), cancellationToken: ct);
+
+        var uidMblogIdKeys = Builders<WeiboTimelineRecord>.IndexKeys
+            .Ascending(t => t.Uid)
+            .Descending(t => t.MblogId);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<WeiboTimelineRecord>(uidMblogIdKeys), cancellationToken: ct);
     }
 
     public const string SpaceTimelinePubTsMigrationKey = "space_timeline_pub_ts_backfill_v1";

@@ -1,0 +1,164 @@
+openapi: 3.1.0
+info:
+  title: Weibo Crawler API
+  version: 1.0.0
+  description: 微博博主动态抓取与订阅服务对外数据接口（统一前缀 /api/weibo）
+servers:
+  - url: /
+paths:
+  /api/weibo/subscription:
+    get:
+      summary: 获取微博订阅列表
+      operationId: listWeiboSubscriptions
+      responses:
+        "200":
+          description: 微博订阅 uid 列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeiboSubscriptionList"
+    post:
+      summary: 订阅微博博主
+      operationId: subscribeWeibo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WeiboSubscribeRequest"
+      responses:
+        "200":
+          description: 订阅成功（幂等，重复订阅返回已有订阅）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeiboSubscriptionItem"
+        "400":
+          description: uid 缺失或非正数
+  /api/weibo/subscription/{uid}:
+    delete:
+      summary: 取消微博订阅
+      operationId: unsubscribeWeibo
+      parameters:
+        - $ref: "#/components/parameters/Uid"
+      responses:
+        "204":
+          description: 取消成功
+        "404":
+          description: 未订阅
+  /api/weibo/user/{uid}/timeline:
+    get:
+      summary: 分页查询微博动态
+      description: >-
+        按发布时间（PubTs）倒序分页查询指定博主的已抓取微博动态，可按时间范围（startedAt/endedAt，含边界，UTC，
+        按发布时间过滤且 PubTs 缺失的记录被排除）筛选。startedAt 晚于 endedAt 返回 400。
+      operationId: getWeiboTimeline
+      parameters:
+        - $ref: "#/components/parameters/Uid"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/StartedAt"
+        - $ref: "#/components/parameters/EndedAt"
+      responses:
+        "200":
+          description: 微博动态分页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeiboTimelinePage"
+        "400":
+          description: 时间范围非法（startedAt 晚于 endedAt）
+components:
+  parameters:
+    Uid:
+      name: uid
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    StartedAt:
+      name: startedAt
+      in: query
+      required: false
+      description: 筛选起始时间（含边界，UTC，ISO 8601），按发布时间（PubTs）过滤且 PubTs 缺失的记录被排除。
+      schema:
+        type: string
+        format: date-time
+    EndedAt:
+      name: endedAt
+      in: query
+      required: false
+      description: 筛选结束时间（含边界，UTC，ISO 8601），过滤语义同 startedAt。当 startedAt 晚于 endedAt 时返回 400。
+      schema:
+        type: string
+        format: date-time
+  schemas:
+    WeiboSubscribeRequest:
+      type: object
+      required: [uid]
+      properties:
+        uid:
+          type: integer
+          format: int64
+          description: 微博博主用户 ID，必须为正整数。
+    WeiboSubscriptionItem:
+      type: object
+      properties:
+        uid:
+          type: integer
+          format: int64
+        subscribedAt:
+          type: string
+          format: date-time
+    WeiboSubscriptionList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeiboSubscriptionItem"
+    WeiboTimelineItem:
+      type: object
+      properties:
+        uid:
+          type: integer
+          format: int64
+        mblogId:
+          type: string
+        fetchedAt:
+          type: string
+          format: date-time
+        data:
+          type: object
+          description: 微博原始 mblog JSON（含正文、发布时间、图片、转发原微博、互动计数等）
+    WeiboTimelinePage:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeiboTimelineItem"
