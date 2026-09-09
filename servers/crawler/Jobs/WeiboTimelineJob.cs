@@ -14,7 +14,7 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
     private readonly WeiboTimelineRepository _repository;
     private readonly IWeiboVisitorCookieProvider _cookies;
     private readonly CrawlLockProvider _locks;
-    private readonly ICrawlBackoffRegistry _backoff;
+    private readonly CrawlBackoffRegistry _backoff;
     private readonly WeiboCrawlerOptions _options;
     private readonly ILogger<WeiboTimelineJob> _logger;
 
@@ -24,7 +24,7 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
         WeiboTimelineRepository repository,
         IWeiboVisitorCookieProvider cookies,
         CrawlLockProvider locks,
-        ICrawlBackoffRegistry backoff,
+        CrawlBackoffRegistry backoff,
         WeiboCrawlerOptions options,
         ILogger<WeiboTimelineJob> logger) : base(logger)
     {

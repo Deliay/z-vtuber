@@ -34,25 +34,35 @@ public sealed class WeiboRiskControlClassifier
             return false;
         }
 
+        // 仅在 JSON 的 msg/error 字段上做登录/凭证失效关键词判断，避免误伤正常正文
+        if (!TryParseJsonObject(body, out var obj))
+        {
+            return false;
+        }
+
         // JSON 响应 ok != 1：业务失败（风控 / 无效凭证）
-        if (TryGetOkFlag(body, out var ok) && ok != 1)
+        if (TryGetOkFlag(obj, out var ok) && ok != 1)
         {
             return true;
         }
 
-        // 响应文本含登录/凭证失效关键词
-        if (LoginKeywords.Any(k => body.Contains(k, StringComparison.OrdinalIgnoreCase)))
+        // msg/error 字段含登录/凭证失效关键词
+        foreach (var field in new[] { "msg", "error", "errmsg" })
         {
-            return true;
+            if (obj.TryGetProperty(field, out var el) && el.ValueKind == JsonValueKind.String
+                && LoginKeywords.Any(k => el.GetString()?.Contains(k, StringComparison.OrdinalIgnoreCase) == true))
+            {
+                return true;
+            }
         }
 
         return false;
     }
 
-    private static bool TryGetOkFlag(string body, out int ok)
+    private static bool TryParseJsonObject(string body, out JsonElement obj)
     {
-        ok = default;
-        if (string.IsNullOrEmpty(body) || !(body[0] == '{' || body[0] == '['))
+        obj = default;
+        if (string.IsNullOrEmpty(body) || body[0] != '{')
         {
             return false;
         }
@@ -60,10 +70,10 @@ public sealed class WeiboRiskControlClassifier
         try
         {
             using var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.TryGetProperty("ok", out var okEl)
-                && (okEl.ValueKind == JsonValueKind.Number || okEl.ValueKind == JsonValueKind.String))
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
             {
-                return int.TryParse(okEl.ToString(), out ok);
+                obj = doc.RootElement.Clone();
+                return true;
             }
         }
         catch (JsonException)
@@ -72,5 +82,17 @@ public sealed class WeiboRiskControlClassifier
         }
 
         return false;
+    }
+
+    private static bool TryGetOkFlag(JsonElement obj, out int ok)
+    {
+        ok = default;
+        if (!obj.TryGetProperty("ok", out var okEl)
+            || (okEl.ValueKind != JsonValueKind.Number && okEl.ValueKind != JsonValueKind.String))
+        {
+            return false;
+        }
+
+        return int.TryParse(okEl.ToString(), out ok);
     }
 }

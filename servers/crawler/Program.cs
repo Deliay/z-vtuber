@@ -78,6 +78,17 @@ builder.Services.AddSingleton<IBiliApiClient>(sp => new ResilientBiliApiClient(
     sp.GetRequiredService<ICrawlBackoffRegistry>(),
     sp.GetRequiredService<ILogger<ResilientBiliApiClient>>()));
 builder.Services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
+// 微博链路使用按 WeiboCrawlerOptions 独立配置的退避实例（与 B 站参数隔离）
+builder.Services.AddSingleton<CrawlBackoffRegistry>(sp =>
+{
+    var options = sp.GetRequiredService<WeiboCrawlerOptions>();
+    return new CrawlBackoffRegistry(
+        TimeSpan.FromSeconds(options.BackoffBaseSeconds),
+        TimeSpan.FromMinutes(options.BackoffMaxMinutes),
+        TimeSpan.FromMinutes(options.CooldownMinutes),
+        options.RiskControlCooldownThreshold,
+        sp.GetRequiredService<TimeProvider>());
+});
 builder.Services.AddSingleton<DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventPublisher, RedisLiveEventPublisher>();
 builder.Services.AddSingleton<CrawlLockProvider>();

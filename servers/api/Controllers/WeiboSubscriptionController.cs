@@ -25,7 +25,10 @@ public class WeiboSubscriptionController(IWeiboSubscriptionService weiboSubscrip
         }
 
         await weiboSubscription.SubscribeAsync(request.Uid.Value, ct);
-        return Ok(new WeiboSubscriptionItemDto(request.Uid.Value, null));
+        DateTime? subscribedAt = null;
+        var all = await weiboSubscription.GetAllAsync(ct);
+        subscribedAt = all.FirstOrDefault(s => s.Uid == request.Uid.Value)?.SubscribedAt;
+        return Ok(new WeiboSubscriptionItemDto(request.Uid.Value, subscribedAt));
     }
 
     [HttpDelete("{uid:long}")]
