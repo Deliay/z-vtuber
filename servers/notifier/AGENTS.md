@@ -5,7 +5,7 @@
 - 语言：C# (.NET 10)
 - 类型：Worker Service（`Microsoft.NET.Sdk.Worker`）
 - 依赖：`Z.Vtuber.Common`（共享实体与仓储）
-- 消息通道：Milky.Net.Client（`Milky.Net.Client` 3.0.0）
+- 消息通道：`ZeroAsh.Milky.Net.Client` 1.0.1-preview.4（fork 包，因官方 Milky.Net.Client 3.0.0 的 TextOutgoingSegment 序列化为扁平结构，与 LLBot 期望的 data 包装格式不兼容）
 
 ## 定位
 
