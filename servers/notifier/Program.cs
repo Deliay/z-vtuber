@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Notifier.Satori;
+using Z.Vtuber.Notifier.Milky;
 using Z.Vtuber.Notifier.Events;
 using Z.Vtuber.Notifier.Dispatch;
 using Z.Vtuber.Notifier.Controllers;
@@ -14,17 +14,15 @@ builder.Services.AddHealthChecks();
 builder.AddMongoDBClient("mongo");
 builder.AddRedisClient("messaging");
 
-// 显式映射环境变量到 SatoriOptions
-builder.Services.AddOptions<SatoriOptions>()
+// 显式映射环境变量到 MilkyOptions
+builder.Services.AddOptions<MilkyOptions>()
     .Configure(o =>
     {
-        o.Endpoint = builder.Configuration["Z_VTUBER_SATORI_ENDPOINT"] ?? string.Empty;
-        o.Token = builder.Configuration["Z_VTUBER_SATORI_TOKEN"];
-        o.Platform = builder.Configuration["Z_VTUBER_SATORI_PLATFORM"];
-        o.SelfId = builder.Configuration["Z_VTUBER_SATORI_SELF_ID"];
+        o.Endpoint = builder.Configuration["Z_VTUBER_MILKY_ENDPOINT"] ?? string.Empty;
+        o.AccessToken = builder.Configuration["Z_VTUBER_MILKY_ACCESS_TOKEN"] ?? string.Empty;
     })
     .Validate(o => !string.IsNullOrWhiteSpace(o.Endpoint),
-        "缺少必需环境变量 Z_VTUBER_SATORI_ENDPOINT")
+        "缺少必需环境变量 Z_VTUBER_MILKY_ENDPOINT")
     .ValidateOnStart();
 
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
@@ -32,16 +30,16 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
 
 builder.Services.AddSingleton<MongoDbInitializer>();
 builder.Services.AddSingleton<INotificationSubscriptionRepository, NotificationSubscriptionRepository>();
-// 使用 Singleton 工厂注册，统一 SatoriApiClient 缓存（登录发现结果在生命周期内共享）
-builder.Services.AddSingleton<ISatoriApiClient>(sp =>
+// 使用 Singleton 工厂注册，统一 MilkyApiClient 生命周期
+builder.Services.AddSingleton<IMilkyApiClient>(sp =>
 {
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SatoriOptions>>();
-    var logger = sp.GetRequiredService<ILogger<SatoriApiClient>>();
-    var httpClient = httpClientFactory.CreateClient(nameof(SatoriApiClient));
-    return new SatoriApiClient(httpClient, options, logger);
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MilkyOptions>>();
+    var logger = sp.GetRequiredService<ILogger<MilkyApiClient>>();
+    var httpClient = httpClientFactory.CreateClient(nameof(MilkyApiClient));
+    return new MilkyApiClient(httpClient, options, logger);
 });
-builder.Services.AddHttpClient(nameof(SatoriApiClient));
+builder.Services.AddHttpClient(nameof(MilkyApiClient));
 builder.Services.AddHostedService<CookieInvalidEventSubscriber>();
 builder.Services.AddSingleton<INotificationDispatchService, NotificationDispatchService>();
 
