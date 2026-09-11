@@ -9,10 +9,8 @@ public class CookieCallGateTests
     {
         var gate = new CookieCallGate();
         var order = new List<int>();
-        var tcs = new TaskCompletionSource();
         var holder = await gate.AcquireAsync("cookie1");
 
-        // Start a concurrent waiter — it should block until holder releases
         var waiterTask = Task.Run(async () =>
         {
             using var _ = await gate.AcquireAsync("cookie1");
@@ -26,6 +24,7 @@ public class CookieCallGateTests
         // Release holder — waiter should now complete
         holder.Dispose();
         await waiterTask;
+        Assert.Single(order);
         Assert.Equal(2, order[0]);
     }
 
@@ -51,26 +50,30 @@ public class CookieCallGateTests
 
         await Task.WhenAll(t1, t2);
 
-        // Both ran concurrently — first to complete is 1 or 2
+        // Both ran concurrently — both should have completed
         Assert.Equal(2, order.Count);
     }
 
     [Fact]
-    public async Task AcquireAsync_ExceptionInGuard_ReleasesLock()
+    public async Task AcquireAsync_DisposeReleasesLock()
     {
         var gate = new CookieCallGate();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
         using (await gate.AcquireAsync("cookie1"))
         {
-            // Simulate exception during guarded section
+            // Lock held
         }
 
-        // Lock should be available after exception/dispose
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        // Lock should be immediately available
+        sw.Restart();
         using (await gate.AcquireAsync("cookie1"))
         {
-            // Acquired immediately
         }
-        Assert.True(sw.ElapsedMilliseconds < 100);
+        sw.Stop();
+
+        Assert.True(sw.ElapsedMilliseconds < 100,
+            $"AcquireAsync after Dispose took {sw.ElapsedMilliseconds}ms — lock was not released");
     }
 
     [Fact]
@@ -86,55 +89,30 @@ public class CookieCallGateTests
     }
 
     [Fact]
-    public async Task AcquireAsync_ConcurrentFailure_OnlyFirstCallerPublishes()
+    public async Task AcquireAsync_SerializationGuarantee()
     {
-        // Simulates the scenario: 4 concurrent GetProviderAsync calls for the same cookie,
-        // all hitting build failure. Only 1 should publish.
+        // Verifies that N concurrent callers are serialized (not parallel)
         var gate = new CookieCallGate();
-        var publishCount = 0;
+        var concurrentCount = 0;
+        var maxConcurrent = 0;
+
+        var holder = await gate.AcquireAsync("cookie1");
 
         var tasks = Enumerable.Range(0, 4).Select(_ => Task.Run(async () =>
         {
             using var _ = await gate.AcquireAsync("cookie1");
-            // Simulate build failure + MarkOfflineAsync + PublishAsync
-            Interlocked.Increment(ref publishCount);
+            var c = Interlocked.Increment(ref concurrentCount);
+            var prev = Interlocked.CompareExchange(ref maxConcurrent, c, c);
+            if (c > prev) Interlocked.CompareExchange(ref maxConcurrent, c, prev);
+            await Task.Delay(10);
+            Interlocked.Decrement(ref concurrentCount);
         })).ToArray();
 
+        await Task.Delay(50); // Let tasks queue up
+        holder.Dispose();
         await Task.WhenAll(tasks);
 
-        // With lock serialization, all 4 run sequentially — all increment.
-        // The real dedup happens in BilibiliAccountProvider via MarkOfflineAsync atomic check.
-        // This test just verifies the lock serializes access (no parallel increment).
-        Assert.Equal(4, publishCount); // All 4 run, but sequentially (not parallel)
-    }
-
-    [Fact]
-    public async Task AcquireAsync_LockReleasedDuringLongRunningOperation()
-    {
-        // Simulates websocket scenario: lock held during ConnectAsync, released before event loop
-        var gate = new CookieCallGate();
-        var lockHeldDuringEventLoop = false;
-
-        var connectTask = Task.Run(async () =>
-        {
-            using var _ = await gate.AcquireAsync("cookie1");
-            // Simulate ConnectAsync
-            await Task.Delay(50);
-            // Lock released here (Dispose happens at end of using)
-        });
-
-        await Task.Delay(10); // Let connectTask acquire the lock
-
-        // Try to acquire the same lock — should block until connectTask releases
-        var eventLoopTask = Task.Run(async () =>
-        {
-            using var __ = await gate.AcquireAsync("cookie1");
-            // This runs AFTER connectTask releases the lock
-            // Verify that we can acquire the lock while the "event loop" is running
-            lockHeldDuringEventLoop = false; // We have the lock now
-        });
-
-        await Task.WhenAll(connectTask, eventLoopTask);
-        Assert.False(lockHeldDuringEventLoop);
+        // With serialization, only 1 caller should be active at a time
+        Assert.Equal(1, maxConcurrent);
     }
 }

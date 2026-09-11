@@ -90,7 +90,7 @@ builder.Services.AddSingleton<CrawlBackoffRegistry>(sp =>
         options.RiskControlCooldownThreshold,
         sp.GetRequiredService<TimeProvider>());
 });
-builder.Services.AddSingleton<DanmakuClientFactory>();
+builder.Services.AddSingleton<IDanmakuClientFactory, DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventPublisher, RedisLiveEventPublisher>();
 builder.Services.AddSingleton<ICookieInvalidEventPublisher, RedisCookieInvalidEventPublisher>();
 builder.Services.AddSingleton<CrawlLockProvider>();

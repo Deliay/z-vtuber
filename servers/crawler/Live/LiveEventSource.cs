@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Mikibot.Crawler.WebsocketCrawler.Client;
 using Mikibot.Crawler.WebsocketCrawler.Data;
 using Z.Vtuber.Common.Live;
 using Z.Vtuber.Common.Persistence;
@@ -12,7 +11,7 @@ public sealed class LiveEventSource(
     ISubscriptionService subscription,
     AccountBasicInfoRepository accountRepository,
     ICookiePoolService cookiePool,
-    DanmakuClientFactory factory,
+    IDanmakuClientFactory factory,
     LiveEventRepository eventRepository,
     LiveEventTextIndexRepository textIndexRepository,
     ILiveEventPublisher publisher,
@@ -103,7 +102,7 @@ public sealed class LiveEventSource(
     {
         while (!ct.IsCancellationRequested)
         {
-            DanmakuClient? client = null;
+            IDanmakuClient? client = null;
             IDisposable? lockRelease = null;
             try
             {

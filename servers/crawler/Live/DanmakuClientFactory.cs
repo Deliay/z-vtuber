@@ -6,9 +6,9 @@ using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Crawler.Live;
 
-public sealed class DanmakuClientFactory(IBilibiliAccountProvider accountProvider, CookieCallGate gate)
+public class DanmakuClientFactory(IBilibiliAccountProvider accountProvider, CookieCallGate gate) : IDanmakuClientFactory
 {
-    public async Task<DanmakuClient> CreateAsync(string cookie, CancellationToken ct = default)
+    public async Task<IDanmakuClient> CreateAsync(string cookie, CancellationToken ct = default)
     {
         var provider = await accountProvider.GetProviderAsync(cookie, ct);
         return BuildClient(provider);
@@ -19,7 +19,7 @@ public sealed class DanmakuClientFactory(IBilibiliAccountProvider accountProvide
     /// and returns the client together with a release handle that MUST be disposed
     /// by the caller after the websocket connection is established.
     /// </summary>
-    public async Task<(DanmakuClient Client, IDisposable Release)> CreateWithLockAsync(string cookie, CancellationToken ct = default)
+    public async Task<(IDanmakuClient Client, IDisposable Release)> CreateWithLockAsync(string cookie, CancellationToken ct = default)
     {
         var releaser = await gate.AcquireAsync(cookie, ct);
         try
@@ -38,12 +38,12 @@ public sealed class DanmakuClientFactory(IBilibiliAccountProvider accountProvide
         }
     }
 
-    private static DanmakuClient BuildClient(IServiceProvider provider)
+    private static IDanmakuClient BuildClient(IServiceProvider provider)
     {
         var http = provider.GetRequiredService<HttpClient>();
         var account = provider.GetRequiredService<BilibiliAccount>();
         var live = provider.GetRequiredService<BiliLiveCrawler>();
         var ws = new WebsocketClient();
-        return new DanmakuClient(ws, http, account, live);
+        return new DanmakuClientAdapter(new DanmakuClient(ws, http, account, live));
     }
 }
