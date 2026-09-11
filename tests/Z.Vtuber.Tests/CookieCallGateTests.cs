@@ -32,7 +32,7 @@ public class CookieCallGateTests
     public async Task AcquireAsync_DifferentCookies_AreConcurrent()
     {
         var gate = new CookieCallGate();
-        var order = new List<int>();
+        var order = new System.Collections.Concurrent.ConcurrentBag<int>();
 
         var t1 = Task.Run(async () =>
         {
@@ -50,7 +50,6 @@ public class CookieCallGateTests
 
         await Task.WhenAll(t1, t2);
 
-        // Both ran concurrently — both should have completed
         Assert.Equal(2, order.Count);
     }
 
