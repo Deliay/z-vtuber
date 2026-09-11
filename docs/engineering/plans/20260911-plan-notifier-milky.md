@@ -8,15 +8,15 @@ type: Permanent
 **功能名称**: 通知服务接入 Milky 协议（替换 Satori）
 **关联 PRD**: `docs/product/draft/20260911-notifier-milky-prd.md`（v1.0）
 **关联技术提案**: `docs/engineering/proposals/20260911-proposal-notifier-milky.md`（v1.0）
-**Plan 版本**: v1.1
+**Plan 版本**: v1.2
 **创建日期**: 2026-09-11
-**更新日期**: 2026-09-11（v1.1：按下游打回意见修订——旧 Satori 通知需求未上线，无生产存量数据，取消全部数据迁移与兼容处理：订阅实体字段直接替换、唯一索引直接按新模型创建，不做旧索引检测删除与存量清空；上游提案第 4 节迁移策略相应不适用，以本 Plan 为准）
+**更新日期**: 2026-09-11（v1.1：按下游打回意见修订——旧 Satori 通知需求未上线，无生产存量数据，取消全部数据迁移与兼容处理：订阅实体字段直接替换、唯一索引直接按新模型创建，不做旧索引检测删除与存量清空；上游提案第 4 节迁移策略相应不适用，以本 Plan 为准。v1.2：按验收打回意见修订——同一 cookie 失效时通知重复发送（实测 4 次），根因在 crawler 侧失效路径无并发控制：① `BilibiliAccountProvider.GetProviderAsync` 多个并发调用方共享同一 faulted `Lazy<Task>`，每个 awaiter 各自进入失效分支重复 `MarkOfflineAsync` + 发布事件；② `MarkOfflineAsync` 为无条件更新，无「状态迁移」判定，`CookieNavProbeService` 与 `BilibiliAccountProvider` 两处及重建后再次失败均可重复发布。新增修复任务：cookie 粒度并发锁（websocket 场景建立连接后释放）+ 失效事件恰好一次发布（见任务 1.8/2.7，验收对照第 6 节）
 **作者**: Workflow Agent（代起草）
 **feat-branch**: `feat/milky-notification`（需求总分支）
 
 ## 1. 概述
 
-本 Plan 基于 PRD v1.0 与技术提案 v1.0 编写，指导「Satori → Milky」整体替换的编码实施。改动分五块：① 契约 `contracts/notifier.openapi.yaml` 升级 v2.0.0（`/channels` → `/groups`、订阅字段群维度化）；② common 订阅实体字段直接群维度化（`group_id/group_name`）+ 唯一索引直接按新模型创建（旧需求未上线，无存量数据，不做迁移）；③ notifier 删除 `Satori/`、新增 `Milky/`（`Milky.Net.Client` 封装，纯 HTTP API 面），配置 API 与投递服务群维度化，配置切换 `Z_VTUBER_MILKY_*`（fail-fast 不变）；④ `apps/web`「通知」模块群维度适配与契约代码生成；⑤ Aspire 参数切换与文档同步。crawler 事件发布链路零改动。实施全程遵循 `docs/engineering/common-rules.md`（TDD、契约式开发、核心逻辑覆盖率 ≥ 80%）、`backend-rules.md`、`frontend-rules.md` 及各子项目 AGENTS.md。
+本 Plan 基于 PRD v1.0 与技术提案 v1.0 编写，指导「Satori → Milky」整体替换的编码实施。改动分五块：① 契约 `contracts/notifier.openapi.yaml` 升级 v2.0.0（`/channels` → `/groups`、订阅字段群维度化）；② common 订阅实体字段直接群维度化（`group_id/group_name`）+ 唯一索引直接按新模型创建（旧需求未上线，无存量数据，不做迁移）；③ notifier 删除 `Satori/`、新增 `Milky/`（`Milky.Net.Client` 封装，纯 HTTP API 面），配置 API 与投递服务群维度化，配置切换 `Z_VTUBER_MILKY_*`（fail-fast 不变）；④ `apps/web`「通知」模块群维度适配与契约代码生成；⑤ Aspire 参数切换与文档同步。crawler 事件发布链路除 v1.2 新增的「失效通知并发去重与 cookie 粒度加锁」修复外零改动。实施全程遵循 `docs/engineering/common-rules.md`（TDD、契约式开发、核心逻辑覆盖率 ≥ 80%）、`backend-rules.md`、`frontend-rules.md` 及各子项目 AGENTS.md。
 
 ### 1.0 上游核实结论（代码现状复查）
 
@@ -41,7 +41,7 @@ type: Permanent
   - web：codegen 重新生成 `schema-notify.d.ts`；`client.ts` `listNotifyGroups` 等适配；`NotificationPage.tsx` 群维度化。
   - 工程：`infra/apphost/AppHost.cs` 参数切换。
   - 测试：Satori 相关测试全部替换，单元/集成/前端测试覆盖达标且无回归。
-- **不做**：Milky 事件流消费（SSE/WS）；私聊/@人/富媒体消息段；**存量订阅数据的任何迁移、清理与兼容处理**（旧需求未上线，无生产数据；上游 PRD/提案中「存量清理 + 索引重建迁移」相关表述随之不适用）；配置 API 鉴权；crawler 与 Redis 事件链路任何改动；`build-notifier-image.yml`、Dockerfile、launchSettings、slnx、codegen 脚本改动（均已核实无需变更）。
+- **不做**：Milky 事件流消费（SSE/WS）；私聊/@人/富媒体消息段；**存量订阅数据的任何迁移、清理与兼容处理**（旧需求未上线，无生产数据；上游 PRD/提案中「存量清理 + 索引重建迁移」相关表述随之不适用）；配置 API 鉴权；crawler 与 Redis 事件链路除 v1.2 修复（失效通知恰好一次 + cookie 粒度并发锁，见任务 1.8/2.7）外的任何改动；`build-notifier-image.yml`、Dockerfile、launchSettings、slnx、codegen 脚本改动（均已核实无需变更）。
 
 ### 1.2 现状基线
 
@@ -80,8 +80,9 @@ type: Permanent
 | 1.5 | `NotifyConfigControllerTests` 改写：① 订阅增删查、删除不存在 404；② 非法 `eventType` 400、非法 `groupId`（不可解析为 int64）400；③ `(eventType, groupId)` 重复创建幂等返回已有；④ `GET /groups` 返回 fake 群列表（groupId/groupName）；⑤ Milky 不可达或未登录时 503 + 明确错误消息（不静默空列表）；⑥ 缺 `Z_VTUBER_MILKY_ENDPOINT` 时宿主构建因 `ValidateOnStart` 失败（参照 `StartupDiTests` 先例） | `tests/Z.Vtuber.Tests/NotifyConfigControllerTests.cs` | 红 |
 | 1.6 | `NotificationDispatchServiceTests` 改写：① 无订阅时忽略不发送；② 多订阅逐群发送（`FakeMilkyApiClient` 记录 groupId 与文案）；③ 单条发送失败不影响其余订阅；④ 文案不变（含昵称/MID/时间，不含敏感信息，账号信息缺失降级 CookieId 尾段）；⑤ Milky 调用异常时跳过该条记日志 | `tests/Z.Vtuber.Tests/NotificationDispatchServiceTests.cs` | 红 |
 | 1.7 | 前端测试改写：① `client.test.ts`：`listNotifyChannels` → `listNotifyGroups`（路径 `/notify/groups`）、创建绑定请求体群维度化；② `NotificationPage.test.tsx`：绑定列表目标群列（群名/群号）渲染与空态、新增绑定弹窗群下拉加载（label `{groupName ?? groupId}（{groupId}）`）/错误重试/提交刷新、重复绑定提示、删除两阶段确认 | `apps/web/src/api/client.test.ts`、`apps/web/src/pages/notification/NotificationPage.test.tsx` | `npm run test` 红 |
+| 1.8 | （v1.2 新增）失效通知并发去重与加锁测试：① `CookiePoolServiceTests`：`MarkOfflineAsync` 改为返回 `bool`（或新增 `TryMarkOfflineAsync`）——Active→Offline 首次迁移返回 `true`，重复调用/已 Offline 返回 `false`；并发 N 次调用仅一次返回 `true`；② `CookieNavProbeServiceTests`/`BilibiliAccountProvider` 测试增补：仅当状态迁移成功（返回 `true`）时才发布失效事件，已 Offline 的 cookie 探测失败不再发布；③ `BilibiliAccountProvider` 并发测试：N 个并发 `GetProviderAsync`（同一 cookie，构建失败）仅产生**一次**失效发布，且构建调用（`BuildProviderAsync`）不并发重入（cookie 粒度锁生效）；④ websocket 场景测试：`DanmakuClientFactory`/连接路径在 `ConnectAsync` 完成前持有 cookie 锁、连接建立后释放（可用 fake/stub 锁定锁的获取-释放时序） | `tests/Z.Vtuber.Tests/CookiePoolServiceTests.cs`、`tests/Z.Vtuber.Tests/CookieNavProbeServiceTests.cs`、`tests/Z.Vtuber.Tests/BilibiliAccountProviderTests.cs`（或既有对应文件） | 红 |
 
-注：`CookieInvalidEventSubscriberTests`（Redis 泵）与全部 crawler 侧测试**不改**——事件链路零改动。
+注：`CookieInvalidEventSubscriberTests`（Redis 泵）不改；crawler 侧测试除 v1.2 新增的 1.8 外不改——事件链路语义不变。
 
 ### Phase 2: 实现（绿）
 
@@ -93,6 +94,7 @@ type: Permanent
 | 2.4 | 投递适配：`NotificationDispatchService` 依赖换为 `IMilkyApiClient`，循环内 `SendGroupMessageAsync(long.Parse(subscription.GroupId), 文案, ct)`；单条失败仅记日志继续下一条；`FormatMessage` 文案不变 | `servers/notifier/Dispatch/NotificationDispatchService.cs` | 1.6 转绿 |
 | 2.5 | 删除 Satori 实现：`servers/notifier/Satori/` 整目录删除（含 `EscapeXml` 与登录发现逻辑），全仓库 `Satori`/`Z_VTUBER_SATORI_` 引用清零（以 grep 验证） | `servers/notifier/Satori/`（删） | 2.2-2.4 完成后编译通过；grep 无残留 |
 | 2.6 | 前端适配（与 2.2-2.5 并行，仅依赖 Phase 0 契约）：① `npm run codegen` 重新生成 `schema-notify.d.ts`（自动生成勿手改）；② `client.ts`：`listNotifyChannels` → `listNotifyGroups`（`/notify/groups`），创建绑定请求体 `groupId/groupName`；③ `NotificationPage.tsx`：绑定列表列「平台/群组/频道」→「目标群」（群名/群号），弹窗下拉选项 label `{groupName ?? groupId}（{groupId}）`、value 携带 groupId/groupName；错误态/重试/两阶段删除等交互不变 | `apps/web/src/api/schema-notify.d.ts`（生成）、`apps/web/src/api/client.ts`、`apps/web/src/pages/notification/NotificationPage.tsx` | 1.7 转绿；`npm run lint`/`npm run build` 通过 |
+| 2.7 | （v1.2 新增）crawler 失效通知并发去重与 cookie 粒度加锁：① **恰好一次发布**——`ICookiePoolService.MarkOfflineAsync` 返回 `bool`（或新增 `TryMarkOfflineAsync`）：Mongo 原子条件更新（filter `Cookie == cookie && Status == Active`），返回 `ModifiedCount > 0`；`CookieNavProbeService` 与 `BilibiliAccountProvider` 失效分支仅当迁移成功（`true`）才发布事件，两处共享同一原子判定，跨调用点恰好一次；② **cookie 粒度并发锁**——crawler 新增 keyed lock（如 `Services/CookieCallGate`：cookie 字符串 → `SemaphoreSlim(1,1)`，`AcquireAsync` 返回 `IDisposable` 释放句柄，不淘汰条目）；`BilibiliAccountProvider.GetProviderAsync` 持锁执行「double-check 缓存 → GetOrAdd/await → 失效分支（移除缓存 + 原子标记 + 条件发布）」全程，保证同一 cookie 同一瞬间仅一次构建/调用与一次失效处置（注意锁内 double-check：等待方拿到锁后须重新检查 `_providers`，避免重复构建）；③ **websocket 场景**——`LiveEventSource.RunRoomAsync` 弹幕路径在 `factory.CreateAsync` 前持有同一 cookie 锁，至 `client.ConnectAsync` 连接建立成功后释放（事件循环阶段不持锁）；为规避 `CreateAsync → GetProviderAsync` 嵌套同锁死锁，`BilibiliAccountProvider` 拆出无锁内部核心方法（公共方法持锁调用），`DanmakuClientFactory` 提供持锁变体（获取锁 → 调用核心方法构建 → 返回 client 与释放句柄，异常时立即释放），`RunRoomAsync` 在 `ConnectAsync` 成功后显式释放 | `servers/common/Services/CookiePoolService.cs`、`servers/crawler/Services/CookieCallGate.cs`（新）、`servers/crawler/Crawlers/BilibiliAccountProvider.cs`、`servers/crawler/Services/CookieNavProbeService.cs`、`servers/crawler/Live/DanmakuClientFactory.cs`、`servers/crawler/Live/LiveEventSource.cs` | 1.8 转绿；既有 crawler 测试无回归 |
 
 ### Phase 3: 工程接入
 
@@ -107,7 +109,7 @@ type: Permanent
 | # | 任务 | 验收 |
 |---|------|------|
 | 4.1 | `dotnet test tests/Z.Vtuber.Tests` 全绿（含 crawler 侧既有回归）；`MilkyApiClient`/配置 API/投递/仓储核心路径覆盖率 ≥ 80%；`npm run test` / `npm run lint` / `npm run build` 全绿；grep 确认 `Satori`/`Z_VTUBER_SATORI_` 零残留（代码、配置、测试） | 全部通过 |
-| 4.2 | 编排手工验证（z-aspire-orchestrator）：本地 Aspire 拉起全量服务 → 缺 `Z_VTUBER_MILKY_ENDPOINT` 时 notifier 启动失败且日志明确 → 注入可用 Milky 后经 web「通知」模块查询 QQ 群、新增绑定 → 将测试 cookie 置失效，观察目标 QQ 群秒级收到通知（文案不变，无敏感信息）→ 无订阅时静默 → 删除绑定二次确认生效 → 重启后订阅仍在 | 手工验证记录 |
+| 4.2 | 编排手工验证（z-aspire-orchestrator）：本地 Aspire 拉起全量服务 → 缺 `Z_VTUBER_MILKY_ENDPOINT` 时 notifier 启动失败且日志明确 → 注入可用 Milky 后经 web「通知」模块查询 QQ 群、新增绑定 → 将测试 cookie 置失效，观察目标 QQ 群秒级收到通知（文案不变，无敏感信息）**且同一 cookie 一次失效仅收到一条通知（v1.2）** → 无订阅时静默 → 删除绑定二次确认生效 → 重启后订阅仍在 | 手工验证记录 |
 | 4.3 | AGENTS.md 同步：新建 `servers/notifier/AGENTS.md`（技术栈/模块结构——`Milky/` 封装与 `Milky.Net.Client` 3.0.0 依赖、事件泵与投递、配置 API v2/裸部署配置——`Z_VTUBER_MILKY_*` 配置表/开发流程，对齐 api/crawler 格式，补齐前序需求缺口）；`servers/common/AGENTS.md`（`Persistence/` 订阅实体字段与索引变更说明更新）；`apps/web/AGENTS.md`（「通知」模块群维度说明更新） | 文档与实现一致 |
 
 ## 4. 并行策略
@@ -127,7 +129,8 @@ type: Permanent
 | 功能点 3：通知订阅绑定（群维度增删查、幂等、持久化） | 0.1、2.1、2.3 | 1.3、1.4、1.5①-③ + 重启后订阅仍在（4.2） |
 | 功能点 4：Cookie 失效通知投递到 QQ 群（多群、无订阅静默、单条失败隔离、文案不变、无敏感信息） | 2.4 | 1.6 + 失效 cookie 端到端验证（4.2） |
 | 功能点 5：后台「通知」模块群维度适配（列表/弹窗下拉/删除确认/错误态） | 2.6 | 1.7 + 界面手工验证（4.2） |
-| 非功能：crawler 与 Redis 事件链路不变 | —（零改动） | 既有测试全绿（4.1） |
+| 非功能：crawler 与 Redis 事件链路不变 | 2.7（仅 v1.2 并发去重/加锁修复，事件契约与语义不变） | 1.8 + 既有测试全绿（4.1） |
+| 非功能：同一 cookie 一次失效恰好一条通知；同一 cookie 同一瞬间仅一次调用（websocket 建立连接后释放锁）（v1.2） | 2.7 | 1.8①-④ + 编排验证（4.2） |
 | 非功能：核心逻辑覆盖率 ≥ 80%、全量测试绿 | 4.1 | `dotnet test` / `npm run test` |
 
 ## 6. 风险与依赖
@@ -138,6 +141,8 @@ type: Permanent
 | 契约破坏式变更 | 字段与路由同时变更，前端需一次性改齐（提案 5.2 实现点 5） | Phase 0 契约先行；2.6 一次性改齐 `client.ts`/页面/测试；4.1 grep 与全量测试兜底 |
 | Milky 服务器可用性 | 外部依赖，本地验证需真实实例且机器人已入群 | 单元/集成测试以 stub `HttpMessageHandler` 与 `FakeMilkyApiClient` 覆盖（1.2/1.5/1.6）；手工验证依赖可用 Milky（4.2） |
 | 部署环境变量未同步 | 生产部署清单（仓库外）需从 `Z_VTUBER_SATORI_*` 切换为 `Z_VTUBER_MILKY_*` | PRD 不兼容声明 + PR #76 描述显式列出；缺失时按预期 fail-fast 启动失败并给出明确提示 |
+| 失效通知并发重复（v1.2） | 多并发调用方共享 faulted `Lazy<Task>` 时各自进入失效分支重复发布；`MarkOfflineAsync` 无条件更新无迁移判定（验收实测同一失效通知发 4 次） | 2.7：Mongo 原子条件更新实现恰好一次发布 + cookie 粒度 keyed lock 串行化并发调用（websocket 场景连接建立后释放）；1.8 并发用例锁定 |
+| keyed lock 嵌套死锁（v1.2） | `DanmakuClientFactory.CreateAsync` 内部走 `GetProviderAsync`，外层 `RunRoomAsync` 再持同一锁会自死锁 | 2.7③：provider 拆无锁核心方法 + 工厂持锁变体，`SemaphoreSlim` 不可重入约束由结构规避；1.8④ 锁时序用例锁定 |
 | 依赖 | `Milky.Net.Client` 3.0.0（NuGet，仅 notifier 引用，csproj 固定精确版本）；Milky 协议 `get_login_info`/`get_group_list`/`send_group_message`；既有 Redis 事件链路与仓储模式；Testcontainers mongo/redis 夹具 | 已核实（1.0） |
 
 ## 7. 相关文档

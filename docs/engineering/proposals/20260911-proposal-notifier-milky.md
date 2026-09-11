@@ -7,8 +7,9 @@ type: Permanent
 
 **功能名称**: 通知服务接入 Milky 协议（替换 Satori）
 **关联 PRD**: `docs/product/draft/20260911-notifier-milky-prd.md`
-**技术提案版本**: v1.0
+**技术提案版本**: v1.1
 **创建日期**: 2026-09-11
+**更新日期**: 2026-09-11（v1.1：按验收打回意见补充 crawler 侧失效路径并发约束——同一 cookie 失效恰好发布一次失效事件（`MarkOfflineAsync` 改原子条件更新，仅状态迁移成功者发布）；同一 cookie 同一瞬间仅允许一次调用，cookie 粒度 keyed lock 串行化，websocket（弹幕）场景建立连接后释放锁；事件契约本身不变，见 3.2 节补充）
 **作者**: Workflow Agent（代起草）
 **feat-branch**: `feat/milky-notification`（需求总分支；实现分支另行切出）
 
@@ -146,6 +147,8 @@ GET 订阅列表响应的订阅对象字段同步为 `{ id, eventType, groupId, 
 #### Redis 事件契约（crawler → notifier）
 
 **完全不变**：频道 `cookie-invalid`、payload 字段与序列化约定沿用既有版本。
+
+**v1.1 补充（crawler 侧失效路径并发约束，事件契约不变）**：验收发现同一 cookie 一次失效产生多条重复事件（实测 4 条通知）——`BilibiliAccountProvider` 多并发 awaiter 共享 faulted `Lazy<Task>` 各自进入失效分支重复发布，且 `MarkOfflineAsync` 无状态迁移判定。补充两条约束：① **恰好一次**：`MarkOfflineAsync` 改为 Mongo 原子条件更新（`Status == Active` 才置 Offline 并返回是否迁移成功），仅迁移成功者发布事件，跨 `CookieNavProbeService`/`BilibiliAccountProvider` 两调用点共享同一原子判定；② **cookie 粒度并发锁**：同一 cookie 同一瞬间仅允许一次构建/调用（keyed `SemaphoreSlim`），websocket（弹幕）场景持锁至 `ConnectAsync` 连接建立后释放。
 
 #### Milky 调用面（notifier → Milky 服务器）
 
