@@ -11,6 +11,10 @@ import {
   subscribeWeibo,
   unsubscribeWeibo,
   getWeiboTimeline,
+  listNotifyChannels,
+  listNotificationBindings,
+  createNotificationBinding,
+  deleteNotificationBinding,
 } from './client'
 
 const mockFetch = vi.fn()
@@ -366,6 +370,141 @@ describe('API Client', () => {
       })
 
       await expect(listBackstageCookies()).rejects.toThrow(
+        'API request failed',
+      )
+    })
+  })
+
+  describe('listNotifyChannels', () => {
+    it('should fetch notify channels', async () => {
+      const mockData = {
+        items: [
+          { platform: 'onebot', guildId: 'g1', guildName: 'Guild 1', channelId: 'c1', channelName: 'Channel 1' },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockData),
+      })
+
+      const result = await listNotifyChannels()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/notify/channels'),
+        expect.objectContaining({}),
+      )
+      expect(result).toEqual(mockData.items)
+    })
+
+    it('should throw error on non-2xx response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+        text: () => Promise.resolve('Satori 不可达'),
+      })
+
+      await expect(listNotifyChannels()).rejects.toThrow('API request failed')
+    })
+  })
+
+  describe('listNotificationBindings', () => {
+    it('should fetch notification bindings', async () => {
+      const mockData = {
+        items: [
+          { id: '1', eventType: 'cookie_invalid', platform: 'onebot', guildId: 'g1', channelId: 'c1', createdAt: '2024-01-01T00:00:00Z' },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockData),
+      })
+
+      const result = await listNotificationBindings()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/notify/subscriptions'),
+        expect.objectContaining({}),
+      )
+      expect(result).toEqual(mockData.items)
+    })
+  })
+
+  describe('createNotificationBinding', () => {
+    it('should send POST request with correct body', async () => {
+      const mockResponse = {
+        id: '1',
+        eventType: 'cookie_invalid',
+        platform: 'onebot',
+        guildId: 'g1',
+        channelId: 'c1',
+        createdAt: '2024-01-01T00:00:00Z',
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: () => Promise.resolve(mockResponse),
+      })
+
+      const result = await createNotificationBinding({
+        eventType: 'cookie_invalid',
+        platform: 'onebot',
+        guildId: 'g1',
+        channelId: 'c1',
+      })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/notify/subscriptions'),
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      )
+      expect(result).toEqual(mockResponse)
+    })
+
+    it('should throw error on 400 response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: () => Promise.resolve('eventType 非法'),
+      })
+
+      await expect(createNotificationBinding({
+        eventType: 'invalid' as 'cookie_invalid',
+        platform: 'onebot',
+        guildId: 'g1',
+        channelId: 'c1',
+      })).rejects.toThrow('API request failed')
+    })
+  })
+
+  describe('deleteNotificationBinding', () => {
+    it('should send DELETE request with correct path', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 204,
+      })
+
+      await deleteNotificationBinding('1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/notify/subscriptions/1'),
+        expect.objectContaining({
+          method: 'DELETE',
+        }),
+      )
+    })
+
+    it('should throw error on 404 response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        text: () => Promise.resolve('订阅不存在'),
+      })
+
+      await expect(deleteNotificationBinding('999')).rejects.toThrow(
         'API request failed',
       )
     })

@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { SubscriptionPage } from './pages/subscription/SubscriptionPage'
 import { CookiePage } from './pages/cookie/CookiePage'
+import { NotificationPage } from './pages/notification/NotificationPage'
 import './App.css'
 
-type PageKey = 'subscriptions' | 'cookies'
+type PageKey = 'subscriptions' | 'cookies' | 'notifications'
 
 interface MenuItem {
   key: PageKey
@@ -14,6 +15,7 @@ interface MenuItem {
 const menuItems: MenuItem[] = [
   { key: 'subscriptions', label: '订阅管理', component: SubscriptionPage },
   { key: 'cookies', label: 'Cookie 管理', component: CookiePage },
+  { key: 'notifications', label: '通知', component: NotificationPage },
 ]
 
 function App() {
