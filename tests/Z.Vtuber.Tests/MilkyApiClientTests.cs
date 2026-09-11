@@ -40,7 +40,7 @@ public class MilkyApiClientTests
             Assert.Equal(HttpMethod.Post, request.Method);
             Assert.Equal("Bearer test-token", request.Headers.Authorization?.ToString());
 
-            var loginInfo = new { user_id = 12345, nickname = "test-bot" };
+            var loginInfo = new { data = new { user_id = 12345, nickname = "test-bot" } };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(JsonSerializer.Serialize(loginInfo), System.Text.Encoding.UTF8, "application/json"),
@@ -63,7 +63,7 @@ public class MilkyApiClientTests
         {
             Assert.False(request.Headers.Contains("Authorization"));
 
-            var loginInfo = new { user_id = 12345, nickname = "test-bot" };
+            var loginInfo = new { data = new { user_id = 12345, nickname = "test-bot" } };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(JsonSerializer.Serialize(loginInfo), System.Text.Encoding.UTF8, "application/json"),

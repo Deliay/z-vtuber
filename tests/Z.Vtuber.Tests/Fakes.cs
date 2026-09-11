@@ -147,10 +147,13 @@ public sealed class FakeMilkyApiClient : IMilkyApiClient
     public Task<IReadOnlyList<GroupInfo>> GetGroupListAsync(CancellationToken ct = default)
         => GroupListFunc?.Invoke() ?? Task.FromResult<IReadOnlyList<GroupInfo>>([]);
 
-    public Task SendGroupMessageAsync(long groupId, string text, CancellationToken ct = default)
+    public async Task SendGroupMessageAsync(long groupId, string text, CancellationToken ct = default)
     {
+        if (SendMessageFunc is not null)
+        {
+            await SendMessageFunc(groupId, text);
+        }
         SendMessageCalls.Add((groupId, text));
-        return SendMessageFunc?.Invoke(groupId, text) ?? Task.CompletedTask;
     }
 }
 
