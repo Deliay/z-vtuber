@@ -30,6 +30,36 @@ public class MilkyApiClientTests
         return new MilkyApiClient(httpClient, opts, NullLogger<MilkyApiClient>.Instance);
     }
 
+    private static HttpResponseMessage CreateMilkyResponse(object data)
+    {
+        var response = new
+        {
+            status = "ok",
+            retcode = 0,
+            data = data,
+            message = (string?)null,
+        };
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(response), System.Text.Encoding.UTF8, "application/json"),
+        };
+    }
+
+    private static HttpResponseMessage CreateMilkyErrorResponse(string message, int retcode = 1)
+    {
+        var response = new
+        {
+            status = "failed",
+            retcode = retcode,
+            data = (object?)null,
+            message = message,
+        };
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(response), System.Text.Encoding.UTF8, "application/json"),
+        };
+    }
+
     [Fact]
     public async Task GetLoginInfoAsync_Success_ReturnsLoginInfo()
     {
@@ -40,11 +70,7 @@ public class MilkyApiClientTests
             Assert.Equal(HttpMethod.Post, request.Method);
             Assert.Equal("Bearer test-token", request.Headers.Authorization?.ToString());
 
-            var loginInfo = new { data = new { user_id = 12345, nickname = "test-bot" } };
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(loginInfo), System.Text.Encoding.UTF8, "application/json"),
-            });
+            return Task.FromResult(CreateMilkyResponse(new { uin = 12345, nickname = "test-bot" }));
         };
 
         var client = CreateClient(handler);
@@ -63,11 +89,7 @@ public class MilkyApiClientTests
         {
             Assert.False(request.Headers.Contains("Authorization"));
 
-            var loginInfo = new { data = new { user_id = 12345, nickname = "test-bot" } };
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(loginInfo), System.Text.Encoding.UTF8, "application/json"),
-            });
+            return Task.FromResult(CreateMilkyResponse(new { uin = 12345, nickname = "test-bot" }));
         };
 
         var client = CreateClient(handler, new MilkyOptions
@@ -96,6 +118,20 @@ public class MilkyApiClientTests
     }
 
     [Fact]
+    public async Task GetLoginInfoAsync_MilkyError_Throws()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.HandlerFunc = (request, ct) =>
+        {
+            return Task.FromResult(CreateMilkyErrorResponse("Login failed"));
+        };
+
+        var client = CreateClient(handler);
+
+        await Assert.ThrowsAsync<Milky.Net.Model.MilkyException>(() => client.GetLoginInfoAsync());
+    }
+
+    [Fact]
     public async Task GetGroupListAsync_ReturnsGroups()
     {
         var handler = new MockHttpMessageHandler();
@@ -105,18 +141,12 @@ public class MilkyApiClientTests
             Assert.Equal(HttpMethod.Post, request.Method);
             Assert.Equal("Bearer test-token", request.Headers.Authorization?.ToString());
 
-            var groups = new
+            var groups = new object[]
             {
-                data = new[]
-                {
-                    new { group_id = 123456, group_name = "运维群" },
-                    new { group_id = 789012, group_name = "测试群" },
-                }
+                new { group_id = 123456, group_name = "运维群" },
+                new { group_id = 789012, group_name = "测试群" },
             };
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(groups), System.Text.Encoding.UTF8, "application/json"),
-            });
+            return Task.FromResult(CreateMilkyResponse(new { groups }));
         };
 
         var client = CreateClient(handler);
@@ -136,11 +166,7 @@ public class MilkyApiClientTests
         var handler = new MockHttpMessageHandler();
         handler.HandlerFunc = (request, ct) =>
         {
-            var groups = new { data = Array.Empty<object>() };
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(groups), System.Text.Encoding.UTF8, "application/json"),
-            });
+            return Task.FromResult(CreateMilkyResponse(new { groups = Array.Empty<object>() }));
         };
 
         var client = CreateClient(handler);
@@ -154,7 +180,7 @@ public class MilkyApiClientTests
     public async Task SendGroupMessageAsync_SendsCorrectRequest()
     {
         long? capturedGroupId = null;
-        string? capturedMessage = null;
+        string? capturedText = null;
 
         var handler = new MockHttpMessageHandler();
         handler.HandlerFunc = async (request, ct) =>
@@ -165,12 +191,12 @@ public class MilkyApiClientTests
 
             var body = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync());
             capturedGroupId = body.GetProperty("group_id").GetInt64();
-            var messageArray = body.GetProperty("message");
-            Assert.Equal(1, messageArray.GetArrayLength());
-            var messageSegment = messageArray[0];
-            Assert.Equal("text", messageSegment.GetProperty("type").GetString());
-            capturedMessage = messageSegment.GetProperty("data").GetProperty("text").GetString();
-            return new HttpResponseMessage(HttpStatusCode.OK);
+            var messages = body.GetProperty("message");
+            Assert.Equal(1, messages.GetArrayLength());
+            var segment = messages[0];
+            Assert.Equal("text", segment.GetProperty("type").GetString());
+            capturedText = segment.GetProperty("text").GetString();
+            return CreateMilkyResponse(new { message_id = 123 });
         };
 
         var client = CreateClient(handler);
@@ -178,29 +204,29 @@ public class MilkyApiClientTests
         await client.SendGroupMessageAsync(123456, "Hello World");
 
         Assert.Equal(123456, capturedGroupId);
-        Assert.Equal("Hello World", capturedMessage);
+        Assert.Equal("Hello World", capturedText);
     }
 
     [Fact]
     public async Task SendGroupMessageAsync_NoXmlEscape()
     {
-        string? capturedMessage = null;
+        string? capturedText = null;
 
         var handler = new MockHttpMessageHandler();
         handler.HandlerFunc = async (request, ct) =>
         {
             var body = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync());
-            var messageArray = body.GetProperty("message");
-            var messageSegment = messageArray[0];
-            capturedMessage = messageSegment.GetProperty("data").GetProperty("text").GetString();
-            return new HttpResponseMessage(HttpStatusCode.OK);
+            var messages = body.GetProperty("message");
+            var segment = messages[0];
+            capturedText = segment.GetProperty("text").GetString();
+            return CreateMilkyResponse(new { message_id = 123 });
         };
 
         var client = CreateClient(handler);
 
         await client.SendGroupMessageAsync(123456, "Hello <world> & \"test\"");
 
-        Assert.Equal("Hello <world> & \"test\"", capturedMessage);
+        Assert.Equal("Hello <world> & \"test\"", capturedText);
     }
 
     [Fact]
@@ -215,5 +241,19 @@ public class MilkyApiClientTests
         var client = CreateClient(handler);
 
         await Assert.ThrowsAsync<HttpRequestException>(() => client.SendGroupMessageAsync(123456, "test"));
+    }
+
+    [Fact]
+    public async Task SendGroupMessageAsync_MilkyError_Throws()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.HandlerFunc = (request, ct) =>
+        {
+            return Task.FromResult(CreateMilkyErrorResponse("Send failed"));
+        };
+
+        var client = CreateClient(handler);
+
+        await Assert.ThrowsAsync<Milky.Net.Model.MilkyException>(() => client.SendGroupMessageAsync(123456, "test"));
     }
 }
