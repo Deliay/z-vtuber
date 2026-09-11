@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Mikibot.Crawler.WebsocketCrawler.Client;
 using Mikibot.Crawler.WebsocketCrawler.Data;
 using Z.Vtuber.Common.Live;
 using Z.Vtuber.Common.Persistence;
@@ -102,81 +103,25 @@ public sealed class LiveEventSource(
     {
         while (!ct.IsCancellationRequested)
         {
+            DanmakuClient? client = null;
+            IDisposable? lockRelease = null;
             try
             {
                 var cookie = (await cookiePool.NextAsync(ct)).Cookie;
-                using var client = await factory.CreateAsync(cookie, ct);
+                // Lock-aware: cookie lock held through CreateAsync + ConnectAsync, released after connection established.
+                (client, lockRelease) = await factory.CreateWithLockAsync(cookie, ct);
                 await client.ConnectAsync(roomId, ct);
-
-                await foreach (var data in client.Events(ct))
-                {
-                    if (data is not Normal normal)
-                    {
-                        continue;
-                    }
-
-                    var liveEvent = DanmakuEventNormalizer.Normalize(
-                        roomId,
-                        sessionTracker.GetCurrentSessionId(roomId),
-                        normal.RawContent,
-                        DateTime.UtcNow);
-                    if (liveEvent is null)
-                    {
-                        continue;
-                    }
-
-                    var liveEventRecord = new LiveEventRecord
-                    {
-                        RoomId = liveEvent.RoomId,
-                        LiveSessionId = liveEvent.LiveSessionId,
-                        Type = liveEvent.Type,
-                        Payload = liveEvent.Payload,
-                        OccurredAt = liveEvent.OccurredAt,
-                        Price = liveEvent.Price ?? GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
-                    };
-
-                    await eventRepository.InsertAsync(liveEventRecord, ct);
-
-                    // 文本索引写入：弹幕/SC 事件提取文本并写入索引集合
-                    try
-                    {
-                        var extraction = LiveEventTextExtractor.Extract(liveEvent.Type, liveEvent.Payload);
-                        if (extraction is not null)
-                        {
-                            var textIndexRecord = new LiveEventTextIndexRecord
-                            {
-                                EventId = liveEventRecord.Id,
-                                RoomId = liveEvent.RoomId,
-                                Type = liveEvent.Type,
-                                Text = extraction.Text,
-                                SenderName = extraction.SenderName,
-                                SenderUid = extraction.SenderUid,
-                                SenderMedal = extraction.SenderMedal,
-                                OccurredAt = liveEvent.OccurredAt
-                            };
-                            await textIndexRepository.InsertAsync(textIndexRecord, ct);
-                        }
-                    }
-                    catch (MongoDB.Driver.MongoWriteException ex) when (ex.WriteError.Code == 11000)
-                    {
-                        // 唯一键冲突（EventId 已存在），仅记日志不阻断
-                        logger.LogDebug(ex, "Text index record for event {EventId} already exists; skipping.", liveEventRecord.Id);
-                    }
-                    catch (Exception ex)
-                    {
-                        // 提取/写索引异常不阻断总线发布与 SSE
-                        logger.LogWarning(ex, "Failed to write text index for event {EventId}; continuing.", liveEventRecord.Id);
-                    }
-
-                    await publisher.PublishAsync(liveEvent, ct);
-                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                lockRelease?.Dispose();
+                client?.Dispose();
                 break;
             }
             catch (NoAvailableCookieException)
             {
+                lockRelease?.Dispose();
+                client?.Dispose();
                 logger.LogWarning("Danmaku connection for room {RoomId} skipped: no active cookie; retrying in {Delay}s.", roomId, NoCookieRetryDelay.TotalSeconds);
                 try
                 {
@@ -189,6 +134,8 @@ public sealed class LiveEventSource(
             }
             catch (Exception ex)
             {
+                lockRelease?.Dispose();
+                client?.Dispose();
                 logger.LogWarning(ex, "Danmaku connection for room {RoomId} lost; reconnecting in {Delay}s.", roomId, ReconnectDelay.TotalSeconds);
                 try
                 {
@@ -198,6 +145,97 @@ public sealed class LiveEventSource(
                 {
                     break;
                 }
+            }
+
+            // Lock released, client connected — event loop runs without holding the cookie lock.
+            try
+            {
+                if (client is not null)
+                {
+                    await foreach (var data in client.Events(ct))
+                    {
+                        if (data is not Normal normal)
+                        {
+                            continue;
+                        }
+
+                        var liveEvent = DanmakuEventNormalizer.Normalize(
+                            roomId,
+                            sessionTracker.GetCurrentSessionId(roomId),
+                            normal.RawContent,
+                            DateTime.UtcNow);
+                        if (liveEvent is null)
+                        {
+                            continue;
+                        }
+
+                        var liveEventRecord = new LiveEventRecord
+                        {
+                            RoomId = liveEvent.RoomId,
+                            LiveSessionId = liveEvent.LiveSessionId,
+                            Type = liveEvent.Type,
+                            Payload = liveEvent.Payload,
+                            OccurredAt = liveEvent.OccurredAt,
+                            Price = liveEvent.Price ?? GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
+                        };
+
+                        await eventRepository.InsertAsync(liveEventRecord, ct);
+
+                        // 文本索引写入：弹幕/SC 事件提取文本并写入索引集合
+                        try
+                        {
+                            var extraction = LiveEventTextExtractor.Extract(liveEvent.Type, liveEvent.Payload);
+                            if (extraction is not null)
+                            {
+                                var textIndexRecord = new LiveEventTextIndexRecord
+                                {
+                                    EventId = liveEventRecord.Id,
+                                    RoomId = liveEvent.RoomId,
+                                    Type = liveEvent.Type,
+                                    Text = extraction.Text,
+                                    SenderName = extraction.SenderName,
+                                    SenderUid = extraction.SenderUid,
+                                    SenderMedal = extraction.SenderMedal,
+                                    OccurredAt = liveEvent.OccurredAt
+                                };
+                                await textIndexRepository.InsertAsync(textIndexRecord, ct);
+                            }
+                        }
+                        catch (MongoDB.Driver.MongoWriteException ex) when (ex.WriteError.Code == 11000)
+                        {
+                            // 唯一键冲突（EventId 已存在），仅记日志不阻断
+                            logger.LogDebug(ex, "Text index record for event {EventId} already exists; skipping.", liveEventRecord.Id);
+                        }
+                        catch (Exception ex)
+                        {
+                            // 提取/写索引异常不阻断总线发布与 SSE
+                            logger.LogWarning(ex, "Failed to write text index for event {EventId}; continuing.", liveEventRecord.Id);
+                        }
+
+                        await publisher.PublishAsync(liveEvent, ct);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Danmaku connection for room {RoomId} lost; reconnecting in {Delay}s.", roomId, ReconnectDelay.TotalSeconds);
+                try
+                {
+                    await Task.Delay(ReconnectDelay, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+            finally
+            {
+                lockRelease?.Dispose();
+                client?.Dispose();
             }
         }
     }

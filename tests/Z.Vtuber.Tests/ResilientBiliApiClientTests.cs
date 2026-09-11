@@ -71,7 +71,7 @@ public sealed class ResilientBiliApiClientTests
             Task.FromResult(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
         public Task<CookieRecord> NextAsync(CancellationToken ct = default) =>
             Task.FromResult(new CookieRecord { Cookie = "spy", Status = CookieStatus.Active });
-        public Task MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
         public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default)
         {
             CooldownCalls.Add((cookie, duration));

@@ -199,4 +199,18 @@ public sealed class CookieNavProbeServiceTests
         Assert.Equal(CookieProbeOutcome.Cooldown, outcome);
         Assert.Empty(publisher.PublishCalls);
     }
+
+    [Fact]
+    public async Task ProbeAsync_OfflineButAlreadyOffline_DoesNotPublish()
+    {
+        var bili = new MockBiliApiClient { NavInfoFunc = (_, _) => throw new InvalidOperationException("boom") };
+        var pool = new MockCookiePoolService { MarkOfflineReturns = false };
+        var repo = new MockCookieAccountInfoRepository();
+        var publisher = new FakeCookieInvalidEventPublisher();
+
+        var outcome = await CreateService(bili, pool, repo, publisher).ProbeAsync(Record());
+
+        Assert.Equal(CookieProbeOutcome.Offline, outcome);
+        Assert.Empty(publisher.PublishCalls);
+    }
 }

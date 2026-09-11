@@ -50,7 +50,7 @@ public sealed class FakeCookiePoolService : ICookiePoolService
     public Task<CookieRecord> NextAsync(CancellationToken ct = default) =>
         Task.FromResult(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
 
-    public Task MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
 
     public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
 
@@ -108,6 +108,7 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public List<(string Cookie, TimeSpan Duration)> CooldownCalls { get; } = [];
     public List<string> OfflineCalls { get; } = [];
     public Func<string, CookieRecord?>? FindByCookieFunc { get; set; }
+    public bool MarkOfflineReturns { get; set; } = true;
 
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<CookieRecord>>(ActiveCookies);
@@ -118,11 +119,23 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public Task<CookieRecord> NextAsync(CancellationToken ct = default)
         => Task.FromResult(new CookieRecord { Cookie = "next", Status = CookieStatus.Active });
 
-    public Task MarkOfflineAsync(string cookie, CancellationToken ct = default)
+    public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default)
     {
         OfflineCalls.Add(cookie);
-        return Task.CompletedTask;
+        // Simulate atomic Active→Offline transition: caller can override via MarkOfflineReturns
+        if (!MarkOfflineReturns)
+        {
+            return Task.FromResult(false);
+        }
+        // First call returns true, subsequent calls return false
+        if (_offlineTransitions.Add(cookie))
+        {
+            return Task.FromResult(true);
+        }
+        return Task.FromResult(false);
     }
+
+    private readonly HashSet<string> _offlineTransitions = [];
 
     public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default)
     {

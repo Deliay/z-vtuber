@@ -62,6 +62,7 @@ builder.Services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
 builder.Services.AddSingleton<ICookieNavProbeService, CookieNavProbeService>();
 builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
 
+builder.Services.AddSingleton<CookieCallGate>();
 builder.Services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
 builder.Services.AddSingleton<BiliApiClient>();
 // 拟真通道：HttpMessageHandler 不可由容器自动解析，工厂注册并挂入 RiskControlHandler
