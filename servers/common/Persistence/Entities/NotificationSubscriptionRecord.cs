@@ -11,20 +11,11 @@ public sealed class NotificationSubscriptionRecord
     [BsonElement("event_type")]
     public string EventType { get; set; } = string.Empty;
 
-    [BsonElement("platform")]
-    public string Platform { get; set; } = string.Empty;
+    [BsonElement("group_id")]
+    public string GroupId { get; set; } = string.Empty;
 
-    [BsonElement("guild_id")]
-    public string GuildId { get; set; } = string.Empty;
-
-    [BsonElement("guild_name")]
-    public string? GuildName { get; set; }
-
-    [BsonElement("channel_id")]
-    public string ChannelId { get; set; } = string.Empty;
-
-    [BsonElement("channel_name")]
-    public string? ChannelName { get; set; }
+    [BsonElement("group_name")]
+    public string? GroupName { get; set; }
 
     [BsonElement("created_at")]
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]

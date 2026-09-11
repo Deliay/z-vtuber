@@ -710,11 +710,10 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var collection = database.GetCollection<NotificationSubscriptionRecord>(MongoCollectionNames.NotificationSubscriptions);
         var keys = Builders<NotificationSubscriptionRecord>.IndexKeys
             .Ascending(n => n.EventType)
-            .Ascending(n => n.Platform)
-            .Ascending(n => n.ChannelId);
-        var options = new CreateIndexOptions { Unique = true, Name = "EventType_1_Platform_1_ChannelId_1" };
+            .Ascending(n => n.GroupId);
+        var options = new CreateIndexOptions { Unique = true, Name = "EventType_1_GroupId_1" };
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<NotificationSubscriptionRecord>(keys, options), cancellationToken: ct);
-        logger.LogInformation("Ensured (EventType, Platform, ChannelId) composite unique index on notification_subscriptions.");
+        logger.LogInformation("Ensured (EventType, GroupId) composite unique index on notification_subscriptions.");
     }
 }
 
