@@ -27,8 +27,8 @@ var notifier = builder.AddProject<Projects.Z_Vtuber_Notifier>("notifier")
     .WaitFor(mongo)
     .WithReference(messaging)
     .WaitFor(messaging)
-    .WithEnvironment("Z_VTUBER_SATORI_ENDPOINT", builder.AddParameter("satori-endpoint", secret: true))
-    .WithEnvironment("Z_VTUBER_SATORI_TOKEN", builder.AddParameter("satori-token", secret: true))
+    .WithEnvironment("Z_VTUBER_MILKY_ENDPOINT", builder.AddParameter("milky-endpoint", secret: true))
+    .WithEnvironment("Z_VTUBER_MILKY_ACCESS_TOKEN", builder.AddParameter("milky-access-token", secret: true))
     .WithHttpHealthCheck("/health");
 
 var web = builder.AddViteApp("web", "../../apps/web")
