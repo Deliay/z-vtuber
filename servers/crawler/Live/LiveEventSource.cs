@@ -108,9 +108,13 @@ public sealed class LiveEventSource(
             try
             {
                 var cookie = (await cookiePool.NextAsync(ct)).Cookie;
-                // Lock-aware: cookie lock held through CreateAsync + ConnectAsync, released after connection established.
+                // Lock-aware: cookie lock held through CreateAsync + ConnectAsync, released immediately after.
                 (client, lockRelease) = await factory.CreateWithLockAsync(cookie, ct);
                 await client.ConnectAsync(roomId, ct);
+
+                // Lock released immediately after connection established — event loop does NOT hold the cookie lock.
+                lockRelease.Dispose();
+                lockRelease = null;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -131,6 +135,7 @@ public sealed class LiveEventSource(
                 {
                     break;
                 }
+                continue;
             }
             catch (Exception ex)
             {
@@ -145,75 +150,73 @@ public sealed class LiveEventSource(
                 {
                     break;
                 }
+                continue;
             }
 
             // Lock released, client connected — event loop runs without holding the cookie lock.
             try
             {
-                if (client is not null)
+                await foreach (var data in client.Events(ct))
                 {
-                    await foreach (var data in client.Events(ct))
+                    if (data is not Normal normal)
                     {
-                        if (data is not Normal normal)
-                        {
-                            continue;
-                        }
-
-                        var liveEvent = DanmakuEventNormalizer.Normalize(
-                            roomId,
-                            sessionTracker.GetCurrentSessionId(roomId),
-                            normal.RawContent,
-                            DateTime.UtcNow);
-                        if (liveEvent is null)
-                        {
-                            continue;
-                        }
-
-                        var liveEventRecord = new LiveEventRecord
-                        {
-                            RoomId = liveEvent.RoomId,
-                            LiveSessionId = liveEvent.LiveSessionId,
-                            Type = liveEvent.Type,
-                            Payload = liveEvent.Payload,
-                            OccurredAt = liveEvent.OccurredAt,
-                            Price = liveEvent.Price ?? GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
-                        };
-
-                        await eventRepository.InsertAsync(liveEventRecord, ct);
-
-                        // 文本索引写入：弹幕/SC 事件提取文本并写入索引集合
-                        try
-                        {
-                            var extraction = LiveEventTextExtractor.Extract(liveEvent.Type, liveEvent.Payload);
-                            if (extraction is not null)
-                            {
-                                var textIndexRecord = new LiveEventTextIndexRecord
-                                {
-                                    EventId = liveEventRecord.Id,
-                                    RoomId = liveEvent.RoomId,
-                                    Type = liveEvent.Type,
-                                    Text = extraction.Text,
-                                    SenderName = extraction.SenderName,
-                                    SenderUid = extraction.SenderUid,
-                                    SenderMedal = extraction.SenderMedal,
-                                    OccurredAt = liveEvent.OccurredAt
-                                };
-                                await textIndexRepository.InsertAsync(textIndexRecord, ct);
-                            }
-                        }
-                        catch (MongoDB.Driver.MongoWriteException ex) when (ex.WriteError.Code == 11000)
-                        {
-                            // 唯一键冲突（EventId 已存在），仅记日志不阻断
-                            logger.LogDebug(ex, "Text index record for event {EventId} already exists; skipping.", liveEventRecord.Id);
-                        }
-                        catch (Exception ex)
-                        {
-                            // 提取/写索引异常不阻断总线发布与 SSE
-                            logger.LogWarning(ex, "Failed to write text index for event {EventId}; continuing.", liveEventRecord.Id);
-                        }
-
-                        await publisher.PublishAsync(liveEvent, ct);
+                        continue;
                     }
+
+                    var liveEvent = DanmakuEventNormalizer.Normalize(
+                        roomId,
+                        sessionTracker.GetCurrentSessionId(roomId),
+                        normal.RawContent,
+                        DateTime.UtcNow);
+                    if (liveEvent is null)
+                    {
+                        continue;
+                    }
+
+                    var liveEventRecord = new LiveEventRecord
+                    {
+                        RoomId = liveEvent.RoomId,
+                        LiveSessionId = liveEvent.LiveSessionId,
+                        Type = liveEvent.Type,
+                        Payload = liveEvent.Payload,
+                        OccurredAt = liveEvent.OccurredAt,
+                        Price = liveEvent.Price ?? GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
+                    };
+
+                    await eventRepository.InsertAsync(liveEventRecord, ct);
+
+                    // 文本索引写入：弹幕/SC 事件提取文本并写入索引集合
+                    try
+                    {
+                        var extraction = LiveEventTextExtractor.Extract(liveEvent.Type, liveEvent.Payload);
+                        if (extraction is not null)
+                        {
+                            var textIndexRecord = new LiveEventTextIndexRecord
+                            {
+                                EventId = liveEventRecord.Id,
+                                RoomId = liveEvent.RoomId,
+                                Type = liveEvent.Type,
+                                Text = extraction.Text,
+                                SenderName = extraction.SenderName,
+                                SenderUid = extraction.SenderUid,
+                                SenderMedal = extraction.SenderMedal,
+                                OccurredAt = liveEvent.OccurredAt
+                            };
+                            await textIndexRepository.InsertAsync(textIndexRecord, ct);
+                        }
+                    }
+                    catch (MongoDB.Driver.MongoWriteException ex) when (ex.WriteError.Code == 11000)
+                    {
+                        // 唯一键冲突（EventId 已存在），仅记日志不阻断
+                        logger.LogDebug(ex, "Text index record for event {EventId} already exists; skipping.", liveEventRecord.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        // 提取/写索引异常不阻断总线发布与 SSE
+                        logger.LogWarning(ex, "Failed to write text index for event {EventId}; continuing.", liveEventRecord.Id);
+                    }
+
+                    await publisher.PublishAsync(liveEvent, ct);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -234,7 +237,6 @@ public sealed class LiveEventSource(
             }
             finally
             {
-                lockRelease?.Dispose();
                 client?.Dispose();
             }
         }
