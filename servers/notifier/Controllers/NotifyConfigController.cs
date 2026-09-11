@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
-using Z.Vtuber.Notifier.Satori;
+using Z.Vtuber.Notifier.Milky;
 
 namespace Z.Vtuber.Notifier.Controllers;
 
@@ -11,58 +11,39 @@ namespace Z.Vtuber.Notifier.Controllers;
 public sealed class NotifyConfigController : ControllerBase
 {
     private readonly INotificationSubscriptionRepository _subscriptionRepository;
-    private readonly ISatoriApiClient _satoriClient;
+    private readonly IMilkyApiClient _milkyClient;
     private readonly ILogger<NotifyConfigController> _logger;
 
     public NotifyConfigController(
         INotificationSubscriptionRepository subscriptionRepository,
-        ISatoriApiClient satoriClient,
+        IMilkyApiClient milkyClient,
         ILogger<NotifyConfigController> logger)
     {
         _subscriptionRepository = subscriptionRepository;
-        _satoriClient = satoriClient;
+        _milkyClient = milkyClient;
         _logger = logger;
     }
 
-    [HttpGet("channels")]
-    public async Task<IActionResult> GetChannels(CancellationToken ct)
+    [HttpGet("groups")]
+    public async Task<IActionResult> GetGroups(CancellationToken ct)
     {
         try
         {
-            var guilds = await _satoriClient.GetGuildListAsync(ct);
-            // 登录发现完成后缓存即就绪，此时读取 platform
-            var platform = _satoriClient.GetCachedPlatform() ?? "satori";
-            var allChannels = new List<NotifyChannelResponse>();
-
-            foreach (var guild in guilds)
+            // 先探活
+            await _milkyClient.GetLoginInfoAsync(ct);
+            var groups = await _milkyClient.GetGroupListAsync(ct);
+            var items = groups.Select(g => new NotifyGroupResponse
             {
-                try
-                {
-                    var channels = await _satoriClient.GetChannelListAsync(guild.Id, ct);
-                    foreach (var channel in channels)
-                    {
-                        allChannels.Add(new NotifyChannelResponse
-                        {
-                            Platform = platform,
-                            GuildId = guild.Id,
-                            GuildName = guild.Name,
-                            ChannelId = channel.Id,
-                            ChannelName = channel.Name,
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to list channels for guild {GuildId}; continuing.", guild.Id);
-                }
-            }
+                GroupId = g.GroupId.ToString(),
+                GroupName = g.GroupName,
+            }).ToList();
 
-            return Ok(new { items = allChannels });
+            return Ok(new { items });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to list channels");
-            return StatusCode(503, new { message = "Satori 不可达或登录发现失败" });
+            _logger.LogError(ex, "Failed to list groups");
+            return StatusCode(503, new { message = "Milky 不可达或机器人未登录" });
         }
     }
 
@@ -74,11 +55,8 @@ public sealed class NotifyConfigController : ControllerBase
         {
             Id = s.Id.ToString(),
             EventType = s.EventType,
-            Platform = s.Platform,
-            GuildId = s.GuildId,
-            GuildName = s.GuildName,
-            ChannelId = s.ChannelId,
-            ChannelName = s.ChannelName,
+            GroupId = s.GroupId,
+            GroupName = s.GroupName,
             CreatedAt = s.CreatedAt,
         }).ToList();
 
@@ -93,11 +71,15 @@ public sealed class NotifyConfigController : ControllerBase
             return BadRequest(new { message = "eventType 非法，当前仅支持 cookie_invalid" });
         }
 
+        // 校验 groupId 可解析为 int64
+        if (!long.TryParse(request.GroupId, out _))
+        {
+            return BadRequest(new { message = "groupId 非法，必须为有效的群号（int64）" });
+        }
+
         // 检查是否已存在
         var existing = await _subscriptionRepository.GetByEventTypeAsync(request.EventType, ct);
-        var duplicate = existing.FirstOrDefault(s =>
-            s.Platform == request.Platform &&
-            s.ChannelId == request.ChannelId);
+        var duplicate = existing.FirstOrDefault(s => s.GroupId == request.GroupId);
 
         if (duplicate is not null)
         {
@@ -105,11 +87,8 @@ public sealed class NotifyConfigController : ControllerBase
             {
                 Id = duplicate.Id.ToString(),
                 EventType = duplicate.EventType,
-                Platform = duplicate.Platform,
-                GuildId = duplicate.GuildId,
-                GuildName = duplicate.GuildName,
-                ChannelId = duplicate.ChannelId,
-                ChannelName = duplicate.ChannelName,
+                GroupId = duplicate.GroupId,
+                GroupName = duplicate.GroupName,
                 CreatedAt = duplicate.CreatedAt,
             });
         }
@@ -117,11 +96,8 @@ public sealed class NotifyConfigController : ControllerBase
         var record = new NotificationSubscriptionRecord
         {
             EventType = request.EventType,
-            Platform = request.Platform,
-            GuildId = request.GuildId,
-            GuildName = request.GuildName,
-            ChannelId = request.ChannelId,
-            ChannelName = request.ChannelName,
+            GroupId = request.GroupId,
+            GroupName = request.GroupName,
         };
 
         var inserted = await _subscriptionRepository.InsertAsync(record, ct);
@@ -130,11 +106,8 @@ public sealed class NotifyConfigController : ControllerBase
         {
             Id = inserted.Id.ToString(),
             EventType = inserted.EventType,
-            Platform = inserted.Platform,
-            GuildId = inserted.GuildId,
-            GuildName = inserted.GuildName,
-            ChannelId = inserted.ChannelId,
-            ChannelName = inserted.ChannelName,
+            GroupId = inserted.GroupId,
+            GroupName = inserted.GroupName,
             CreatedAt = inserted.CreatedAt,
         });
     }
@@ -157,33 +130,24 @@ public sealed class NotifyConfigController : ControllerBase
     }
 }
 
-public sealed class NotifyChannelResponse
+public sealed class NotifyGroupResponse
 {
-    public string Platform { get; set; } = string.Empty;
-    public string GuildId { get; set; } = string.Empty;
-    public string? GuildName { get; set; }
-    public string ChannelId { get; set; } = string.Empty;
-    public string? ChannelName { get; set; }
+    public string GroupId { get; set; } = string.Empty;
+    public string? GroupName { get; set; }
 }
 
 public sealed class NotificationSubscriptionResponse
 {
     public string Id { get; set; } = string.Empty;
     public string EventType { get; set; } = string.Empty;
-    public string Platform { get; set; } = string.Empty;
-    public string GuildId { get; set; } = string.Empty;
-    public string? GuildName { get; set; }
-    public string ChannelId { get; set; } = string.Empty;
-    public string? ChannelName { get; set; }
+    public string GroupId { get; set; } = string.Empty;
+    public string? GroupName { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 
 public sealed class CreateNotificationSubscriptionRequest
 {
     public string EventType { get; set; } = string.Empty;
-    public string Platform { get; set; } = string.Empty;
-    public string GuildId { get; set; } = string.Empty;
-    public string? GuildName { get; set; }
-    public string ChannelId { get; set; } = string.Empty;
-    public string? ChannelName { get; set; }
+    public string GroupId { get; set; } = string.Empty;
+    public string? GroupName { get; set; }
 }
