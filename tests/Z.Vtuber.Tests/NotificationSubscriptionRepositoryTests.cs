@@ -21,18 +21,16 @@ public class NotificationSubscriptionRepositoryTests(MongoDbFixture fixture) : I
         var record = new NotificationSubscriptionRecord
         {
             EventType = "cookie_invalid",
-            Platform = "test",
-            GuildId = "guild1",
-            GuildName = "Test Guild",
-            ChannelId = "channel1",
-            ChannelName = "Test Channel",
+            GroupId = "123456",
+            GroupName = "运维群",
         };
 
         var inserted = await repo.InsertAsync(record);
 
         Assert.NotEqual(ObjectId.Empty, inserted.Id);
         Assert.Equal("cookie_invalid", inserted.EventType);
-        Assert.Equal("channel1", inserted.ChannelId);
+        Assert.Equal("123456", inserted.GroupId);
+        Assert.Equal("运维群", inserted.GroupName);
     }
 
     [Fact]
@@ -42,16 +40,14 @@ public class NotificationSubscriptionRepositoryTests(MongoDbFixture fixture) : I
         await repo.InsertAsync(new NotificationSubscriptionRecord
         {
             EventType = "cookie_invalid",
-            Platform = "test",
-            GuildId = "guild1",
-            ChannelId = "channel1",
+            GroupId = "123456",
+            GroupName = "运维群",
         });
         await repo.InsertAsync(new NotificationSubscriptionRecord
         {
             EventType = "cookie_invalid",
-            Platform = "test",
-            GuildId = "guild2",
-            ChannelId = "channel2",
+            GroupId = "789012",
+            GroupName = "测试群",
         });
 
         var results = await repo.ListAsync();
@@ -66,22 +62,20 @@ public class NotificationSubscriptionRepositoryTests(MongoDbFixture fixture) : I
         await repo.InsertAsync(new NotificationSubscriptionRecord
         {
             EventType = "cookie_invalid",
-            Platform = "test",
-            GuildId = "guild1",
-            ChannelId = "channel1",
+            GroupId = "123456",
+            GroupName = "运维群",
         });
         await repo.InsertAsync(new NotificationSubscriptionRecord
         {
             EventType = "other_type",
-            Platform = "test",
-            GuildId = "guild2",
-            ChannelId = "channel2",
+            GroupId = "789012",
+            GroupName = "测试群",
         });
 
         var results = await repo.GetByEventTypeAsync("cookie_invalid");
 
         Assert.Single(results);
-        Assert.Equal("channel1", results[0].ChannelId);
+        Assert.Equal("123456", results[0].GroupId);
     }
 
     [Fact]
@@ -91,9 +85,8 @@ public class NotificationSubscriptionRepositoryTests(MongoDbFixture fixture) : I
         var inserted = await repo.InsertAsync(new NotificationSubscriptionRecord
         {
             EventType = "cookie_invalid",
-            Platform = "test",
-            GuildId = "guild1",
-            ChannelId = "channel1",
+            GroupId = "123456",
+            GroupName = "运维群",
         });
 
         var deleted = await repo.DeleteAsync(inserted.Id);
@@ -120,9 +113,8 @@ public class NotificationSubscriptionRepositoryTests(MongoDbFixture fixture) : I
         var inserted = await repo.InsertAsync(new NotificationSubscriptionRecord
         {
             EventType = "cookie_invalid",
-            Platform = "test",
-            GuildId = "guild1",
-            ChannelId = "channel1",
+            GroupId = "123456",
+            GroupName = "运维群",
         });
 
         var result = await repo.GetByIdAsync(inserted.Id);
@@ -139,5 +131,48 @@ public class NotificationSubscriptionRepositoryTests(MongoDbFixture fixture) : I
         var result = await repo.GetByIdAsync(ObjectId.GenerateNewId());
 
         Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task InsertAsync_DuplicateEventTypeAndGroupId_ThrowsMongoWriteException()
+    {
+        var repo = CreateRepository();
+        await repo.InsertAsync(new NotificationSubscriptionRecord
+        {
+            EventType = "cookie_invalid",
+            GroupId = "123456",
+            GroupName = "运维群",
+        });
+
+        var duplicate = new NotificationSubscriptionRecord
+        {
+            EventType = "cookie_invalid",
+            GroupId = "123456",
+            GroupName = "运维群",
+        };
+
+        await Assert.ThrowsAsync<MongoWriteException>(() => repo.InsertAsync(duplicate));
+    }
+
+    [Fact]
+    public async Task InsertAsync_GroupIdAndGroupName_StoredAsSnakeCase()
+    {
+        var repo = CreateRepository();
+        var record = new NotificationSubscriptionRecord
+        {
+            EventType = "cookie_invalid",
+            GroupId = "123456",
+            GroupName = "运维群",
+        };
+
+        var inserted = await repo.InsertAsync(record);
+
+        // 验证 BSON 字段名
+        var collection = fixture.Database.GetCollection<BsonDocument>("notification_subscriptions");
+        var bson = await collection.Find(new BsonDocument("_id", inserted.Id)).FirstAsync();
+        Assert.True(bson.Contains("group_id"));
+        Assert.True(bson.Contains("group_name"));
+        Assert.Equal("123456", bson["group_id"].AsString);
+        Assert.Equal("运维群", bson["group_name"].AsString);
     }
 }
