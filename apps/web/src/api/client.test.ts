@@ -11,7 +11,7 @@ import {
   subscribeWeibo,
   unsubscribeWeibo,
   getWeiboTimeline,
-  listNotifyChannels,
+  listNotifyGroups,
   listNotificationBindings,
   createNotificationBinding,
   deleteNotificationBinding,

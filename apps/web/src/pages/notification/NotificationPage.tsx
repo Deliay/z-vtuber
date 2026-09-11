@@ -266,7 +266,7 @@ export function NotificationPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting || channelsLoading}
+                  disabled={submitting || groupsLoading}
                   style={{ padding: '0.5rem 1rem' }}
                 >
                   {submitting ? '创建中...' : '创建'}
