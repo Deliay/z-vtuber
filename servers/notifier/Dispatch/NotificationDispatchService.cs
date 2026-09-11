@@ -1,6 +1,6 @@
 using Z.Vtuber.Common.Live;
 using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Notifier.Satori;
+using Z.Vtuber.Notifier.Milky;
 
 namespace Z.Vtuber.Notifier.Dispatch;
 
@@ -12,16 +12,16 @@ public interface INotificationDispatchService
 public sealed class NotificationDispatchService : INotificationDispatchService
 {
     private readonly INotificationSubscriptionRepository _subscriptionRepository;
-    private readonly ISatoriApiClient _satoriClient;
+    private readonly IMilkyApiClient _milkyClient;
     private readonly ILogger<NotificationDispatchService> _logger;
 
     public NotificationDispatchService(
         INotificationSubscriptionRepository subscriptionRepository,
-        ISatoriApiClient satoriClient,
+        IMilkyApiClient milkyClient,
         ILogger<NotificationDispatchService> logger)
     {
         _subscriptionRepository = subscriptionRepository;
-        _satoriClient = satoriClient;
+        _milkyClient = milkyClient;
         _logger = logger;
     }
 
@@ -40,12 +40,13 @@ public sealed class NotificationDispatchService : INotificationDispatchService
         {
             try
             {
-                await _satoriClient.SendMessageAsync(subscription.ChannelId, message, ct);
-                _logger.LogInformation("Sent cookie invalid notification to channel {ChannelId}", subscription.ChannelId);
+                var groupId = long.Parse(subscription.GroupId);
+                await _milkyClient.SendGroupMessageAsync(groupId, message, ct);
+                _logger.LogInformation("Sent cookie invalid notification to group {GroupId}", subscription.GroupId);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to send notification to channel {ChannelId}; continuing.", subscription.ChannelId);
+                _logger.LogWarning(ex, "Failed to send notification to group {GroupId}; continuing.", subscription.GroupId);
             }
         }
     }
