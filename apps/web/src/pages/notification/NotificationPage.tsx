@@ -205,7 +205,8 @@ export function NotificationPage() {
         >
           <div
             style={{
-              backgroundColor: 'white',
+              backgroundColor: '#1e293b',
+              color: '#e2e8f0',
               padding: '1.5rem',
               borderRadius: '0.5rem',
               minWidth: '400px',
@@ -222,7 +223,7 @@ export function NotificationPage() {
                   type="text"
                   value="Cookie 失效"
                   disabled
-                  style={{ width: '100%', padding: '0.5rem' }}
+                  style={{ width: '100%', padding: '0.5rem', backgroundColor: '#334155', color: '#e2e8f0', border: '1px solid #475569', borderRadius: '0.25rem' }}
                 />
               </div>
 
@@ -238,7 +239,7 @@ export function NotificationPage() {
                   <select
                     value={selectedGroup}
                     onChange={(e) => setSelectedGroup(e.target.value)}
-                    style={{ width: '100%', padding: '0.5rem' }}
+                    style={{ width: '100%', padding: '0.5rem', backgroundColor: '#334155', color: '#e2e8f0', border: '1px solid #475569', borderRadius: '0.25rem' }}
                   >
                     <option value="">请选择群</option>
                     {groups.map((group) => (
@@ -260,14 +261,14 @@ export function NotificationPage() {
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  style={{ padding: '0.5rem 1rem' }}
+                  style={{ padding: '0.5rem 1rem', backgroundColor: '#475569', color: '#e2e8f0', border: 'none', borderRadius: '0.25rem', cursor: 'pointer' }}
                 >
                   取消
                 </button>
                 <button
                   type="submit"
                   disabled={submitting || groupsLoading}
-                  style={{ padding: '0.5rem 1rem' }}
+                  style={{ padding: '0.5rem 1rem', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: '0.25rem', cursor: 'pointer' }}
                 >
                   {submitting ? '创建中...' : '创建'}
                 </button>

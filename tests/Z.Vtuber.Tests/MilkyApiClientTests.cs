@@ -195,7 +195,7 @@ public class MilkyApiClientTests
             Assert.Equal(1, messages.GetArrayLength());
             var segment = messages[0];
             Assert.Equal("text", segment.GetProperty("type").GetString());
-            capturedText = segment.GetProperty("text").GetString();
+            capturedText = segment.GetProperty("data").GetProperty("text").GetString();
             return CreateMilkyResponse(new { message_id = 123 });
         };
 
@@ -216,7 +216,7 @@ public class MilkyApiClientTests
             var body = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync());
             var messages = body.GetProperty("message");
             var segment = messages[0];
-            capturedText = segment.GetProperty("text").GetString();
+            capturedText = segment.GetProperty("data").GetProperty("text").GetString();
             return CreateMilkyResponse(new { message_id = 123 });
         };
 

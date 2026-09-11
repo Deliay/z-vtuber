@@ -18,7 +18,7 @@
     <PackageReference Include="Aspire.MongoDB.Driver" Version="13.4.6" />
     <PackageReference Include="MongoDB.Driver" Version="3.9.0" />
     <PackageReference Include="Aspire.StackExchange.Redis" Version="13.4.6" />
-    <PackageReference Include="Milky.Net.Client" Version="3.0.0" />
+    <PackageReference Include="ZeroAsh.Milky.Net.Client" Version="1.0.1-preview.4" />
   </ItemGroup>
 
   <ItemGroup>

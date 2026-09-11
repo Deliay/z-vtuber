@@ -39,7 +39,7 @@ public sealed class MilkyApiClient : IMilkyApiClient
     {
         try
         {
-            var result = await _milky.System.GetGroupListAsync(new GetGroupListRequest(), ct);
+            var result = await _milky.System.GetGroupListAsync(new GetGroupListInput(true), ct);
             return result.Groups.Select(g => new GroupInfo
             {
                 GroupId = g.GroupId,
@@ -57,9 +57,9 @@ public sealed class MilkyApiClient : IMilkyApiClient
     {
         try
         {
-            var request = new SendGroupMessageRequest(groupId, new TextOutgoingSegment[]
+            var request = new SendGroupMessageInput(groupId, new OutgoingSegment[]
             {
-                new(text),
+                new TextOutgoingSegment(new TextOutgoingSegmentData(text)),
             });
             await _milky.Message.SendGroupMessageAsync(request, ct);
         }
