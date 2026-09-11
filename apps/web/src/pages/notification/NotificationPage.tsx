@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import {
-  listNotifyChannels,
+  listNotifyGroups,
   listNotificationBindings,
   createNotificationBinding,
   deleteNotificationBinding,
 } from '../../api/client'
 import type { components } from '../../api/schema-notify'
 
-type NotifyChannel = components['schemas']['NotifyChannel']
+type NotifyGroup = components['schemas']['NotifyGroup']
 type NotificationSubscription = components['schemas']['NotificationSubscription']
 
 export function NotificationPage() {
@@ -16,10 +16,10 @@ export function NotificationPage() {
   const [error, setError] = useState<string | null>(null)
 
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [channels, setChannels] = useState<NotifyChannel[]>([])
-  const [channelsLoading, setChannelsLoading] = useState(false)
-  const [channelsError, setChannelsError] = useState<string | null>(null)
-  const [selectedChannel, setSelectedChannel] = useState<string>('')
+  const [groups, setGroups] = useState<NotifyGroup[]>([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [groupsError, setGroupsError] = useState<string | null>(null)
+  const [selectedGroup, setSelectedGroup] = useState<string>('')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -44,18 +44,18 @@ export function NotificationPage() {
 
   const handleOpenCreateModal = async () => {
     setShowCreateModal(true)
-    setChannelsLoading(true)
-    setChannelsError(null)
-    setSelectedChannel('')
+    setGroupsLoading(true)
+    setGroupsError(null)
+    setSelectedGroup('')
     setSubmitError(null)
 
     try {
-      const data = await listNotifyChannels()
-      setChannels(data)
+      const data = await listNotifyGroups()
+      setGroups(data)
     } catch {
-      setChannelsError('加载频道列表失败')
+      setGroupsError('加载群列表失败')
     } finally {
-      setChannelsLoading(false)
+      setGroupsLoading(false)
     }
   }
 
@@ -63,14 +63,14 @@ export function NotificationPage() {
     e.preventDefault()
     setSubmitError(null)
 
-    if (!selectedChannel) {
-      setSubmitError('请选择频道')
+    if (!selectedGroup) {
+      setSubmitError('请选择群')
       return
     }
 
-    const channel = channels.find((c) => c.channelId === selectedChannel)
-    if (!channel) {
-      setSubmitError('频道不存在')
+    const group = groups.find((g) => g.groupId === selectedGroup)
+    if (!group) {
+      setSubmitError('群不存在')
       return
     }
 
@@ -78,11 +78,8 @@ export function NotificationPage() {
       setSubmitting(true)
       await createNotificationBinding({
         eventType: 'cookie_invalid',
-        platform: channel.platform,
-        guildId: channel.guildId,
-        guildName: channel.guildName,
-        channelId: channel.channelId,
-        channelName: channel.channelName,
+        groupId: group.groupId,
+        groupName: group.groupName,
       })
       setShowCreateModal(false)
       await fetchBindings()
@@ -90,7 +87,7 @@ export function NotificationPage() {
       if (err.status === 400 && err.serverMessage) {
         setSubmitError(err.serverMessage)
       } else if (err.serverMessage?.includes('已绑定')) {
-        setSubmitError('该频道已绑定')
+        setSubmitError('该群已绑定')
       } else {
         setSubmitError('创建失败，请重试')
       }
@@ -140,9 +137,7 @@ export function NotificationPage() {
           <thead>
             <tr>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>通知类型</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>平台</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>群组</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>频道</th>
+              <th style={{ textAlign: 'left', padding: '0.5rem' }}>目标群</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>绑定时间</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>操作</th>
             </tr>
@@ -156,12 +151,8 @@ export function NotificationPage() {
                   <td style={{ padding: '0.5rem' }}>
                     {binding.eventType === 'cookie_invalid' ? 'Cookie 失效' : binding.eventType}
                   </td>
-                  <td style={{ padding: '0.5rem' }}>{binding.platform}</td>
                   <td style={{ padding: '0.5rem' }}>
-                    {binding.guildName ?? binding.guildId}
-                  </td>
-                  <td style={{ padding: '0.5rem' }}>
-                    {binding.channelName ?? binding.channelId}
+                    {binding.groupName ?? binding.groupId}（{binding.groupId}）
                   </td>
                   <td style={{ padding: '0.5rem' }}>
                     {formatDate(binding.createdAt)}
@@ -237,23 +228,22 @@ export function NotificationPage() {
 
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', marginBottom: '0.5rem' }}>
-                  选择频道
+                  选择群
                 </label>
-                {channelsLoading ? (
-                  <p>加载频道中...</p>
-                ) : channelsError ? (
-                  <p style={{ color: '#f87171' }}>{channelsError}</p>
+                {groupsLoading ? (
+                  <p>加载群列表中...</p>
+                ) : groupsError ? (
+                  <p style={{ color: '#f87171' }}>{groupsError}</p>
                 ) : (
                   <select
-                    value={selectedChannel}
-                    onChange={(e) => setSelectedChannel(e.target.value)}
+                    value={selectedGroup}
+                    onChange={(e) => setSelectedGroup(e.target.value)}
                     style={{ width: '100%', padding: '0.5rem' }}
                   >
-                    <option value="">请选择频道</option>
-                    {channels.map((channel) => (
-                      <option key={channel.channelId} value={channel.channelId}>
-                        {channel.guildName ?? channel.guildId} /{' '}
-                        {channel.channelName ?? channel.channelId}
+                    <option value="">请选择群</option>
+                    {groups.map((group) => (
+                      <option key={group.groupId} value={group.groupId}>
+                        {group.groupName ?? group.groupId}（{group.groupId}）
                       </option>
                     ))}
                   </select>

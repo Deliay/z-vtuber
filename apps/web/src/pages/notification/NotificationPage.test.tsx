@@ -29,19 +29,15 @@ describe('NotificationPage', () => {
       {
         id: '1',
         eventType: 'cookie_invalid',
-        platform: 'onebot',
-        guildId: 'g1',
-        guildName: 'Guild 1',
-        channelId: 'c1',
-        channelName: 'Channel 1',
+        groupId: '123456',
+        groupName: '运维群',
         createdAt: '2024-01-01T00:00:00Z',
       },
     ])
     render(<NotificationPage />)
     await waitFor(() => {
       expect(screen.getByText('Cookie 失效')).toBeInTheDocument()
-      expect(screen.getByText('Guild 1')).toBeInTheDocument()
-      expect(screen.getByText('Channel 1')).toBeInTheDocument()
+      expect(screen.getByText('运维群（123456）')).toBeInTheDocument()
     })
   })
 
@@ -55,7 +51,7 @@ describe('NotificationPage', () => {
 
   it('should open create modal when clicking new binding button', async () => {
     vi.mocked(client.listNotificationBindings).mockResolvedValue([])
-    vi.mocked(client.listNotifyChannels).mockResolvedValue([])
+    vi.mocked(client.listNotifyGroups).mockResolvedValue([])
     render(<NotificationPage />)
     await waitFor(() => {
       expect(screen.getByText('暂无通知绑定')).toBeInTheDocument()
@@ -63,7 +59,7 @@ describe('NotificationPage', () => {
 
     fireEvent.click(screen.getByText('新增绑定'))
 
-    expect(screen.getByText('选择频道')).toBeInTheDocument()
+    expect(screen.getByText('选择群')).toBeInTheDocument()
   })
 
   it('should show delete confirmation', async () => {
@@ -71,11 +67,8 @@ describe('NotificationPage', () => {
       {
         id: '1',
         eventType: 'cookie_invalid',
-        platform: 'onebot',
-        guildId: 'g1',
-        guildName: 'Guild 1',
-        channelId: 'c1',
-        channelName: 'Channel 1',
+        groupId: '123456',
+        groupName: '运维群',
         createdAt: '2024-01-01T00:00:00Z',
       },
     ])
