@@ -65,10 +65,31 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
         var service = CreateService();
         await service.AddAsync("cookie-a");
         await service.AddAsync("cookie-b");
-        await service.MarkOfflineAsync("cookie-a");
+        var result = await service.MarkOfflineAsync("cookie-a");
+        Assert.True(result);
 
         var next = await service.NextAsync();
         Assert.Equal("cookie-b", next.Cookie);
+    }
+
+    [Fact]
+    public async Task MarkOfflineAsync_AlreadyOffline_ReturnsFalse()
+    {
+        var service = CreateService();
+        await service.AddAsync("cookie-a");
+        var first = await service.MarkOfflineAsync("cookie-a");
+        Assert.True(first);
+
+        var second = await service.MarkOfflineAsync("cookie-a");
+        Assert.False(second);
+    }
+
+    [Fact]
+    public async Task MarkOfflineAsync_NonExistingCookie_ReturnsFalse()
+    {
+        var service = CreateService();
+        var result = await service.MarkOfflineAsync("non-existing");
+        Assert.False(result);
     }
 
     [Fact]
@@ -174,7 +195,7 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
         var resolvedBili = bili ?? new NavBiliApiClient();
         var repo = new MockCookieAccountInfoRepository();
         provider.Probe = new CookieNavProbeService(
-            resolvedBili, pool, repo, Options, NullLogger<CookieNavProbeService>.Instance);
+            resolvedBili, pool, repo, new FakeCookieInvalidEventPublisher(), Options, NullLogger<CookieNavProbeService>.Instance);
         return (pool, resolvedBili, repo);
     }
 
@@ -261,5 +282,43 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
 
         Assert.Equal("cookie-a", next.Cookie);
         Assert.Empty(repo.Upserts);
+    }
+
+    [Fact]
+    public async Task FindByCookieAsync_ExistingCookie_ReturnsRecord()
+    {
+        var provider = new ProbeServiceProvider();
+        var pool = new CookiePoolService(fixture.Database, provider);
+        await pool.AddAsync("test-cookie");
+
+        var result = await pool.FindByCookieAsync("test-cookie");
+
+        Assert.NotNull(result);
+        Assert.Equal("test-cookie", result!.Cookie);
+    }
+
+    [Fact]
+    public async Task FindByCookieAsync_NonExistingCookie_ReturnsNull()
+    {
+        var provider = new ProbeServiceProvider();
+        var pool = new CookiePoolService(fixture.Database, provider);
+
+        var result = await pool.FindByCookieAsync("non-existing");
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task FindByCookieAsync_OfflineCookie_ReturnsRecord()
+    {
+        var provider = new ProbeServiceProvider();
+        var pool = new CookiePoolService(fixture.Database, provider);
+        await pool.AddAsync("offline-cookie");
+        await pool.MarkOfflineAsync("offline-cookie");
+
+        var result = await pool.FindByCookieAsync("offline-cookie");
+
+        Assert.NotNull(result);
+        Assert.Equal("offline-cookie", result!.Cookie);
     }
 }

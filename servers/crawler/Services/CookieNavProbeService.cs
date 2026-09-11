@@ -14,6 +14,7 @@ public sealed class CookieNavProbeService(
     IBiliApiClient bili,
     ICookiePoolService cookiePool,
     ICookieAccountInfoRepository cookieAccountInfo,
+    ICookieInvalidEventPublisher eventPublisher,
     BilibiliCrawlerOptions options,
     ILogger<CookieNavProbeService> logger) : ICookieNavProbeService
 {
@@ -61,8 +62,22 @@ public sealed class CookieNavProbeService(
         }
         catch (Exception ex)
         {
-            await cookiePool.MarkOfflineAsync(record.Cookie, ct);
+            var wasOffline = await cookiePool.MarkOfflineAsync(record.Cookie, ct);
             logger.LogWarning(ex, "Cookie (id={Id}) marked offline due to probe failure.", record.Id);
+
+            // 恰好一次发布：仅当状态迁移成功（Active→Offline）才发布失效事件
+            if (wasOffline)
+            {
+                try
+                {
+                    await eventPublisher.PublishAsync(record.Id.ToString(), "nav_probe_failed", ct);
+                }
+                catch (Exception publishEx)
+                {
+                    logger.LogWarning(publishEx, "Failed to publish cookie invalid event for cookie (id={Id}); continuing.", record.Id);
+                }
+            }
+
             return CookieProbeOutcome.Offline;
         }
     }

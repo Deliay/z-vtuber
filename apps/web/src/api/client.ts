@@ -1,5 +1,6 @@
 import type { components } from './schema'
 import type { components as weiboComponents } from './schema-weibo'
+import type { components as notifyComponents } from './schema-notify'
 
 const BASE_URL = '/api'
 
@@ -11,6 +12,10 @@ type SubscribeRequest = components['schemas']['SubscribeRequest']
 type CookieAddRequest = components['schemas']['CookieAddRequest']
 type WeiboSubscriptionItem = weiboComponents['schemas']['WeiboSubscriptionItem']
 type WeiboSubscribeRequest = weiboComponents['schemas']['WeiboSubscribeRequest']
+
+type NotifyGroup = notifyComponents['schemas']['NotifyGroup']
+type NotificationSubscription = notifyComponents['schemas']['NotificationSubscription']
+type CreateNotificationSubscriptionRequest = notifyComponents['schemas']['CreateNotificationSubscriptionRequest']
 
 interface ApiError extends Error {
   status?: number
@@ -125,6 +130,25 @@ export async function subscribeWeibo(
   })
 }
 
+export async function listNotifyGroups(): Promise<NotifyGroup[]> {
+  const data = await request<{ items: NotifyGroup[] }>('/notify/groups')
+  return data.items ?? []
+}
+
+export async function listNotificationBindings(): Promise<NotificationSubscription[]> {
+  const data = await request<{ items: NotificationSubscription[] }>('/notify/subscriptions')
+  return data.items ?? []
+}
+
+export async function createNotificationBinding(
+  params: CreateNotificationSubscriptionRequest,
+): Promise<NotificationSubscription> {
+  return request<NotificationSubscription>('/notify/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
 export async function unsubscribeWeibo(uid: number): Promise<void> {
   return request<void>(`/weibo/subscription/${uid}`, { method: 'DELETE' })
 }
@@ -145,4 +169,8 @@ export async function getWeiboTimeline(
   if (params.endedAt) query.set('endedAt', params.endedAt)
   const qs = query.toString()
   return request(`/weibo/user/${uid}/timeline${qs ? `?${qs}` : ''}`)
+}
+
+export async function deleteNotificationBinding(id: string): Promise<void> {
+  return request<void>(`/notify/subscriptions/${id}`, { method: 'DELETE' })
 }

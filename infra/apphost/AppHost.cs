@@ -22,9 +22,20 @@ var crawler = builder.AddProject<Projects.Z_Vtuber_Crawler>("crawler")
     .WaitFor(messaging)
     .WithHttpHealthCheck("/health");
 
+var notifier = builder.AddProject<Projects.Z_Vtuber_Notifier>("notifier")
+    .WithReference(mongo)
+    .WaitFor(mongo)
+    .WithReference(messaging)
+    .WaitFor(messaging)
+    .WithEnvironment("Z_VTUBER_MILKY_ENDPOINT", builder.AddParameter("milky-endpoint", secret: true))
+    .WithEnvironment("Z_VTUBER_MILKY_ACCESS_TOKEN", builder.AddParameter("milky-access-token", secret: true))
+    .WithHttpHealthCheck("/health");
+
 var web = builder.AddViteApp("web", "../../apps/web")
     .WithReference(api)
+    .WithReference(notifier)
     .WithEnvironment("VITE_API_URL", api.GetEndpoint("http"))
+    .WithEnvironment("VITE_NOTIFY_URL", notifier.GetEndpoint("http"))
     .WithExternalHttpEndpoints();
 
 builder.Build().Run();

@@ -71,7 +71,7 @@ public sealed class ResilientBiliApiClientTests
             Task.FromResult(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
         public Task<CookieRecord> NextAsync(CancellationToken ct = default) =>
             Task.FromResult(new CookieRecord { Cookie = "spy", Status = CookieStatus.Active });
-        public Task MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
         public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default)
         {
             CooldownCalls.Add((cookie, duration));
@@ -79,6 +79,8 @@ public sealed class ResilientBiliApiClientTests
         }
         public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<CookieRecord>>([]);
+        public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) =>
+            Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
     }
 
     private static BilibiliCrawlerOptions DefaultOptions() => new()

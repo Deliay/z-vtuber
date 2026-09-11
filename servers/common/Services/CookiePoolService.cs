@@ -9,9 +9,10 @@ public interface ICookiePoolService
 {
     Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default);
     Task<CookieRecord> NextAsync(CancellationToken ct = default);
-    Task MarkOfflineAsync(string cookie, CancellationToken ct = default);
+    Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default);
     Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default);
     Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default);
+    Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default);
 }
 
 public sealed class NoAvailableCookieException : InvalidOperationException
@@ -104,13 +105,16 @@ public sealed class CookiePoolService(IMongoDatabase database, IServiceProvider 
         }
     }
 
-    public Task MarkOfflineAsync(string cookie, CancellationToken ct = default)
+    public async Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default)
     {
-        var filter = Builders<CookieRecord>.Filter.Eq(c => c.Cookie, cookie);
+        var filter = Builders<CookieRecord>.Filter.And(
+            Builders<CookieRecord>.Filter.Eq(c => c.Cookie, cookie),
+            Builders<CookieRecord>.Filter.Eq(c => c.Status, CookieStatus.Active));
         var update = Builders<CookieRecord>.Update
             .Set(c => c.Status, CookieStatus.Offline)
             .Set(c => c.LastCheckedAt, DateTime.UtcNow);
-        return _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
+        var result = await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
+        return result.ModifiedCount > 0;
     }
 
     public async Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
@@ -130,5 +134,11 @@ public sealed class CookiePoolService(IMongoDatabase database, IServiceProvider 
         var update = Builders<CookieRecord>.Update
             .Set(c => c.CooldownUntil, DateTime.UtcNow + duration);
         return _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
+    }
+
+    public async Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default)
+    {
+        var filter = Builders<CookieRecord>.Filter.Eq(c => c.Cookie, cookie);
+        return await _collection.Find(filter).FirstOrDefaultAsync(ct);
     }
 }

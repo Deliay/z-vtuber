@@ -6,6 +6,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Crawler.Weibo;
+using Z.Vtuber.Notifier.Milky;
 
 namespace Z.Vtuber.Tests;
 
@@ -49,12 +50,15 @@ public sealed class FakeCookiePoolService : ICookiePoolService
     public Task<CookieRecord> NextAsync(CancellationToken ct = default) =>
         Task.FromResult(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
 
-    public Task MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
 
     public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
 
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<CookieRecord>>([new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active }]);
+
+    public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) =>
+        Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
 }
 
 public sealed class FakeCookieNavProbeService : ICookieNavProbeService
@@ -103,6 +107,8 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public List<CookieRecord> ActiveCookies { get; set; } = [];
     public List<(string Cookie, TimeSpan Duration)> CooldownCalls { get; } = [];
     public List<string> OfflineCalls { get; } = [];
+    public Func<string, CookieRecord?>? FindByCookieFunc { get; set; }
+    public bool MarkOfflineReturns { get; set; } = true;
 
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<CookieRecord>>(ActiveCookies);
@@ -113,15 +119,70 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public Task<CookieRecord> NextAsync(CancellationToken ct = default)
         => Task.FromResult(new CookieRecord { Cookie = "next", Status = CookieStatus.Active });
 
-    public Task MarkOfflineAsync(string cookie, CancellationToken ct = default)
+    public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default)
     {
         OfflineCalls.Add(cookie);
-        return Task.CompletedTask;
+        // Simulate atomic Active→Offline transition: caller can override via MarkOfflineReturns
+        if (!MarkOfflineReturns)
+        {
+            return Task.FromResult(false);
+        }
+        // First call returns true, subsequent calls return false
+        if (_offlineTransitions.Add(cookie))
+        {
+            return Task.FromResult(true);
+        }
+        return Task.FromResult(false);
     }
+
+    private readonly HashSet<string> _offlineTransitions = [];
 
     public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default)
     {
         CooldownCalls.Add((cookie, duration));
+        return Task.CompletedTask;
+    }
+
+    public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default)
+        => Task.FromResult(FindByCookieFunc?.Invoke(cookie));
+}
+
+public sealed class FakeMilkyApiClient : IMilkyApiClient
+{
+    public Func<Task<LoginInfo>>? LoginInfoFunc { get; set; }
+    public Func<Task<IReadOnlyList<GroupInfo>>>? GroupListFunc { get; set; }
+    public Func<long, string, Task>? SendMessageFunc { get; set; }
+    public List<(long GroupId, string Text)> SendMessageCalls { get; } = [];
+
+    public Task<LoginInfo> GetLoginInfoAsync(CancellationToken ct = default)
+        => LoginInfoFunc?.Invoke() ?? Task.FromResult(new LoginInfo { UserId = 123, Nickname = "test-bot" });
+
+    public Task<IReadOnlyList<GroupInfo>> GetGroupListAsync(CancellationToken ct = default)
+        => GroupListFunc?.Invoke() ?? Task.FromResult<IReadOnlyList<GroupInfo>>([]);
+
+    public async Task SendGroupMessageAsync(long groupId, string text, CancellationToken ct = default)
+    {
+        if (SendMessageFunc is not null)
+        {
+            await SendMessageFunc(groupId, text);
+        }
+        SendMessageCalls.Add((groupId, text));
+    }
+}
+
+public sealed class FakeCookieInvalidEventPublisher : ICookieInvalidEventPublisher
+{
+    public List<(string CookieId, string Reason)> PublishCalls { get; } = [];
+    public bool ThrowOnPublish { get; set; }
+
+    public Task PublishAsync(string cookieId, string reason, CancellationToken ct = default)
+    {
+        if (ThrowOnPublish)
+        {
+            throw new InvalidOperationException("publish failed");
+        }
+
+        PublishCalls.Add((cookieId, reason));
         return Task.CompletedTask;
     }
 }

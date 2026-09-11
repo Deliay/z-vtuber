@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Services;
@@ -38,6 +39,8 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         services.AddSingleton<ISubscriptionService, SubscriptionService>();
         services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
         services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
+        services.AddSingleton<ICookieInvalidEventPublisher, FakeCookieInvalidEventPublisher>();
+        services.AddSingleton<CookieCallGate>();
         services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
         services.AddSingleton<BiliApiClient>();
         services.AddSingleton(sp => new BrowserishBiliApiClient(

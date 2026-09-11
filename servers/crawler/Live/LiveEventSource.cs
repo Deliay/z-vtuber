@@ -11,7 +11,7 @@ public sealed class LiveEventSource(
     ISubscriptionService subscription,
     AccountBasicInfoRepository accountRepository,
     ICookiePoolService cookiePool,
-    DanmakuClientFactory factory,
+    IDanmakuClientFactory factory,
     LiveEventRepository eventRepository,
     LiveEventTextIndexRepository textIndexRepository,
     ILiveEventPublisher publisher,
@@ -102,12 +102,59 @@ public sealed class LiveEventSource(
     {
         while (!ct.IsCancellationRequested)
         {
+            IDanmakuClient? client = null;
+            IDisposable? lockRelease = null;
             try
             {
                 var cookie = (await cookiePool.NextAsync(ct)).Cookie;
-                using var client = await factory.CreateAsync(cookie, ct);
+                // Lock-aware: cookie lock held through CreateAsync + ConnectAsync, released immediately after.
+                (client, lockRelease) = await factory.CreateWithLockAsync(cookie, ct);
                 await client.ConnectAsync(roomId, ct);
 
+                // Lock released immediately after connection established — event loop does NOT hold the cookie lock.
+                lockRelease.Dispose();
+                lockRelease = null;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                lockRelease?.Dispose();
+                client?.Dispose();
+                break;
+            }
+            catch (NoAvailableCookieException)
+            {
+                lockRelease?.Dispose();
+                client?.Dispose();
+                logger.LogWarning("Danmaku connection for room {RoomId} skipped: no active cookie; retrying in {Delay}s.", roomId, NoCookieRetryDelay.TotalSeconds);
+                try
+                {
+                    await Task.Delay(NoCookieRetryDelay, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                continue;
+            }
+            catch (Exception ex)
+            {
+                lockRelease?.Dispose();
+                client?.Dispose();
+                logger.LogWarning(ex, "Danmaku connection for room {RoomId} lost; reconnecting in {Delay}s.", roomId, ReconnectDelay.TotalSeconds);
+                try
+                {
+                    await Task.Delay(ReconnectDelay, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                continue;
+            }
+
+            // Lock released, client connected — event loop runs without holding the cookie lock.
+            try
+            {
                 await foreach (var data in client.Events(ct))
                 {
                     if (data is not Normal normal)
@@ -175,18 +222,6 @@ public sealed class LiveEventSource(
             {
                 break;
             }
-            catch (NoAvailableCookieException)
-            {
-                logger.LogWarning("Danmaku connection for room {RoomId} skipped: no active cookie; retrying in {Delay}s.", roomId, NoCookieRetryDelay.TotalSeconds);
-                try
-                {
-                    await Task.Delay(NoCookieRetryDelay, ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-            }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Danmaku connection for room {RoomId} lost; reconnecting in {Delay}s.", roomId, ReconnectDelay.TotalSeconds);
@@ -198,6 +233,10 @@ public sealed class LiveEventSource(
                 {
                     break;
                 }
+            }
+            finally
+            {
+                client?.Dispose();
             }
         }
     }

@@ -1,0 +1,154 @@
+openapi: 3.1.0
+info:
+  title: Z.Vtuber Notifier API
+  version: 2.0.0
+  description: Cookie 失效通知服务配置 API（统一前缀 /api/notify）
+servers:
+  - url: /
+paths:
+  /api/notify/groups:
+    get:
+      summary: 查询机器人当前加入的 QQ 群列表
+      description: 经 Milky get_group_list 聚合返回。Milky 不可达或机器人未登录时返回 503 + 明确错误消息（不静默返回空列表）。
+      operationId: listNotifyGroups
+      responses:
+        "200":
+          description: 群列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotifyGroupList"
+        "503":
+          description: Milky 不可达或机器人未登录
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/notify/subscriptions:
+    get:
+      summary: 查询全部通知订阅
+      operationId: listNotificationSubscriptions
+      responses:
+        "200":
+          description: 订阅列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSubscriptionList"
+    post:
+      summary: 创建通知订阅
+      operationId: createNotificationSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNotificationSubscriptionRequest"
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSubscription"
+        "200":
+          description: 幂等返回已有订阅
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSubscription"
+        "400":
+          description: eventType 非法（当前仅支持 cookie_invalid）或 groupId 非法（无法解析为 int64）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/notify/subscriptions/{id}:
+    delete:
+      summary: 删除通知订阅
+      operationId: deleteNotificationSubscription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: 删除成功
+        "404":
+          description: 订阅不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  schemas:
+    NotifyGroup:
+      type: object
+      description: QQ 群信息
+      properties:
+        groupId:
+          type: string
+          description: 群号（int64 字符串表达）
+        groupName:
+          type: string
+          nullable: true
+          description: 群名称
+    NotifyGroupList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotifyGroup"
+    NotificationSubscription:
+      type: object
+      description: 通知订阅记录
+      properties:
+        id:
+          type: string
+          description: 订阅 ID
+        eventType:
+          type: string
+          description: 通知类型（当前仅 cookie_invalid）
+          enum: [cookie_invalid]
+        groupId:
+          type: string
+          description: 群号（int64 字符串表达）
+        groupName:
+          type: string
+          nullable: true
+          description: 群名称
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间（UTC）
+    NotificationSubscriptionList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotificationSubscription"
+    CreateNotificationSubscriptionRequest:
+      type: object
+      required: [eventType, groupId]
+      properties:
+        eventType:
+          type: string
+          description: 通知类型（当前仅支持 cookie_invalid）
+          enum: [cookie_invalid]
+        groupId:
+          type: string
+          description: 群号（int64 字符串表达）
+        groupName:
+          type: string
+          nullable: true
+          description: 群名称
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+          description: 错误消息

@@ -5,6 +5,8 @@ using Mikibot.Crawler.Http;
 using Mikibot.Crawler.Http.Bilibili;
 using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
+using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 
 namespace Z.Vtuber.Tests;
@@ -19,11 +21,12 @@ public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifeti
     private static BilibiliCrawlerOptions Options => new() { HttpTimeoutSeconds = 30 };
 
     private static MockCookiePoolService CreateMockPool() => new();
+    private static CookieCallGate CreateGate() => new();
 
     [Fact]
     public void GetProviderAsync_CreatesProviderWithCorrectOptions()
     {
-        var provider = new BilibiliAccountProvider(Options, CreateMockPool());
+        var provider = new BilibiliAccountProvider(Options, CreateMockPool(), new FakeCookieInvalidEventPublisher(), CreateGate(), Microsoft.Extensions.Logging.Abstractions.NullLogger<BilibiliAccountProvider>.Instance);
 
         Assert.NotNull(provider);
     }
@@ -46,7 +49,7 @@ public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifeti
         private int _buildCount;
 
         public FailingProvider(BilibiliCrawlerOptions options, ICookiePoolService pool, Func<Exception> failureFactory, int failTimes)
-            : base(options, pool)
+            : base(options, pool, new FakeCookieInvalidEventPublisher(), CreateGate(), Microsoft.Extensions.Logging.Abstractions.NullLogger<BilibiliAccountProvider>.Instance)
         {
             _failureFactory = failureFactory;
             _failTimes = failTimes;
@@ -142,5 +145,85 @@ public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifeti
         services.AddBilibiliCrawlers(addHttpClient: false);
 
         return services.BuildServiceProvider();
+    }
+
+    [Fact]
+    public async Task GetProviderAsync_BuildFailure_PublishesCookieInvalidEvent()
+    {
+        var pool = CreateMockPool();
+        pool.FindByCookieFunc = (cookie) => new CookieRecord
+        {
+            Id = MongoDB.Bson.ObjectId.GenerateNewId(),
+            Cookie = cookie,
+            Status = CookieStatus.Active,
+        };
+        var publisher = new FakeCookieInvalidEventPublisher();
+        var provider = new BilibiliAccountProvider(
+            Options, pool, publisher, CreateGate(), Microsoft.Extensions.Logging.Abstractions.NullLogger<BilibiliAccountProvider>.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.GetProviderAsync("cookie1"));
+
+        Assert.Single(publisher.PublishCalls);
+        Assert.Equal("account_provider_offline", publisher.PublishCalls[0].Reason);
+    }
+
+    [Fact]
+    public async Task GetProviderAsync_RiskControl_DoesNotPublishEvent()
+    {
+        var pool = CreateMockPool();
+        var publisher = new FakeCookieInvalidEventPublisher();
+        var provider = new FailingProvider(
+            Options, pool, () => new RiskControlException("risk", "http://test", "cookie1"), failTimes: 1);
+
+        await Assert.ThrowsAsync<RiskControlException>(() => provider.GetProviderAsync("cookie1"));
+
+        Assert.Empty(publisher.PublishCalls);
+    }
+
+    [Fact]
+    public async Task GetProviderAsync_ConcurrentFailure_OnlyPublishesOnce()
+    {
+        var gate = CreateGate();
+        var pool = new MockCookiePoolService();
+        pool.FindByCookieFunc = (cookie) => new CookieRecord
+        {
+            Id = MongoDB.Bson.ObjectId.GenerateNewId(),
+            Cookie = cookie,
+            Status = CookieStatus.Active,
+        };
+        var publisher = new FakeCookieInvalidEventPublisher();
+
+        // FailingProvider always fails (failTimes: int.MaxValue)
+        var provider = new ConcurrentFailingProvider(
+            Options, pool, publisher, gate, () => new InvalidOperationException("nav assert code"));
+
+        var tasks = Enumerable.Range(0, 4)
+            .Select(_ => provider.GetProviderAsync("cookie1"))
+            .ToArray();
+
+        var exceptions = await Task.WhenAll(tasks.Select(t => t.ContinueWith<Task>(x => x)));
+        // All should fail with InvalidOperationException
+        foreach (var ex in exceptions)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => ex);
+        }
+
+        // Cookie lock serializes callers; only one should have entered the failure branch and published
+        Assert.Single(publisher.PublishCalls);
+        Assert.Equal("account_provider_offline", publisher.PublishCalls[0].Reason);
+    }
+
+    private sealed class ConcurrentFailingProvider : BilibiliAccountProvider
+    {
+        private readonly Func<Exception> _failureFactory;
+
+        public ConcurrentFailingProvider(BilibiliCrawlerOptions options, ICookiePoolService pool, ICookieInvalidEventPublisher publisher, CookieCallGate gate, Func<Exception> failureFactory)
+            : base(options, pool, publisher, gate, Microsoft.Extensions.Logging.Abstractions.NullLogger<BilibiliAccountProvider>.Instance)
+        {
+            _failureFactory = failureFactory;
+        }
+
+        internal override Task<IServiceProvider> BuildProviderAsync(string cookie, BilibiliCrawlerOptions options)
+            => Task.FromException<IServiceProvider>(_failureFactory());
     }
 }
