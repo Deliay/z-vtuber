@@ -1,5 +1,3 @@
-using System.Net.Http.Json;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Milky.Net.Client;
 using Milky.Net.Model;
@@ -12,19 +10,10 @@ public sealed class MilkyApiClient : IMilkyApiClient
     private readonly ILogger<MilkyApiClient> _logger;
 
     public MilkyApiClient(
-        HttpClient httpClient,
-        IOptions<MilkyOptions> options,
+        MilkyHttpClient httpClient,
         ILogger<MilkyApiClient> logger)
     {
         _logger = logger;
-
-        httpClient.BaseAddress = new Uri(options.Value.Endpoint);
-        if (!string.IsNullOrWhiteSpace(options.Value.AccessToken))
-        {
-            httpClient.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.Value.AccessToken);
-        }
-
         _milky = new MilkyClient(httpClient);
     }
 

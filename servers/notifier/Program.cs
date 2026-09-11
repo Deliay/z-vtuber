@@ -30,16 +30,18 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
 
 builder.Services.AddSingleton<MongoDbInitializer>();
 builder.Services.AddSingleton<INotificationSubscriptionRepository, NotificationSubscriptionRepository>();
-// 使用 Singleton 工厂注册，统一 MilkyApiClient 生命周期
+// 注册 MilkyHttpClient 和 MilkyApiClient
+builder.Services.AddSingleton<MilkyHttpClient>(sp =>
+{
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MilkyOptions>>();
+    return new MilkyHttpClient(options.Value);
+});
 builder.Services.AddSingleton<IMilkyApiClient>(sp =>
 {
-    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MilkyOptions>>();
+    var httpClient = sp.GetRequiredService<MilkyHttpClient>();
     var logger = sp.GetRequiredService<ILogger<MilkyApiClient>>();
-    var httpClient = httpClientFactory.CreateClient(nameof(MilkyApiClient));
-    return new MilkyApiClient(httpClient, options, logger);
+    return new MilkyApiClient(httpClient, logger);
 });
-builder.Services.AddHttpClient(nameof(MilkyApiClient));
 builder.Services.AddHostedService<CookieInvalidEventSubscriber>();
 builder.Services.AddSingleton<INotificationDispatchService, NotificationDispatchService>();
 
