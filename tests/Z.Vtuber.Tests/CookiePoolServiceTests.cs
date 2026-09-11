@@ -65,10 +65,31 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
         var service = CreateService();
         await service.AddAsync("cookie-a");
         await service.AddAsync("cookie-b");
-        await service.MarkOfflineAsync("cookie-a");
+        var result = await service.MarkOfflineAsync("cookie-a");
+        Assert.True(result);
 
         var next = await service.NextAsync();
         Assert.Equal("cookie-b", next.Cookie);
+    }
+
+    [Fact]
+    public async Task MarkOfflineAsync_AlreadyOffline_ReturnsFalse()
+    {
+        var service = CreateService();
+        await service.AddAsync("cookie-a");
+        var first = await service.MarkOfflineAsync("cookie-a");
+        Assert.True(first);
+
+        var second = await service.MarkOfflineAsync("cookie-a");
+        Assert.False(second);
+    }
+
+    [Fact]
+    public async Task MarkOfflineAsync_NonExistingCookie_ReturnsFalse()
+    {
+        var service = CreateService();
+        var result = await service.MarkOfflineAsync("non-existing");
+        Assert.False(result);
     }
 
     [Fact]

@@ -11,7 +11,7 @@ import {
   subscribeWeibo,
   unsubscribeWeibo,
   getWeiboTimeline,
-  listNotifyChannels,
+  listNotifyGroups,
   listNotificationBindings,
   createNotificationBinding,
   deleteNotificationBinding,
@@ -375,11 +375,11 @@ describe('API Client', () => {
     })
   })
 
-  describe('listNotifyChannels', () => {
-    it('should fetch notify channels', async () => {
+  describe('listNotifyGroups', () => {
+    it('should fetch notify groups', async () => {
       const mockData = {
         items: [
-          { platform: 'onebot', guildId: 'g1', guildName: 'Guild 1', channelId: 'c1', channelName: 'Channel 1' },
+          { groupId: '123456', groupName: '运维群' },
         ],
       }
       mockFetch.mockResolvedValue({
@@ -387,10 +387,10 @@ describe('API Client', () => {
         json: () => Promise.resolve(mockData),
       })
 
-      const result = await listNotifyChannels()
+      const result = await listNotifyGroups()
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/notify/channels'),
+        expect.stringContaining('/notify/groups'),
         expect.objectContaining({}),
       )
       expect(result).toEqual(mockData.items)
@@ -401,10 +401,10 @@ describe('API Client', () => {
         ok: false,
         status: 503,
         statusText: 'Service Unavailable',
-        text: () => Promise.resolve('Satori 不可达'),
+        text: () => Promise.resolve('Milky 不可达'),
       })
 
-      await expect(listNotifyChannels()).rejects.toThrow('API request failed')
+      await expect(listNotifyGroups()).rejects.toThrow('API request failed')
     })
   })
 
@@ -412,7 +412,7 @@ describe('API Client', () => {
     it('should fetch notification bindings', async () => {
       const mockData = {
         items: [
-          { id: '1', eventType: 'cookie_invalid', platform: 'onebot', guildId: 'g1', channelId: 'c1', createdAt: '2024-01-01T00:00:00Z' },
+          { id: '1', eventType: 'cookie_invalid', groupId: '123456', groupName: '运维群', createdAt: '2024-01-01T00:00:00Z' },
         ],
       }
       mockFetch.mockResolvedValue({
@@ -435,9 +435,8 @@ describe('API Client', () => {
       const mockResponse = {
         id: '1',
         eventType: 'cookie_invalid',
-        platform: 'onebot',
-        guildId: 'g1',
-        channelId: 'c1',
+        groupId: '123456',
+        groupName: '运维群',
         createdAt: '2024-01-01T00:00:00Z',
       }
       mockFetch.mockResolvedValue({
@@ -448,9 +447,8 @@ describe('API Client', () => {
 
       const result = await createNotificationBinding({
         eventType: 'cookie_invalid',
-        platform: 'onebot',
-        guildId: 'g1',
-        channelId: 'c1',
+        groupId: '123456',
+        groupName: '运维群',
       })
 
       expect(mockFetch).toHaveBeenCalledWith(
@@ -472,9 +470,7 @@ describe('API Client', () => {
 
       await expect(createNotificationBinding({
         eventType: 'invalid' as 'cookie_invalid',
-        platform: 'onebot',
-        guildId: 'g1',
-        channelId: 'c1',
+        groupId: '123456',
       })).rejects.toThrow('API request failed')
     })
   })

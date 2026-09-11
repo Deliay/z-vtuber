@@ -581,6 +581,29 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EnsureIndexes_CreatesNotificationSubscriptionUniqueIndex()
+    {
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+
+        var collection = fixture.Database.GetCollection<NotificationSubscriptionRecord>(MongoCollectionNames.NotificationSubscriptions);
+        var names = await ListIndexNamesAsync(collection);
+        Assert.Contains("EventType_1_GroupId_1", names);
+    }
+
+    [Fact]
+    public async Task EnsureIndexes_IsIdempotent_ForNotificationSubscriptions()
+    {
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+        await initializer.EnsureIndexesAsync();
+
+        var collection = fixture.Database.GetCollection<NotificationSubscriptionRecord>(MongoCollectionNames.NotificationSubscriptions);
+        var names = await ListIndexNamesAsync(collection);
+        Assert.Single(names, n => n == "EventType_1_GroupId_1");
+    }
+
+    [Fact]
     public async Task EnsureIndexes_IsIdempotent_ForWeiboCollections()
     {
         var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);

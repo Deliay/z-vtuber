@@ -6,7 +6,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Crawler.Weibo;
-using Z.Vtuber.Notifier.Satori;
+using Z.Vtuber.Notifier.Milky;
 
 namespace Z.Vtuber.Tests;
 
@@ -50,7 +50,7 @@ public sealed class FakeCookiePoolService : ICookiePoolService
     public Task<CookieRecord> NextAsync(CancellationToken ct = default) =>
         Task.FromResult(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
 
-    public Task MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
 
     public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
 
@@ -108,6 +108,7 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public List<(string Cookie, TimeSpan Duration)> CooldownCalls { get; } = [];
     public List<string> OfflineCalls { get; } = [];
     public Func<string, CookieRecord?>? FindByCookieFunc { get; set; }
+    public bool MarkOfflineReturns { get; set; } = true;
 
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<CookieRecord>>(ActiveCookies);
@@ -118,11 +119,23 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public Task<CookieRecord> NextAsync(CancellationToken ct = default)
         => Task.FromResult(new CookieRecord { Cookie = "next", Status = CookieStatus.Active });
 
-    public Task MarkOfflineAsync(string cookie, CancellationToken ct = default)
+    public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default)
     {
         OfflineCalls.Add(cookie);
-        return Task.CompletedTask;
+        // Simulate atomic Active→Offline transition: caller can override via MarkOfflineReturns
+        if (!MarkOfflineReturns)
+        {
+            return Task.FromResult(false);
+        }
+        // First call returns true, subsequent calls return false
+        if (_offlineTransitions.Add(cookie))
+        {
+            return Task.FromResult(true);
+        }
+        return Task.FromResult(false);
     }
+
+    private readonly HashSet<string> _offlineTransitions = [];
 
     public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default)
     {
@@ -134,29 +147,27 @@ public sealed class MockCookiePoolService : ICookiePoolService
         => Task.FromResult(FindByCookieFunc?.Invoke(cookie));
 }
 
-public sealed class FakeSatoriApiClient : ISatoriApiClient
+public sealed class FakeMilkyApiClient : IMilkyApiClient
 {
-    public Func<Task<LoginInfo>>? LoginGetFunc { get; set; }
-    public Func<Task<IReadOnlyList<Guild>>>? GuildListFunc { get; set; }
-    public Func<string, Task<IReadOnlyList<Channel>>>? ChannelListFunc { get; set; }
-    public Func<string, string, Task>? SendMessageFunc { get; set; }
-    public string? CachedPlatform { get; set; }
-    public string? CachedSelfId { get; set; }
+    public Func<Task<LoginInfo>>? LoginInfoFunc { get; set; }
+    public Func<Task<IReadOnlyList<GroupInfo>>>? GroupListFunc { get; set; }
+    public Func<long, string, Task>? SendMessageFunc { get; set; }
+    public List<(long GroupId, string Text)> SendMessageCalls { get; } = [];
 
-    public Task<LoginInfo> LoginGetAsync(CancellationToken ct = default)
-        => LoginGetFunc?.Invoke() ?? Task.FromResult(new LoginInfo { Platform = "test", User = new UserInfo { Id = "123" }, Status = 1 });
+    public Task<LoginInfo> GetLoginInfoAsync(CancellationToken ct = default)
+        => LoginInfoFunc?.Invoke() ?? Task.FromResult(new LoginInfo { UserId = 123, Nickname = "test-bot" });
 
-    public Task<IReadOnlyList<Guild>> GetGuildListAsync(CancellationToken ct = default)
-        => GuildListFunc?.Invoke() ?? Task.FromResult<IReadOnlyList<Guild>>([]);
+    public Task<IReadOnlyList<GroupInfo>> GetGroupListAsync(CancellationToken ct = default)
+        => GroupListFunc?.Invoke() ?? Task.FromResult<IReadOnlyList<GroupInfo>>([]);
 
-    public Task<IReadOnlyList<Channel>> GetChannelListAsync(string guildId, CancellationToken ct = default)
-        => ChannelListFunc?.Invoke(guildId) ?? Task.FromResult<IReadOnlyList<Channel>>([]);
-
-    public Task SendMessageAsync(string channelId, string content, CancellationToken ct = default)
-        => SendMessageFunc?.Invoke(channelId, content) ?? Task.CompletedTask;
-
-    public string? GetCachedPlatform() => CachedPlatform;
-    public string? GetCachedSelfId() => CachedSelfId;
+    public async Task SendGroupMessageAsync(long groupId, string text, CancellationToken ct = default)
+    {
+        if (SendMessageFunc is not null)
+        {
+            await SendMessageFunc(groupId, text);
+        }
+        SendMessageCalls.Add((groupId, text));
+    }
 }
 
 public sealed class FakeCookieInvalidEventPublisher : ICookieInvalidEventPublisher

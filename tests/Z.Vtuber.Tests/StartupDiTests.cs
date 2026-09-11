@@ -40,6 +40,7 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
         services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
         services.AddSingleton<ICookieInvalidEventPublisher, FakeCookieInvalidEventPublisher>();
+        services.AddSingleton<CookieCallGate>();
         services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
         services.AddSingleton<BiliApiClient>();
         services.AddSingleton(sp => new BrowserishBiliApiClient(

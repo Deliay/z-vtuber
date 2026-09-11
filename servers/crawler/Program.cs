@@ -62,6 +62,7 @@ builder.Services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
 builder.Services.AddSingleton<ICookieNavProbeService, CookieNavProbeService>();
 builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
 
+builder.Services.AddSingleton<CookieCallGate>();
 builder.Services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
 builder.Services.AddSingleton<BiliApiClient>();
 // 拟真通道：HttpMessageHandler 不可由容器自动解析，工厂注册并挂入 RiskControlHandler
@@ -89,7 +90,7 @@ builder.Services.AddSingleton<CrawlBackoffRegistry>(sp =>
         options.RiskControlCooldownThreshold,
         sp.GetRequiredService<TimeProvider>());
 });
-builder.Services.AddSingleton<DanmakuClientFactory>();
+builder.Services.AddSingleton<IDanmakuClientFactory, DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventPublisher, RedisLiveEventPublisher>();
 builder.Services.AddSingleton<ICookieInvalidEventPublisher, RedisCookieInvalidEventPublisher>();
 builder.Services.AddSingleton<CrawlLockProvider>();

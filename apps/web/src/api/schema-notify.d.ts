@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-    "/api/notify/channels": {
+    "/api/notify/groups": {
         parameters: {
             query?: never;
             header?: never;
@@ -12,10 +12,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 查询 Satori 机器人当前可见的频道列表
-         * @description 聚合 Satori 的 guild.list + 各 guild 的 channel.list，返回可用于通知投递的频道列表。Satori 不可达或未配置登录信息时返回 503。
+         * 查询机器人当前加入的 QQ 群列表
+         * @description 经 Milky get_group_list 聚合返回。Milky 不可达或机器人未登录时返回 503 + 明确错误消息（不静默返回空列表）。
          */
-        get: operations["listNotifyChannels"];
+        get: operations["listNotifyGroups"];
         put?: never;
         post?: never;
         delete?: never;
@@ -63,21 +63,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description Satori 频道定位信息 */
-        NotifyChannel: {
-            /** @description Satori 平台标识 */
-            platform?: string;
-            /** @description 群组 ID */
-            guildId?: string;
-            /** @description 群组名称 */
-            guildName?: string | null;
-            /** @description 频道 ID */
-            channelId?: string;
-            /** @description 频道名称 */
-            channelName?: string | null;
+        /** @description QQ 群信息 */
+        NotifyGroup: {
+            /** @description 群号（int64 字符串表达） */
+            groupId?: string;
+            /** @description 群名称 */
+            groupName?: string | null;
         };
-        NotifyChannelList: {
-            items?: components["schemas"]["NotifyChannel"][];
+        NotifyGroupList: {
+            items?: components["schemas"]["NotifyGroup"][];
         };
         /** @description 通知订阅记录 */
         NotificationSubscription: {
@@ -88,16 +82,10 @@ export interface components {
              * @enum {string}
              */
             eventType?: "cookie_invalid";
-            /** @description Satori 平台标识 */
-            platform?: string;
-            /** @description 群组 ID */
-            guildId?: string;
-            /** @description 群组名称 */
-            guildName?: string | null;
-            /** @description 频道 ID */
-            channelId?: string;
-            /** @description 频道名称 */
-            channelName?: string | null;
+            /** @description 群号（int64 字符串表达） */
+            groupId?: string;
+            /** @description 群名称 */
+            groupName?: string | null;
             /**
              * Format: date-time
              * @description 创建时间（UTC）
@@ -113,16 +101,10 @@ export interface components {
              * @enum {string}
              */
             eventType: "cookie_invalid";
-            /** @description Satori 平台标识 */
-            platform: string;
-            /** @description 群组 ID */
-            guildId: string;
-            /** @description 群组名称 */
-            guildName?: string | null;
-            /** @description 频道 ID */
-            channelId: string;
-            /** @description 频道名称 */
-            channelName?: string | null;
+            /** @description 群号（int64 字符串表达） */
+            groupId: string;
+            /** @description 群名称 */
+            groupName?: string | null;
         };
         Error: {
             /** @description 错误消息 */
@@ -137,7 +119,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    listNotifyChannels: {
+    listNotifyGroups: {
         parameters: {
             query?: never;
             header?: never;
@@ -146,16 +128,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 频道列表 */
+            /** @description 群列表 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NotifyChannelList"];
+                    "application/json": components["schemas"]["NotifyGroupList"];
                 };
             };
-            /** @description Satori 不可达或登录发现失败 */
+            /** @description Milky 不可达或机器人未登录 */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -217,7 +199,7 @@ export interface operations {
                     "application/json": components["schemas"]["NotificationSubscription"];
                 };
             };
-            /** @description eventType 非法（当前仅支持 cookie_invalid） */
+            /** @description eventType 非法（当前仅支持 cookie_invalid）或 groupId 非法（无法解析为 int64） */
             400: {
                 headers: {
                     [name: string]: unknown;

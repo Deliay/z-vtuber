@@ -13,7 +13,7 @@ type CookieAddRequest = components['schemas']['CookieAddRequest']
 type WeiboSubscriptionItem = weiboComponents['schemas']['WeiboSubscriptionItem']
 type WeiboSubscribeRequest = weiboComponents['schemas']['WeiboSubscribeRequest']
 
-type NotifyChannel = notifyComponents['schemas']['NotifyChannel']
+type NotifyGroup = notifyComponents['schemas']['NotifyGroup']
 type NotificationSubscription = notifyComponents['schemas']['NotificationSubscription']
 type CreateNotificationSubscriptionRequest = notifyComponents['schemas']['CreateNotificationSubscriptionRequest']
 
@@ -130,8 +130,8 @@ export async function subscribeWeibo(
   })
 }
 
-export async function listNotifyChannels(): Promise<NotifyChannel[]> {
-  const data = await request<{ items: NotifyChannel[] }>('/notify/channels')
+export async function listNotifyGroups(): Promise<NotifyGroup[]> {
+  const data = await request<{ items: NotifyGroup[] }>('/notify/groups')
   return data.items ?? []
 }
 
