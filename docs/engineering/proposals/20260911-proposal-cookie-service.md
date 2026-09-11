@@ -29,7 +29,7 @@
 
 ### 1.3 范围
 
-- **内**：新服务骨架（API + 浏览器编排 + 定时刷新 + 持久化）、crawler cookie 获取/宣告路径切换、web Cookie 页改造、契约/OpenAPI、Aspire 编排、Dockerfile、CI 流水线、测试；
+- **内**：新服务骨架（API + 浏览器编排 + 定时刷新 + 持久化）、crawler cookie 获取/宣告路径切换、**Redis 分布式锁抽象及既有进程内锁迁移（`CookieCallGate`、`CrawlLockProvider` 等）**、web Cookie 页改造、契约/OpenAPI、Aspire 编排、Dockerfile、CI 流水线、测试；
 - **外**：notifier（事件格式不变，零改动）；数据抓取链路仍走 crawler 既有 HTTP 通道（`BiliApiClient`/`BrowserishBiliApiClient`），浏览器不参与抓取；B 站帐号注册、风控申诉等人工事项。
 
 ## 2. 技术架构
@@ -56,7 +56,7 @@ graph LR
 | 语言/框架 | C# / .NET 10，ASP.NET Core Web API | 与 api 服务一致，需提供真实 HTTP API（非 Worker） |
 | 浏览器自动化 | Microsoft.Playwright（Firefox，headless） | 持久化上下文 `LaunchPersistentContextAsync`，每帐号独立 user-data-dir |
 | 数据库 | MongoDB（`Aspire.MongoDB.Driver`） | 复用既有实例与 `zvtuber` 库 |
-| 消息通道 | Redis pub/sub（`Aspire.StackExchange.Redis`，`ConnectionStrings:messaging`） | 复用 `cookie-invalid` 频道 |
+| 消息通道/分布式锁 | Redis pub/sub + 分布式锁（`Aspire.StackExchange.Redis`，`ConnectionStrings:messaging`） | 复用 `cookie-invalid` 频道；互斥锁 `LockTake/LockRelease` |
 | 契约 | OpenAPI YAML（`contracts/cookie.openapi.yaml`）+ openapi-typescript codegen | 与既有三份契约同模式 |
 | 测试 | xUnit + Testcontainers（Mongo/Redis），Playwright 侧以接口 mock | 沿用 `tests/Z.Vtuber.Tests` |
 | 部署 | 两阶段 Dockerfile + GitHub Action `build-cookie-image.yml` | 范本：notifier |
@@ -225,7 +225,7 @@ sequenceDiagram
     participant DB as MongoDB
     participant R as Redis
 
-    Job->>Mgr: RefreshSessionAsync(accountId)（per-session 锁）
+    Job->>Mgr: RefreshSessionAsync(accountId)（Redis 分布式锁）
     Mgr->>Mgr: 打开/复用上下文 → reload 主页，等待 nav 请求（超时 30s）
     alt 捕获 nav 请求
         Mgr->>DB: 更新 cookie 原文 + LastRefreshAt；失败计数清零
@@ -269,22 +269,54 @@ sequenceDiagram
 
 #### 实现点 4: 阻塞式失效宣告（InvalidationService）
 
-- `POST /api/cookie/report-invalid` → 按 cookieId 反查 session → **per-session `SemaphoreSlim` 锁**（同 `CookieCallGate` 思路，键锁驻留）→ 锁内先查「刚被其他宣告刷新过」（`LastRefreshAt` 晚于宣告入队时间则直接返回现值，并发去重）→ 否则执行一次 `RefreshSessionAsync`（即时路径：单次失败即判失效，不等 3 次）；
+- `POST /api/cookie/report-invalid` → 按 cookieId 反查 session → **per-session Redis 分布式锁**（`lock:cookie-refresh:{accountId}`，见实现点 5）→ 锁内先查「刚被其他宣告刷新过」（`LastRefreshAt` 晚于宣告入队时间则直接返回现值，并发去重）→ 否则执行一次 `RefreshSessionAsync`（即时路径：单次失败即判失效，不等 3 次）；
 - 成功：`200` 返回新 cookie；失败：session/cookie 失效 + 发事件，`410`；
-- 接口总超时 60s（配置项），超时返回 `504`，后台刷新流程继续；
+- 接口总超时 60s（配置项），等待锁 + 刷新整体计超时，超时返回 `504`，后台刷新流程继续（锁 TTL 到期自动释放）；
 - **crawler 侧** `CookieServiceClient`：
   - `CheckoutAsync` 替代 `CookiePoolService.NextAsync` 调用点（`LiveStatusJob`/`SpaceTimelineJob`/`LiveGuardJob`/`LiveEventSource`/`CookieProbeJob` 等）：`404` → 抛既有 `NoAvailableCookieException`，沿用暂停/退避语义；
   - 失效宣告替代 `MarkOfflineAsync` 的调用点语义：调用方捕获风控/失效 → `ReportInvalidAsync` 阻塞等待 → `200` 拿新 cookie 重试原请求一次；`410` 放弃本轮，等待下一轮取其他 cookie；
   - **兼容期**：`AccountId == null` 的历史手工 cookie 无 session 可刷新，宣告时直接走旧逻辑（offline + 事件），引导运维用扫码帐号替代；
   - `CookieProbeJob` 的 nav 探测职责随 cookie 保鲜移交 cookie 服务，crawler 侧探测改为对「取用的 cookie」做轻量校验或整 Job 下线（实现期定夺，提案建议：cookie 服务已 10 分钟保鲜 + 宣告自愈，crawler 的周期探测可下线）。
 
-#### 实现点 5: web「Cookie 管理」页改造
+#### 实现点 5: Redis 分布式锁抽象与既有进程内锁迁移
+
+本需求所有互斥协调**不使用进程内锁（`SemaphoreSlim` 等）**，统一走 Redis 分布式锁，为 cookie 服务与 crawler 后续横向扩展（多副本）铺路；既有进程内锁一并迁移。
+
+- **抽象（契约入 common）**：`servers/common/Locking/IDistributedLockProvider.cs` 定义
+
+  ```csharp
+  public interface IDistributedLockProvider
+  {
+      // 获取锁；在 waitTimeout 内未获得返回 null。ttl 为持锁上限（到期自动释放，兜底崩溃场景）
+      Task<IDistributedLockHandle?> AcquireAsync(string key, TimeSpan ttl, TimeSpan waitTimeout, CancellationToken ct = default);
+  }
+  public interface IDistributedLockHandle : IAsyncDisposable { string Key { get; } }
+  ```
+
+  归属沿用「common 存契约、服务存实现」先例（同 `ICookieNavProbeService`）：common 不依赖 Redis 基础设施包，实现 `RedisDistributedLockProvider` 在 cookie 与 crawler 各自服务内（均已有 `ConnectionStrings:messaging` 注入）。
+
+- **实现要点**（StackExchange.Redis）：
+  - 获取：`LockTakeAsync(key, token, ttl)`（底层 `SET key token NX PX ttl`），token 为每持有者唯一 GUID；未获得时按 50–200ms 随机间隔重试直至 `waitTimeout`；
+  - 释放：`LockReleaseAsync(key, token)`（底层 Lua compare-and-del，只释放自己的锁）；`IDistributedLockHandle.DisposeAsync` 幂等释放；
+  - **v1 不做 watchdog 自动续期**：TTL 必须大于最大持锁时长（刷新锁 TTL 默认 90s > 刷新 nav 超时 30s + 浏览器重建余量），配置化；持锁超时后锁自动失效，后续操作以 `LastRefreshAt` 比对与状态机兜底正确性；
+  - key 统一 `lock:` 前缀，挂在既有 `messaging` 实例。
+
+- **cookie 服务内使用点**：
+  - `lock:cookie-refresh:{accountId}`：定时刷新与宣告失效即时刷新互斥（同一 session 任意时刻只有一个刷新在进行，跨副本生效）；
+  - `lock:cookie-login:{accountId}`：登录 session 的二维码生成/状态迁移互斥。
+
+- **crawler 既有锁迁移**：
+  - `CookieCallGate`（`servers/crawler/Services/CookieCallGate.cs`，per-cookie `SemaphoreSlim` 键锁）→ 改为 `IDistributedLockProvider`，key `lock:cookie-call:{cookieTag}`，TTL/等待时长沿用现调用语义配置化；调用点接口不变，仅替换实现；
+  - `CrawlLockProvider`（`servers/crawler/Jobs/CrawlLockProvider.cs`，per-key 任务锁）→ 同法迁移，key `lock:crawl:{key}`；
+  - 迁移后 crawler 多副本同时运行时同一 cookie/同一抓取目标仍互斥，消除副本间重复抓取与 cookie 并发竞争。
+
+#### 实现点 6: web「Cookie 管理」页改造
 
 - `apps/web/src/api/client.ts` 新增 cookie 服务客户端函数；类型经 openapi-typescript 由 `contracts/cookie.openapi.yaml` 生成（`schema-cookie.d.ts`，勿手改）；
 - `cookie/CookiePage.tsx` 改造：列表数据源切到 `GET /api/cookie/accounts`（+ `/available`）；移除 textarea 粘贴录入，改「新增帐号」按钮 → 弹窗展示 `qrCodeImage`（base64 PNG）→ 每 2s 轮询 `GET /accounts/{id}` 至 `active/expired`；
 - 代理：vite dev 增加 `VITE_COOKIE_URL`（默认 localhost:5200）；生产 nginx 增加 `location /api/cookie` 且**必须置于 `location /api` 之前**，`docker-entrypoint.sh` envsubst 增加 `COOKIE_BACKEND`（默认 `cookie:8080`）。
 
-#### 实现点 6: 配置项（CookieServiceOptions，节 `CookieService`，`ValidateOnStart`）
+#### 实现点 7: 配置项（CookieServiceOptions，节 `CookieService`，`ValidateOnStart`）
 
 | 配置 | 默认 | 说明 |
 |---|---|---|
@@ -293,8 +325,10 @@ sequenceDiagram
 | `RefreshIntervalMinutes` | 10 | 定时刷新周期 |
 | `RefreshNavTimeoutSeconds` | 30 | 单次刷新等待 nav 请求超时 |
 | `MaxConsecutiveRefreshFailures` | 3 | 定时路径失效判定阈值 |
-| `ReportInvalidTimeoutSeconds` | 60 | 宣告接口超时上限 |
+| `ReportInvalidTimeoutSeconds` | 60 | 宣告接口超时上限（含等待分布式锁） |
 | `MaxPendingLoginSessions` | 3 | 并发登录 session 上限 |
+| `RefreshLockTtlSeconds` | 90 | 刷新分布式锁 TTL（须 > RefreshNavTimeoutSeconds + 浏览器重建余量） |
+| `LockAcquireWaitMs` / `LockRetryIntervalMs` | 按调用点 | 分布式锁等待上限与重试间隔 |
 
 ## 6. 技术决策
 
@@ -305,16 +339,18 @@ sequenceDiagram
 3. **cookie 池事实源收敛到 cookie 服务，crawler 改走 HTTP**：满足需求「crawler 调用 api 获得 cookie」；`bilibili_cookies` 集合改由 cookie 服务独占写入，common 中 `CookiePoolService` 的写入路径随之下线（crawler 侧读取改为 API）。牺牲一次跨进程调用，换来 session-cookie 状态强一致与宣告自愈。
 4. **持久化上下文（user-data-dir）而非 storageState 导出**：`LaunchPersistentContextAsync` 天然落盘（cookie/localStorage/IndexedDB 全量），重启恢复简单；storageState 需手动导出且不含全部状态。
 5. **登录成功以 nav XHR 为准**：需求明确且不依赖易变的页面 DOM/文案；未登录主页不产生登录态 nav 请求，误判率低。
-6. **宣告失效阻塞 + 锁内去重**：满足「阻塞调用→拿新 cookie 重试」语义；per-session 锁 + `LastRefreshAt` 比对避免风暴式重复刷新（沿用 `CookieCallGate` 键锁模式）。
-7. **定时失效判定需连续 3 次失败，即时宣告路径单次即判**：定时路径容忍瞬时抖动；宣告路径调用方已实际观察到失效，单次确认即可。
-8. **失效事件零改动复用 `cookie-invalid`**：notifier 与通知订阅配置不动，reason 枚举扩展新取值。
+6. **宣告失效阻塞 + 锁内去重**：满足「阻塞调用→拿新 cookie 重试」语义；per-session Redis 分布式锁 + `LastRefreshAt` 比对避免风暴式重复刷新。
+7. **全部互斥走 Redis 分布式锁，不使用进程内锁**：cookie 服务与 crawler 后续需支持多副本横向扩展，`SemaphoreSlim` 类进程内锁在副本间失效；统一 `IDistributedLockProvider` 抽象（契约入 common、实现随服务），本需求同时将 crawler 既有 `CookieCallGate`（cookie 使用锁）与 `CrawlLockProvider`（任务锁）一并迁移，避免新旧两套锁并存。锁 TTL 兜底崩溃释放，v1 不引入 watchdog 续期（TTL > 最大持锁时长即可，正确性由状态机与 `LastRefreshAt` 比对兜底）。浏览器 session 与上下文仍绑定在持有它的副本（user-data-dir 卷），多副本下的 session 迁移不在本期范围，但锁层不再构成扩展障碍。
+8. **定时失效判定需连续 3 次失败，即时宣告路径单次即判**：定时路径容忍瞬时抖动；宣告路径调用方已实际观察到失效，单次确认即可。
+9. **失效事件零改动复用 `cookie-invalid`**：notifier 与通知订阅配置不动，reason 枚举扩展新取值。
 
 ### 6.2 依赖与约束
 
 - `Microsoft.Playwright` NuGet + Firefox 运行时（镜像体积显著增大，需评估 registry/部署带宽）；
 - 部署节点需为 session 目录挂载持久卷（`infra` 侧 docker-compose/卷配置，部署节点执行）；
 - 浏览器旗标：headless、无 GPU（`--headless` 由 Playwright 管理）；容器内需非 root 或 `--no-sandbox` 等价配置；
-- 前端代理顺序约束：`/api/cookie` 先于 `/api`（同 `/api/notify` 既有先例）。
+- 前端代理顺序约束：`/api/cookie` 先于 `/api`（同 `/api/notify` 既有先例）；
+- 分布式锁与 pub/sub 共用既有 `messaging` Redis 实例（`lock:` key 前缀隔离），锁 TTL 兜底释放，进程崩溃不留死锁。
 
 ## 7. 项目结构
 
@@ -335,9 +371,11 @@ servers/cookie/
 │   └── LoginSessionWorker.cs           # pending_login session 的 nav 监听后台任务
 ├── Refresh/
 │   ├── SessionRefreshJob.cs            # 10 分钟定时刷新（60s 扫描驱动）
-│   └── InvalidationService.cs          # 宣告失效 + 即时刷新 + per-session 锁
+│   └── InvalidationService.cs          # 宣告失效 + 即时刷新 + per-session Redis 分布式锁
 ├── Pool/
 │   └── CookieDispatchService.cs        # round-robin 检出（迁移自 CookiePoolService 语义）
+├── Locking/
+│   └── RedisDistributedLockProvider.cs # IDistributedLockProvider 的 Redis 实现
 ├── Persistence/
 │   ├── CookieSessionRecord.cs
 │   └── CookieSessionRepository.cs
@@ -346,10 +384,14 @@ servers/cookie/
 
 servers/common/（变更）
 ├── Persistence/Entities/CookieRecord.cs        # + AccountId / LastRefreshAt
-└── Persistence/MongoDbInitializer.cs           # + AccountId 索引
+├── Persistence/MongoDbInitializer.cs           # + AccountId 索引
+└── Locking/IDistributedLockProvider.cs         # 分布式锁契约（common 不依赖 Redis 包，实现随服务）
 
 servers/crawler/（变更）
 ├── Services/CookieServiceClient.cs             # 新增 typed HttpClient
+├── Locking/RedisDistributedLockProvider.cs     # 分布式锁实现（与 cookie 服务同构）
+├── Services/CookieCallGate.cs                  # 改：SemaphoreSlim → IDistributedLockProvider
+├── Jobs/CrawlLockProvider.cs                   # 改：进程内 per-key 锁 → Redis 分布式锁
 ├── Jobs/CookieProbeJob.cs                      # 下线或降级（实现期定夺）
 └── （cookie 取用/失效调用点切换到 CookieServiceClient）
 
@@ -381,8 +423,9 @@ infra/apphost/（编排 + 卷）
   - 刷新状态机：成功更新 cookie、失败计数、连续 3 次失效、即时路径单次失效；
   - 宣告去重：并发 `report-invalid` 只触发一次刷新、后到者获得同一结果；`LastRefreshAt` 比对短路；
   - 检出：round-robin 顺序、无可用 cookie 的 `404`；
-- **集成测试**（Testcontainers Mongo + Redis）：session/cookie 仓储、失效事件发布格式与频道、API 端到端（mock 浏览器层）；
-- **crawler 侧**：`CookieServiceClient` 对 `200/404/410/504` 的分支行为（mock HttpMessageHandler）；
+  - 分布式锁：获取/释放/超时未获得返回 null、TTL 到期自动释放、只能释放自己持有的锁（Testcontainers Redis 实测）；
+- **集成测试**（Testcontainers Mongo + Redis）：session/cookie 仓储、失效事件发布格式与频道、API 端到端（mock 浏览器层）；跨「实例」锁互斥（两个 `RedisDistributedLockProvider` 实例模拟多副本）；
+- **crawler 侧**：`CookieServiceClient` 对 `200/404/410/504` 的分支行为（mock HttpMessageHandler）；`CookieCallGate`/`CrawlLockProvider` 迁移后互斥语义回归（Redis 集成测试）；
 - **手工验证**：真实扫码登录 → 10 分钟刷新 → 宣告失效自愈全链路（部署节点验收）。
 
 ## 9. 部署方案

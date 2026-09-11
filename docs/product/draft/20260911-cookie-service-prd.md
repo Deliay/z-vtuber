@@ -89,7 +89,7 @@ type: Permanent
 
 #### 功能点 4: 阻塞式失效宣告与即时刷新
 
-- **描述**: 外部使用方（crawler）在使用 cookie 过程中发现 cookie 失效时，阻塞调用 Cookie 服务的「宣告失效」API。服务收到宣告后立即对对应 session 触发一次主页刷新（不等定时周期）：刷新成功拿到新 nav cookie 时，更新持久化 cookie 并在响应中返回新 cookie，调用方用新 cookie 重试原请求；刷新后仍无 nav 接口访问（session 失效）时，session 与 cookie 标记失效、发布失效事件，响应明确返回 session 失效，调用方放弃本轮抓取、等待下一轮取其他 cookie。同一 session 的并发宣告需去重/串行化，避免重复刷新。
+- **描述**: 外部使用方（crawler）在使用 cookie 过程中发现 cookie 失效时，阻塞调用 Cookie 服务的「宣告失效」API。服务收到宣告后立即对对应 session 触发一次主页刷新（不等定时周期）：刷新成功拿到新 nav cookie 时，更新持久化 cookie 并在响应中返回新 cookie，调用方用新 cookie 重试原请求；刷新后仍无 nav 接口访问（session 失效）时，session 与 cookie 标记失效、发布失效事件，响应明确返回 session 失效，调用方放弃本轮抓取、等待下一轮取其他 cookie。同一 session 的并发宣告需去重/串行化，避免重复刷新；串行化基于 Redis 分布式锁实现，不依赖进程内锁，以便服务后续横向扩展。
 - **用户价值**: cookie 失效从「人工更换」升级为「秒级自愈」，采集中断时间大幅缩短。
 - **验收标准**:
   - [ ] 宣告失效后 session 仍有效时，响应返回新 cookie，crawler 重试原请求成功；
@@ -192,13 +192,18 @@ Web 管理后台（`apps/web`）「Cookie 管理」页在原位置改造：
 - 失效宣告接口为阻塞式，正常路径（刷新成功）应在秒级~十数秒内返回，并设置明确超时上限；
 - 定时刷新错峰执行，避免多 session 同时刷新造成资源尖峰。
 
-### 4.2 安全性要求
+### 4.2 可扩展性要求
+
+- 服务内部所有互斥协调（刷新串行化、宣告去重等）必须基于 **Redis 分布式锁**实现，不得使用进程内锁，以便 Cookie 服务与 crawler 后续多副本横向扩展；
+- crawler 侧既有的进程内锁（cookie 使用锁 `CookieCallGate`、抓取任务锁 `CrawlLockProvider` 等）随本次改造一并迁移至 Redis 分布式锁。
+
+### 4.3 安全性要求
 
 - cookie 原文与浏览器 session 持久化目录属于敏感数据：API 响应、日志、Redis 事件 payload 均不得包含 cookie 原文（仅分发接口对授权内网调用方返回）；持久化目录仅存于服务挂载卷；
 - 服务部署于内网，API 与既有后台接口一致（无鉴权），后续接入统一鉴权时另行扩展；
 - 二维码图片仅包含 B 站登录二维码内容，不附带其他页面信息。
 
-### 4.3 兼容性要求
+### 4.4 兼容性要求
 
 - 失效事件沿用既有 Redis `cookie-invalid` 频道与 `CookieInvalidEvent` 格式，notifier 无需改动；
 - MongoDB 既有 `bilibili_cookies` 集合结构兼容性演进（新增 session 关联字段），历史数据可迁移或由首批扫码帐号自然替代；
