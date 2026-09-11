@@ -79,6 +79,8 @@ public sealed class ResilientBiliApiClientTests
         }
         public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<CookieRecord>>([]);
+        public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) =>
+            Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
     }
 
     private static BilibiliCrawlerOptions DefaultOptions() => new()

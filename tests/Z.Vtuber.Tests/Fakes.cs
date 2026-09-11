@@ -6,6 +6,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Crawler.Weibo;
+using Z.Vtuber.Notifier.Satori;
 
 namespace Z.Vtuber.Tests;
 
@@ -55,6 +56,9 @@ public sealed class FakeCookiePoolService : ICookiePoolService
 
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<CookieRecord>>([new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active }]);
+
+    public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) =>
+        Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
 }
 
 public sealed class FakeCookieNavProbeService : ICookieNavProbeService
@@ -103,6 +107,7 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public List<CookieRecord> ActiveCookies { get; set; } = [];
     public List<(string Cookie, TimeSpan Duration)> CooldownCalls { get; } = [];
     public List<string> OfflineCalls { get; } = [];
+    public Func<string, CookieRecord?>? FindByCookieFunc { get; set; }
 
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<CookieRecord>>(ActiveCookies);
@@ -122,6 +127,51 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default)
     {
         CooldownCalls.Add((cookie, duration));
+        return Task.CompletedTask;
+    }
+
+    public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default)
+        => Task.FromResult(FindByCookieFunc?.Invoke(cookie));
+}
+
+public sealed class FakeSatoriApiClient : ISatoriApiClient
+{
+    public Func<Task<LoginInfo>>? LoginGetFunc { get; set; }
+    public Func<Task<IReadOnlyList<Guild>>>? GuildListFunc { get; set; }
+    public Func<string, Task<IReadOnlyList<Channel>>>? ChannelListFunc { get; set; }
+    public Func<string, string, Task>? SendMessageFunc { get; set; }
+    public string? CachedPlatform { get; set; }
+    public string? CachedSelfId { get; set; }
+
+    public Task<LoginInfo> LoginGetAsync(CancellationToken ct = default)
+        => LoginGetFunc?.Invoke() ?? Task.FromResult(new LoginInfo { Platform = "test", User = new UserInfo { Id = "123" }, Status = 1 });
+
+    public Task<IReadOnlyList<Guild>> GetGuildListAsync(CancellationToken ct = default)
+        => GuildListFunc?.Invoke() ?? Task.FromResult<IReadOnlyList<Guild>>([]);
+
+    public Task<IReadOnlyList<Channel>> GetChannelListAsync(string guildId, CancellationToken ct = default)
+        => ChannelListFunc?.Invoke(guildId) ?? Task.FromResult<IReadOnlyList<Channel>>([]);
+
+    public Task SendMessageAsync(string channelId, string content, CancellationToken ct = default)
+        => SendMessageFunc?.Invoke(channelId, content) ?? Task.CompletedTask;
+
+    public string? GetCachedPlatform() => CachedPlatform;
+    public string? GetCachedSelfId() => CachedSelfId;
+}
+
+public sealed class FakeCookieInvalidEventPublisher : ICookieInvalidEventPublisher
+{
+    public List<(string CookieId, string Reason)> PublishCalls { get; } = [];
+    public bool ThrowOnPublish { get; set; }
+
+    public Task PublishAsync(string cookieId, string reason, CancellationToken ct = default)
+    {
+        if (ThrowOnPublish)
+        {
+            throw new InvalidOperationException("publish failed");
+        }
+
+        PublishCalls.Add((cookieId, reason));
         return Task.CompletedTask;
     }
 }
