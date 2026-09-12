@@ -15,7 +15,7 @@ public class LiveGuardTop3BackfillService
 
     private readonly AccountBasicInfoRepository _accountRepository;
     private readonly LiveGuardRepository _guardRepository;
-    private readonly ICookiePoolService _cookiePool;
+    private readonly CookieServiceClient _cookieServiceClient;
     private readonly IAccountInfoCrawler _accountInfoCrawler;
     private readonly IMongoCollection<MetaRecord> _metaCollection;
     private readonly LiveGuardListFetcher _fetcher;
@@ -25,7 +25,7 @@ public class LiveGuardTop3BackfillService
     public LiveGuardTop3BackfillService(
         AccountBasicInfoRepository accountRepository,
         LiveGuardRepository guardRepository,
-        ICookiePoolService cookiePool,
+        CookieServiceClient cookieServiceClient,
         IAccountInfoCrawler accountInfoCrawler,
         IMongoDatabase database,
         LiveGuardListFetcher fetcher,
@@ -34,7 +34,7 @@ public class LiveGuardTop3BackfillService
     {
         _accountRepository = accountRepository;
         _guardRepository = guardRepository;
-        _cookiePool = cookiePool;
+        _cookieServiceClient = cookieServiceClient;
         _accountInfoCrawler = accountInfoCrawler;
         _metaCollection = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
         _fetcher = fetcher;
@@ -58,7 +58,8 @@ public class LiveGuardTop3BackfillService
         string cookie;
         try
         {
-            cookie = (await _cookiePool.NextAsync(ct)).Cookie;
+            var checkout = await _cookieServiceClient.CheckoutAsync(ct);
+            cookie = checkout.Cookie;
         }
         catch (NoAvailableCookieException)
         {

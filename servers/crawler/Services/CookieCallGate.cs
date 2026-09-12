@@ -1,39 +1,40 @@
-using System.Collections.Concurrent;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Crawler.Services;
 
 /// <summary>
 /// Per-cookie keyed lock ensuring that concurrent callers for the same cookie
-/// serialize through a single semaphore. No eviction — entries are permanent.
+/// serialize through a distributed lock. No eviction — entries are permanent.
 /// </summary>
 public sealed class CookieCallGate
 {
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new();
+    private readonly IDistributedLockProvider _lockProvider;
 
-    private SemaphoreSlim GetOrAdd(string cookie) =>
-        _gates.GetOrAdd(cookie, _ => new SemaphoreSlim(1, 1));
+    public CookieCallGate(IDistributedLockProvider lockProvider)
+    {
+        _lockProvider = lockProvider;
+    }
 
     /// <summary>
-    /// Acquires the lock for <paramref name="cookie"/>. Returns an <see cref="IDisposable"/>
+    /// Acquires the lock for <paramref name="cookie"/>. Returns an <see cref="IDistributedLockHandle"/>
     /// handle that releases the lock when disposed. Caller MUST dispose the handle
     /// when the guarded section completes (including on exception paths).
     /// </summary>
-    public async Task<IDisposable> AcquireAsync(string cookie, CancellationToken ct = default)
+    public async Task<IDistributedLockHandle> AcquireAsync(string cookie, CancellationToken ct = default)
     {
-        var sem = GetOrAdd(cookie);
-        await sem.WaitAsync(ct);
-        return new Releaser(sem);
+        var cookieTag = GetCookieTag(cookie);
+        var key = $"cookie-call:{cookieTag}";
+        var handle = await _lockProvider.AcquireAsync(key, TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(30), ct);
+        if (handle is null)
+        {
+            throw new TimeoutException($"Failed to acquire cookie lock for {cookieTag} within timeout.");
+        }
+        return handle;
     }
 
-    private sealed class Releaser(SemaphoreSlim semaphore) : IDisposable
+    private static string GetCookieTag(string cookie)
     {
-        private bool _disposed;
-
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _disposed = true;
-            semaphore.Release();
-        }
+        // Use first 8 characters as tag for logging/locking
+        return cookie.Length > 8 ? cookie[..8] : cookie;
     }
 }

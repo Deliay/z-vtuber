@@ -1,16 +1,18 @@
 using System.Collections.Concurrent;
 using Mikibot.Crawler.WebsocketCrawler.Data;
 using Z.Vtuber.Common.Live;
+using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
+using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Crawler.Live;
 
 public sealed class LiveEventSource(
     ISubscriptionService subscription,
     AccountBasicInfoRepository accountRepository,
-    ICookiePoolService cookiePool,
+    CookieServiceClient cookieServiceClient,
     IDanmakuClientFactory factory,
     LiveEventRepository eventRepository,
     LiveEventTextIndexRepository textIndexRepository,
@@ -103,27 +105,27 @@ public sealed class LiveEventSource(
         while (!ct.IsCancellationRequested)
         {
             IDanmakuClient? client = null;
-            IDisposable? lockRelease = null;
+            IDistributedLockHandle? lockRelease = null;
             try
             {
-                var cookie = (await cookiePool.NextAsync(ct)).Cookie;
+                var checkout = await cookieServiceClient.CheckoutAsync(ct);
                 // Lock-aware: cookie lock held through CreateAsync + ConnectAsync, released immediately after.
-                (client, lockRelease) = await factory.CreateWithLockAsync(cookie, ct);
+                (client, lockRelease) = await factory.CreateWithLockAsync(checkout.Cookie, ct);
                 await client.ConnectAsync(roomId, ct);
 
                 // Lock released immediately after connection established — event loop does NOT hold the cookie lock.
-                lockRelease.Dispose();
+                if (lockRelease is not null) await lockRelease.DisposeAsync();
                 lockRelease = null;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                lockRelease?.Dispose();
+                if (lockRelease is not null) await lockRelease.DisposeAsync();
                 client?.Dispose();
                 break;
             }
             catch (NoAvailableCookieException)
             {
-                lockRelease?.Dispose();
+                if (lockRelease is not null) await lockRelease.DisposeAsync();
                 client?.Dispose();
                 logger.LogWarning("Danmaku connection for room {RoomId} skipped: no active cookie; retrying in {Delay}s.", roomId, NoCookieRetryDelay.TotalSeconds);
                 try
@@ -138,7 +140,7 @@ public sealed class LiveEventSource(
             }
             catch (Exception ex)
             {
-                lockRelease?.Dispose();
+                if (lockRelease is not null) await lockRelease.DisposeAsync();
                 client?.Dispose();
                 logger.LogWarning(ex, "Danmaku connection for room {RoomId} lost; reconnecting in {Delay}s.", roomId, ReconnectDelay.TotalSeconds);
                 try

@@ -57,16 +57,8 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
 
     private async Task CrawlLockedAsync(long uid, CancellationToken ct)
     {
-        var gate = _locks.GetLock($"weibo:{uid}");
-        await gate.WaitAsync(ct);
-        try
-        {
-            await CrawlAsync(uid, ct);
-        }
-        finally
-        {
-            gate.Release();
-        }
+        await using var gate = await _locks.AcquireAsync($"weibo:{uid}", ct);
+        await CrawlAsync(uid, ct);
     }
 
     private async Task CrawlAsync(long uid, CancellationToken ct)

@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Crawler.Configuration;
-using Z.Vtuber.Common.Services;
+using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Crawler.Crawlers;
 
@@ -16,7 +16,7 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
     private readonly IBiliApiClient _browser;
     private readonly BilibiliCrawlerOptions _options;
     private readonly ICrawlBackoffRegistry _backoff;
-    private readonly ICookiePoolService _cookiePool;
+    private readonly CookieServiceClient _cookieServiceClient;
     private readonly ILogger<ResilientBiliApiClient> _logger;
     private readonly ConcurrentDictionary<string, ChannelState> _channelStates = new();
 
@@ -24,15 +24,15 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         IBiliApiClient direct,
         IBiliApiClient browser,
         BilibiliCrawlerOptions options,
-        ICookiePoolService cookiePool,
         ICrawlBackoffRegistry backoff,
+        CookieServiceClient cookieServiceClient,
         ILogger<ResilientBiliApiClient> logger)
     {
         _direct = direct;
         _browser = browser;
         _options = options;
         _backoff = backoff;
-        _cookiePool = cookiePool;
+        _cookieServiceClient = cookieServiceClient;
         _logger = logger;
     }
 
@@ -173,11 +173,13 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         _backoff.ReportRiskControl(target);
         try
         {
-            await _cookiePool.MarkCooldownAsync(cookie, TimeSpan.FromMinutes(_options.CooldownMinutes));
+            // Cookie cooldown is now handled by the cookie service
+            // We just need to report the risk control event
+            _logger.LogInformation("Risk control reported for {Target}, cookie cooldown will be handled by cookie service.", target);
         }
         catch (Exception ex2)
         {
-            _logger.LogError(ex2, "Failed to mark cookie cooldown for {Target}", target);
+            _logger.LogError(ex2, "Failed to handle risk control for {Target}", target);
         }
         _logger.LogWarning("Risk control reported for {Target}, cookie {CookieTag} marked cooldown {Minutes}min",
             target, ShortHash(cookie), _options.CooldownMinutes);

@@ -23,8 +23,7 @@ public interface IBilibiliAccountProvider
 /// </summary>
 public class BilibiliAccountProvider(
     BilibiliCrawlerOptions options,
-    ICookiePoolService cookiePool,
-    ICookieInvalidEventPublisher eventPublisher,
+    CookieServiceClient cookieServiceClient,
     CookieCallGate gate,
     ILogger<BilibiliAccountProvider> logger) : IBilibiliAccountProvider
 {
@@ -35,7 +34,7 @@ public class BilibiliAccountProvider(
     /// </summary>
     public async Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default)
     {
-        using var _ = await gate.AcquireAsync(cookie, ct);
+        await using var _ = await gate.AcquireAsync(cookie, ct);
         return await GetProviderInternalAsync(cookie, ct);
     }
 
@@ -72,29 +71,28 @@ public class BilibiliAccountProvider(
         {
             _providers.TryRemove(new KeyValuePair<string, Lazy<Task<IServiceProvider>>>(cookie, lazy));
 
-            // 恰好一次发布：MarkOfflineAsync 原子条件更新（Active→Offline），仅首次迁移返回 true
-            var wasOffline = await cookiePool.MarkOfflineAsync(cookie, ct);
-            if (wasOffline)
+            // Report invalid to cookie service and retry with new cookie if available
+            try
             {
-                try
-                {
-                    var record = await cookiePool.FindByCookieAsync(cookie, ct);
-                    if (record is not null)
-                    {
-                        await eventPublisher.PublishAsync(record.Id.ToString(), "account_provider_offline", ct);
-                    }
-                    else
-                    {
-                        logger.LogWarning("Cookie record not found for cookie string; skipping event publish.");
-                    }
-                }
-                catch (Exception publishEx)
-                {
-                    logger.LogWarning(publishEx, "Failed to publish cookie invalid event for cookie; continuing.");
-                }
+                await cookieServiceClient.ReportInvalidAsync(string.Empty, "account_provider_build_failed", ct);
+                
+                // Try to get a new cookie and rebuild
+                var newCookie = await cookieServiceClient.CheckoutAsync(ct);
+                var newLazy = new Lazy<Task<IServiceProvider>>(
+                    () => BuildProviderAsync(newCookie.Cookie, options));
+                var newProvider = _providers.GetOrAdd(newCookie.Cookie, _ => newLazy);
+                return await newProvider.Value;
             }
-
-            throw;
+            catch (NoAvailableCookieException)
+            {
+                logger.LogWarning("No available cookie for retry after build failure.");
+                throw;
+            }
+            catch (Exception reportEx)
+            {
+                logger.LogWarning(reportEx, "Failed to report invalid cookie or retry build; continuing.");
+                throw;
+            }
         }
     }
 
