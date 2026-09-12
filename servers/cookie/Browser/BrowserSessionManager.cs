@@ -3,7 +3,6 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Options;
 using Microsoft.Playwright;
 using Z.Vtuber.Cookie.Configuration;
-using Z.Vtuber.Cookie.Persistence;
 
 namespace Z.Vtuber.Cookie.Browser;
 
@@ -12,35 +11,32 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
     private readonly ConcurrentDictionary<string, IBrowserContext> _contexts = new();
     private readonly ConcurrentDictionary<string, Channel<string>> _navChannels = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<string>> _navResults = new();
-    private readonly IBrowser _browser;
+    private readonly IBrowserType _browserType;
     private readonly CookieServiceOptions _options;
     private readonly ILogger<BrowserSessionManager> _logger;
 
-    public BrowserSessionManager(IBrowser browser, IOptions<CookieServiceOptions> options, ILogger<BrowserSessionManager> logger)
+    public BrowserSessionManager(IBrowserType browserType, IOptions<CookieServiceOptions> options, ILogger<BrowserSessionManager> logger)
     {
-        _browser = browser;
+        _browserType = browserType;
         _options = options.Value;
         _logger = logger;
     }
 
-    public async Task<LoginSessionResult> CreateLoginSessionAsync(CancellationToken ct = default)
+    public async Task<LoginSessionResult> CreateLoginSessionAsync(string accountId, CancellationToken ct = default)
     {
-        var accountId = Guid.NewGuid().ToString("N");
         var userDataDir = Path.Combine(_options.BrowserSessionDataDir, accountId);
 
         Directory.CreateDirectory(userDataDir);
 
-        var context = await _browser.NewContextAsync(new BrowserNewContextOptions
+        var context = await _browserType.LaunchPersistentContextAsync(userDataDir, new BrowserTypeLaunchPersistentContextOptions
         {
-            StorageStatePath = null,
+            Headless = true,
         });
 
         var page = await context.NewPageAsync();
 
-        // Navigate to bilibili login page
         await page.GotoAsync("https://passport.bilibili.com/login");
 
-        // Click the QR code login tab if not already selected
         try
         {
             var qrTab = page.Locator("[class*='login-scan-box'], [class*='qrcode']");
@@ -51,16 +47,13 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
         }
         catch
         {
-            // QR code may already be visible
         }
 
-        // Wait for QR code image to appear
         await page.WaitForSelectorAsync("img[class*='qr'], canvas[class*='qr'], [class*='login-scan-box'] img", new PageWaitForSelectorOptions
         {
             Timeout = 10000,
         });
 
-        // Screenshot the QR code area
         var qrElement = await page.QuerySelectorAsync("[class*='login-scan-box'], [class*='qrcode']");
         string qrCodeBase64;
         if (qrElement != null)
@@ -74,7 +67,6 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
             qrCodeBase64 = Convert.ToBase64String(screenshot);
         }
 
-        // Set up nav response listener to detect login success
         var navTcs = new TaskCompletionSource<string>();
         _navResults[accountId] = navTcs;
 
@@ -92,7 +84,6 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
                 }
                 catch
                 {
-                    // Response body may not be available
                 }
             }
         };
@@ -167,14 +158,66 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
     {
         if (!_contexts.TryGetValue(accountId, out var context))
         {
-            _logger.LogWarning("Cannot refresh session {AccountId}: no browser context", accountId);
-            return;
+            throw new InvalidOperationException($"No browser context for account {accountId}");
         }
 
         var pages = context.Pages;
-        if (pages.Count > 0)
+        if (pages.Count == 0)
         {
-            await pages[0].GotoAsync("https://www.bilibili.com", new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle });
+            throw new InvalidOperationException($"No pages in browser context for account {accountId}");
+        }
+
+        var page = pages[0];
+
+        var navTcs = new TaskCompletionSource<string>();
+
+        EventHandler<IResponse> handler = null!;
+        handler = async (_, response) =>
+        {
+            if (response.Url.Contains("/x/web-interface/nav"))
+            {
+                try
+                {
+                    var body = await response.TextAsync();
+                    if (body.Contains("\"isLogin\":true") || body.Contains("\"isLogin\": true"))
+                    {
+                        navTcs.TrySetResult(body);
+                    }
+                    else
+                    {
+                        navTcs.TrySetResult(string.Empty);
+                    }
+                }
+                catch
+                {
+                    navTcs.TrySetResult(string.Empty);
+                }
+            }
+        };
+
+        page.Response += handler;
+
+        try
+        {
+            await page.GotoAsync("https://www.bilibili.com", new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle });
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(_options.RefreshNavTimeoutSeconds));
+
+            var result = await navTcs.Task.WaitAsync(cts.Token);
+
+            if (string.IsNullOrEmpty(result))
+            {
+                throw new InvalidOperationException($"Session {accountId} is not logged in after refresh");
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Login state check timed out for session {accountId}");
+        }
+        finally
+        {
+            page.Response -= handler;
         }
     }
 

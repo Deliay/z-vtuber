@@ -105,8 +105,8 @@ public class LiveEventSourceLockTimingTests
 
     private sealed class FakeCookiePool : ICookiePoolService
     {
-        public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default)
-            => Task.FromResult(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+        public Task<CookieRecord> AddAsync(string cookie, string? accountId = null, CancellationToken ct = default)
+            => Task.FromResult(new CookieRecord { Cookie = cookie, AccountId = accountId, Status = CookieStatus.Active });
         public Task<CookieRecord> NextAsync(CancellationToken ct = default)
             => Task.FromResult(new CookieRecord { Cookie = "test-cookie", Status = CookieStatus.Active });
         public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
@@ -115,6 +115,10 @@ public class LiveEventSourceLockTimingTests
             => Task.FromResult<IReadOnlyList<CookieRecord>>([]);
         public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default)
             => Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+        public Task<CookieRecord?> FindByCookieIdAsync(string cookieId, CancellationToken ct = default)
+            => Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = "test-cookie", Status = CookieStatus.Active });
+        public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 
     private sealed class FakeLiveEventPublisher : ILiveEventPublisher

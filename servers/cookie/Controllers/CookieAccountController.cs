@@ -2,11 +2,11 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using Z.Vtuber.Common.Locking;
-using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Browser;
 using Z.Vtuber.Cookie.Configuration;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Cookie.Refresh;
 
 namespace Z.Vtuber.Cookie.Controllers;
@@ -95,7 +95,6 @@ public class CookieAccountController : ControllerBase
             var result = await _browserSessionManager.CreateLoginSessionAsync(accountId, ct);
 
             session.UserDataDir = Path.Combine(_options.BrowserSessionDataDir, accountId);
-            session.QrCodeImage = result.QrCodeImage;
             await _sessionRepository.UpdateAsync(session, ct);
 
             return StatusCode(202, new PendingAccountResponse
@@ -133,7 +132,6 @@ public class CookieAccountController : ControllerBase
             Status = session.Status,
             Mid = session.Mid,
             Uname = session.Uname,
-            QrCodeImage = session.QrCodeImage,
             ExpiresAt = session.ExpiresAt,
         });
     }

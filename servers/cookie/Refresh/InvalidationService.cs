@@ -1,10 +1,10 @@
 using Microsoft.Extensions.Options;
 using Z.Vtuber.Common.Locking;
-using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Browser;
 using Z.Vtuber.Cookie.Configuration;
-using Z.Vtuber.Cookie.Persistence;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Cookie.Refresh;
 

@@ -1,11 +1,10 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Z.Vtuber.Common.Locking;
-using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Configuration;
-using Z.Vtuber.Cookie.Persistence;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Cookie.Refresh;
 
 namespace Z.Vtuber.Cookie.Refresh;
@@ -102,7 +101,15 @@ public class SessionRefreshJob : BackgroundService
             await _browserSessionManager.RefreshSessionAsync(session.Id.ToString(), ct);
             var newCookie = await _browserSessionManager.ExtractCookiesAsync(session.Id.ToString(), ct);
 
+            if (!string.IsNullOrEmpty(session.Cookie) && session.Cookie != newCookie)
+            {
+                await _cookiePool.MarkOfflineAsync(session.Cookie, ct);
+            }
+
+            var newCookieRecord = await _cookiePool.AddAsync(newCookie, session.Id.ToString(), ct);
+
             session.Cookie = newCookie;
+            session.CookieId = newCookieRecord.Id.ToString();
             session.LastRefreshAt = DateTime.UtcNow;
             session.ConsecutiveRefreshFailures = 0;
             await _sessionRepository.UpdateAsync(session, ct);
@@ -139,7 +146,7 @@ public class SessionRefreshJob : BackgroundService
         var cookieId = session.CookieId ?? session.Id.ToString();
         try
         {
-            await _eventPublisher.PublishAsync(cookieId, "refresh_failed", ct);
+            await _eventPublisher.PublishAsync(cookieId, "refresh_nav_missing", ct);
         }
         catch (Exception ex)
         {

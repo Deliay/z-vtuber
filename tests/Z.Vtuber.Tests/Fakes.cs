@@ -48,8 +48,8 @@ public sealed class FakeCookiePoolService : ICookiePoolService
 {
     public string Cookie { get; set; } = "fake-cookie";
 
-    public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default) =>
-        Task.FromResult(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+    public Task<CookieRecord> AddAsync(string cookie, string? accountId = null, CancellationToken ct = default) =>
+        Task.FromResult(new CookieRecord { Cookie = cookie, AccountId = accountId, Status = CookieStatus.Active });
 
     public Task<CookieRecord> NextAsync(CancellationToken ct = default) =>
         Task.FromResult(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
@@ -63,6 +63,12 @@ public sealed class FakeCookiePoolService : ICookiePoolService
 
     public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) =>
         Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+
+    public Task<CookieRecord?> FindByCookieIdAsync(string cookieId, CancellationToken ct = default) =>
+        Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
+
+    public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default) =>
+        Task.CompletedTask;
 }
 
 public sealed class FakeCookieNavProbeService : ICookieNavProbeService
@@ -87,7 +93,7 @@ public sealed class ProbeServiceProvider : IServiceProvider
 
 public sealed class FakeBrowserSessionManager : IBrowserSessionManager
 {
-    public Func<Task<Z.Vtuber.Cookie.Browser.LoginSessionResult>>? CreateLoginSessionAsyncFunc { get; set; }
+    public Func<string, Task<Z.Vtuber.Cookie.Browser.LoginSessionResult>>? CreateLoginSessionAsyncFunc { get; set; }
     public Func<string, TimeSpan, CancellationToken, Task<string?>>? WaitForNavResponseAsyncFunc { get; set; }
     public Func<string, Task<string>>? ExtractCookiesAsyncFunc { get; set; }
     public Func<string, Task>? DeleteSessionAsyncFunc { get; set; }
@@ -96,11 +102,10 @@ public sealed class FakeBrowserSessionManager : IBrowserSessionManager
     public List<string> DeletedSessions { get; } = [];
     public List<string> RefreshedSessions { get; } = [];
 
-    public Task<Z.Vtuber.Cookie.Browser.LoginSessionResult> CreateLoginSessionAsync(CancellationToken ct = default)
+    public Task<Z.Vtuber.Cookie.Browser.LoginSessionResult> CreateLoginSessionAsync(string accountId, CancellationToken ct = default)
     {
-        var accountId = Guid.NewGuid().ToString("N");
         CreatedSessions.Add(accountId);
-        return CreateLoginSessionAsyncFunc?.Invoke() ?? Task.FromResult(new Z.Vtuber.Cookie.Browser.LoginSessionResult
+        return CreateLoginSessionAsyncFunc?.Invoke(accountId) ?? Task.FromResult(new Z.Vtuber.Cookie.Browser.LoginSessionResult
         {
             AccountId = accountId,
             QrCodeImage = "fake-qr-base64",
@@ -134,12 +139,24 @@ public sealed class FakeBrowserSessionManager : IBrowserSessionManager
 public sealed class FakeDistributedLockProvider : IDistributedLockProvider
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _semaphores = new();
+    public TimeSpan? LastWaitTimeout { get; private set; }
 
     public async Task<IDistributedLockHandle?> AcquireAsync(string key, TimeSpan ttl, TimeSpan waitTimeout, CancellationToken ct = default)
     {
+        LastWaitTimeout = waitTimeout;
         var sem = _semaphores.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-        await sem.WaitAsync(ct);
-        return new FakeDistributedLockHandle(key, sem);
+        var deadline = DateTime.UtcNow + waitTimeout;
+        while (true)
+        {
+            if (await sem.WaitAsync(TimeSpan.FromMilliseconds(50), ct))
+            {
+                return new FakeDistributedLockHandle(key, sem);
+            }
+            if (DateTime.UtcNow >= deadline)
+            {
+                return null;
+            }
+        }
     }
 }
 
@@ -170,6 +187,7 @@ public sealed class MockCookieAccountInfoRepository : ICookieAccountInfoReposito
 {
     public List<CookieAccountInfoRecord> Upserts { get; } = [];
     public bool ThrowOnUpsert { get; set; }
+    public Dictionary<ObjectId, CookieAccountInfoRecord> LookupResults { get; set; } = new();
 
     public Task UpsertAsync(CookieAccountInfoRecord record, CancellationToken ct = default)
     {
@@ -184,7 +202,7 @@ public sealed class MockCookieAccountInfoRepository : ICookieAccountInfoReposito
 
     public Task<Dictionary<MongoDB.Bson.ObjectId, CookieAccountInfoRecord>> GetByCookieIdsAsync(
         IReadOnlyCollection<MongoDB.Bson.ObjectId> cookieIds, CancellationToken ct = default)
-        => Task.FromResult(new Dictionary<MongoDB.Bson.ObjectId, CookieAccountInfoRecord>());
+        => Task.FromResult(LookupResults);
 }
 
 public sealed class MockCookiePoolService : ICookiePoolService
@@ -198,8 +216,8 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<CookieRecord>>(ActiveCookies);
 
-    public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default)
-        => Task.FromResult(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+    public Task<CookieRecord> AddAsync(string cookie, string? accountId = null, CancellationToken ct = default)
+        => Task.FromResult(new CookieRecord { Cookie = cookie, AccountId = accountId, Status = CookieStatus.Active });
 
     public Task<CookieRecord> NextAsync(CancellationToken ct = default)
         => Task.FromResult(new CookieRecord { Cookie = "next", Status = CookieStatus.Active });
@@ -230,6 +248,12 @@ public sealed class MockCookiePoolService : ICookiePoolService
 
     public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default)
         => Task.FromResult(FindByCookieFunc?.Invoke(cookie));
+
+    public Task<CookieRecord?> FindByCookieIdAsync(string cookieId, CancellationToken ct = default)
+        => Task.FromResult<CookieRecord?>(null);
+
+    public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 
 public sealed class FakeMilkyApiClient : IMilkyApiClient

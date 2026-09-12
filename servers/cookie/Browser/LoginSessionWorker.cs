@@ -3,8 +3,6 @@ using Microsoft.Extensions.Options;
 using System.Text.Json;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Locking;
-using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Configuration;
 using MongoDB.Bson;
@@ -113,7 +111,7 @@ public class LoginSessionWorker : BackgroundService
         var cookie = await _browserSessionManager.ExtractCookiesAsync(session.Id.ToString(), ct);
 
         // Create cookie record in common pool
-        var cookieRecord = await _cookiePool.AddAsync(cookie, session.Id.ToString(), ct);
+        var cookieRecord = await _cookiePool.AddAsync(cookie, accountId: null, ct: ct);
 
         // Parse mid from nav response
         long? mid = null;
@@ -153,7 +151,7 @@ public class LoginSessionWorker : BackgroundService
             await _sessionRepository.UpdateAsync(session, ct);
 
             // Update cookie record with AccountId
-            var update = Builders<CookieRecord>.Update.Set(c => c.AccountId, session.Id.ToString());
+            var update = Builders<Z.Vtuber.Common.Persistence.Entities.CookieRecord>.Update.Set(c => c.AccountId, session.Id.ToString());
             await _cookiePool.UpdateAsync(cookieRecord.Id.ToString(), update, ct);
 
             _logger.LogInformation("Login successful for session {SessionId}, cookie created {CookieId}, mid {Mid}",
