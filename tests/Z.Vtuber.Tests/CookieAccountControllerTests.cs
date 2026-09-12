@@ -69,7 +69,7 @@ public class CookieAccountControllerTests
 
         var result = await controller.GetAccount("invalid-id", CancellationToken.None);
 
-        Assert.IsType<NotFoundResult>(result);
+        Assert.IsType<NotFoundObjectResult>(result);
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public class CookieAccountControllerTests
 
         var result = await controller.GetAccount(ObjectId.GenerateNewId().ToString(), CancellationToken.None);
 
-        Assert.IsType<NotFoundResult>(result);
+        Assert.IsType<NotFoundObjectResult>(result);
     }
 
     [Fact]

@@ -31,6 +31,7 @@ public sealed class MongoDbFixture : IAsyncLifetime
         var names = new[]
         {
             MongoCollectionNames.Cookies,
+            MongoCollectionNames.CookieSessions,
             MongoCollectionNames.Subscriptions,
             MongoCollectionNames.AccountBasicInfo,
             MongoCollectionNames.LiveStatus,

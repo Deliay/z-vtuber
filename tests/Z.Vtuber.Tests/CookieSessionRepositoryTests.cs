@@ -3,7 +3,7 @@ using Z.Vtuber.Cookie.Persistence;
 
 namespace Z.Vtuber.Tests;
 
-public class CookieSessionRepositoryTests(MongoDbFixture db) : IAsyncLifetime
+public class CookieSessionRepositoryTests(MongoDbFixture db) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => db.ResetAsync();
 

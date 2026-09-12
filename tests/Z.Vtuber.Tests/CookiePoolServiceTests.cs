@@ -9,8 +9,7 @@ using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
+public class CookiePoolServiceTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     private CookiePoolService CreateService() =>
         new(fixture.Database);

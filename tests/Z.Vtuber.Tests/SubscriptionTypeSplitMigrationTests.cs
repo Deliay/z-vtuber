@@ -6,8 +6,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class SubscriptionTypeSplitMigrationTests(MongoDbFixture fixture) : IAsyncLifetime
+public class SubscriptionTypeSplitMigrationTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 

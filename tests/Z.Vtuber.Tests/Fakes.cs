@@ -281,7 +281,7 @@ public sealed class FakeCookieServiceClient : ICookieServiceClient
     public Task<ReportInvalidResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default)
     {
         ReportInvalidCalls.Add(cookieId);
-        return Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.Refreshed, CookieId = cookieId });
+        return Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.Refreshed, CookieId = cookieId, Cookie = cookieId });
     }
 
     public Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default)

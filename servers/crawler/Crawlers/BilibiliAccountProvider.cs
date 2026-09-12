@@ -78,7 +78,7 @@ public class BilibiliAccountProvider(
                 if (reportResult.Status == ReportInvalidStatus.Refreshed)
                 {
                     // Use new cookie from response to rebuild provider
-                    return await GetProviderAsync(reportResult.CookieId!, reportResult.Cookie!, ct);
+                    return await GetProviderInternalAsync(reportResult.CookieId!, reportResult.Cookie!, ct);
                 }
 
                 // Session invalid, not found, or timeout — give up

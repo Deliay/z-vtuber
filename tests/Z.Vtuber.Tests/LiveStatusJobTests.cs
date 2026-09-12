@@ -12,8 +12,7 @@ using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class LiveStatusJobTests(MongoDbFixture fixture) : IAsyncLifetime
+public class LiveStatusJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 

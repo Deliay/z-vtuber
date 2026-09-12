@@ -15,8 +15,7 @@ using Z.Vtuber.Crawler.Weibo;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
+public class StartupDiTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 

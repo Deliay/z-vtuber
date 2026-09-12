@@ -12,7 +12,7 @@ using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
-public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncLifetime
+public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -342,7 +342,7 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncL
     private sealed class NoCookieServiceClient : ICookieServiceClient
     {
         public Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default) => throw new NoAvailableCookieException();
-        public Task ReportInvalidAsync(string cookieId, string reason, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<ReportInvalidResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default) => Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.Refreshed, CookieId = cookieId });
         public Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
     }
 }

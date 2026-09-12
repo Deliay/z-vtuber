@@ -10,8 +10,7 @@ using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class AccountInfoJobTests(MongoDbFixture fixture) : IAsyncLifetime
+public class AccountInfoJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 

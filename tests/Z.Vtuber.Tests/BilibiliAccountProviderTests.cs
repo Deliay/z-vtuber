@@ -8,8 +8,7 @@ using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifetime
+public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -82,7 +81,6 @@ public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifeti
 
         Assert.NotNull(result);
         Assert.Single(client.ReportInvalidCalls);
-        Assert.Equal("account_provider_build_failed", client.ReportInvalidCalls[0].Reason);
         Assert.Equal(2, provider.BuildCount);
     }
 

@@ -119,10 +119,10 @@ public class SessionRefreshJob : BackgroundService
         {
             _logger.LogWarning(ex, "Refresh failed for session {SessionId}", session.Id);
 
-            session.ConsecutiveRefreshFailures++;
             await _sessionRepository.IncrementRefreshFailureAsync(session.Id, ct);
+            var updatedSession = await _sessionRepository.GetByIdAsync(session.Id, ct);
 
-            if (session.ConsecutiveRefreshFailures >= _options.MaxConsecutiveRefreshFailures)
+            if (updatedSession is not null && updatedSession.ConsecutiveRefreshFailures >= _options.MaxConsecutiveRefreshFailures)
             {
                 _logger.LogWarning("Session {SessionId} exceeded max refresh failures, marking invalid", session.Id);
                 await InvalidateSessionAsync(session, ct);
