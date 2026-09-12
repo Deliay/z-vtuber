@@ -168,15 +168,16 @@ public class CookieReportInvalidTests
             Status = "active",
             Cookie = "old-cookie",
             CookieId = cookieId,
-            LastRefreshAt = DateTime.UtcNow.AddSeconds(-5),
+            LastRefreshAt = DateTime.MinValue,
         });
 
         var cookiePool = new FakeCookiePoolService { Cookie = "current-cookie" };
         var eventPublisher = new FakeCookieInvalidEventPublisher();
+        var lockProvider = new FakeDistributedLockProvider();
         var service = new InvalidationService(
             repo,
             cookiePool,
-            _lockProvider,
+            lockProvider,
             _browserSessionManager,
             eventPublisher,
             Options.Create(new CookieServiceOptions
@@ -186,6 +187,11 @@ public class CookieReportInvalidTests
             }),
             new Microsoft.Extensions.Logging.Abstractions.NullLogger<InvalidationService>());
 
+        lockProvider.LockAcquired = key =>
+        {
+            repo.Sessions[0].LastRefreshAt = DateTime.UtcNow;
+        };
+
         var result = await service.ReportInvalidAsync(cookieId, CancellationToken.None);
 
         Assert.Equal(InvalidationResult.Refreshed, result.Result);
@@ -193,7 +199,7 @@ public class CookieReportInvalidTests
     }
 
     [Fact]
-    public async Task InvalidationService_ConcurrentDedup_WhileLockWaiting_SecondRequestReturnsCurrentCookie()
+    public async Task InvalidationService_ConcurrentDedup_SecondRequestShortCircuitsWithCurrentCookie()
     {
         var sessionId = ObjectId.GenerateNewId();
         var repo = new FakeCookieSessionRepository();
@@ -203,7 +209,7 @@ public class CookieReportInvalidTests
             Status = "active",
             Cookie = "old-cookie",
             CookieId = "old-cookie-id",
-            LastRefreshAt = DateTime.UtcNow.MinValue,
+            LastRefreshAt = DateTime.MinValue,
         });
 
         var cookiePool = new FakeCookiePoolService
@@ -225,28 +231,25 @@ public class CookieReportInvalidTests
             }),
             new Microsoft.Extensions.Logging.Abstractions.NullLogger<InvalidationService>());
 
-        lockProvider.LockAcquired = key =>
-        {
-            // Simulate the first request refreshing the session
-            // while the second request waits on the lock.
-            repo.Sessions[0].CookieId = "new-cookie-id";
-            repo.Sessions[0].Cookie = "new-cookie-value";
-            repo.Sessions[0].LastRefreshAt = DateTime.UtcNow;
-        };
-
         var firstResult = await service.ReportInvalidAsync("old-cookie-id", CancellationToken.None);
 
         Assert.Equal(InvalidationResult.Refreshed, firstResult.Result);
-        Assert.Equal("new-cookie-id", firstResult.NewCookieId);
-        Assert.Equal("new-cookie-value", firstResult.NewCookie);
+        Assert.NotNull(firstResult.NewCookieId);
+        Assert.NotEqual("old-cookie-id", firstResult.NewCookieId);
+        Assert.Equal("SESSDATA=fake; bili_jct=fake", firstResult.NewCookie);
         Assert.Single(_browserSessionManager.RefreshedSessions);
 
-        lockProvider.LockAcquired = null;
+        var newCookieId = firstResult.NewCookieId!;
 
-        var secondResult = await service.ReportInvalidAsync("old-cookie-id", CancellationToken.None);
+        lockProvider.LockAcquired = key =>
+        {
+            repo.Sessions[0].LastRefreshAt = DateTime.UtcNow;
+        };
+
+        var secondResult = await service.ReportInvalidAsync(newCookieId, CancellationToken.None);
 
         Assert.Equal(InvalidationResult.Refreshed, secondResult.Result);
-        Assert.Equal("new-cookie-id", secondResult.NewCookieId);
+        Assert.Equal(newCookieId, secondResult.NewCookieId);
         Assert.Equal("new-cookie-value", secondResult.NewCookie);
         Assert.Single(_browserSessionManager.RefreshedSessions);
     }

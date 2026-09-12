@@ -50,7 +50,7 @@ public sealed class FakeCookiePoolService : ICookiePoolService
     public Func<string, CancellationToken, Task<CookieRecord?>>? FindByCookieIdAsyncFunc { get; set; }
 
     public Task<CookieRecord> AddAsync(string cookie, string? accountId = null, CancellationToken ct = default) =>
-        Task.FromResult(new CookieRecord { Cookie = cookie, AccountId = accountId, Status = CookieStatus.Active });
+        Task.FromResult(new CookieRecord { Id = MongoDB.Bson.ObjectId.GenerateNewId(), Cookie = cookie, AccountId = accountId, Status = CookieStatus.Active });
 
     public Task<CookieRecord> NextAsync(CancellationToken ct = default) =>
         Task.FromResult(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
@@ -266,7 +266,7 @@ public sealed class FakeMilkyApiClient : IMilkyApiClient
 public sealed class FakeCookieServiceClient : ICookieServiceClient
 {
     public Func<CancellationToken, Task<CookieCheckoutResult>>? CheckoutFunc { get; set; }
-    public List<(string CookieId, string Reason)> ReportInvalidCalls { get; } = [];
+    public List<string> ReportInvalidCalls { get; } = [];
     public List<(string CookieId, TimeSpan Duration)> CooldownCalls { get; } = [];
 
     public Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default)
@@ -278,10 +278,10 @@ public sealed class FakeCookieServiceClient : ICookieServiceClient
         });
     }
 
-    public Task ReportInvalidAsync(string cookieId, string reason, CancellationToken ct = default)
+    public Task<ReportInvalidResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default)
     {
-        ReportInvalidCalls.Add((cookieId, reason));
-        return Task.CompletedTask;
+        ReportInvalidCalls.Add(cookieId);
+        return Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.Refreshed, CookieId = cookieId });
     }
 
     public Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default)
