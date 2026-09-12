@@ -49,7 +49,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 builder.Services.AddSingleton<IBrowserType>(sp =>
 {
     var playwright = Playwright.CreateAsync().GetAwaiter().GetResult();
-    return playwright.Chromium;
+    return playwright.Firefox;
 });
 
 builder.Services.AddSingleton<IBrowserSessionManager, BrowserSessionManager>();
