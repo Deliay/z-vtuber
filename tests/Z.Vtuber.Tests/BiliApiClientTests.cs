@@ -38,7 +38,7 @@ public sealed class BiliApiClientTests
         """;
         var client = new BiliApiClient(ProviderWithGuardHandler(json));
 
-        var result = await client.GetRoomGuardListAsync("cookie", 100, 200, 1);
+        var result = await client.GetRoomGuardListAsync("cookie", "cookie", 100, 200, 1);
 
         Assert.Equal(1, result.Info.PageCount);
         Assert.Single(result.List);

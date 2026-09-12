@@ -22,22 +22,6 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
     public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
-    public async Task Next_RoundRobinsAcrossActiveCookies()
-    {
-        var service = CreateService();
-        await service.AddAsync("cookie-a");
-        await service.AddAsync("cookie-b");
-
-        var first = await service.NextAsync();
-        var second = await service.NextAsync();
-        var third = await service.NextAsync();
-
-        Assert.Equal("cookie-a", first.Cookie);
-        Assert.Equal("cookie-b", second.Cookie);
-        Assert.Equal("cookie-a", third.Cookie);
-    }
-
-    [Fact]
     public async Task AddAsync_IsIdempotent()
     {
         var service = CreateService();
@@ -60,19 +44,6 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OfflineCookie_IsNotSelected()
-    {
-        var service = CreateService();
-        await service.AddAsync("cookie-a");
-        await service.AddAsync("cookie-b");
-        var result = await service.MarkOfflineAsync("cookie-a");
-        Assert.True(result);
-
-        var next = await service.NextAsync();
-        Assert.Equal("cookie-b", next.Cookie);
-    }
-
-    [Fact]
     public async Task MarkOfflineAsync_AlreadyOffline_ReturnsFalse()
     {
         var service = CreateService();
@@ -90,63 +61,6 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
         var service = CreateService();
         var result = await service.MarkOfflineAsync("non-existing");
         Assert.False(result);
-    }
-
-    [Fact]
-    public async Task NoActiveCookie_ThrowsObservableException()
-    {
-        var service = CreateService();
-
-        await Assert.ThrowsAsync<NoAvailableCookieException>(() => service.NextAsync());
-    }
-
-    [Fact]
-    public async Task CooldownCookie_IsNotAssignedByNext()
-    {
-        var service = CreateService();
-        await service.AddAsync("cookie-a");
-        await service.AddAsync("cookie-b");
-        await service.MarkCooldownAsync("cookie-a", TimeSpan.FromMinutes(30));
-
-        var next = await service.NextAsync();
-        Assert.Equal("cookie-b", next.Cookie);
-    }
-
-    [Fact]
-    public async Task CooldownCookie_BecomesAvailableAfterExpiry()
-    {
-        var service = CreateService();
-        await service.AddAsync("cookie-a");
-        await service.AddAsync("cookie-b");
-
-        // cooldown 1s, delay 2s to avoid BSON 毫秒精度 + 调度抖动竞态
-        await service.MarkCooldownAsync("cookie-a", TimeSpan.FromSeconds(1));
-        var during = await service.NextAsync();
-        Assert.Equal("cookie-b", during.Cookie);
-
-        await Task.Delay(TimeSpan.FromSeconds(2));
-        var after = await service.NextAsync();
-        Assert.Equal("cookie-a", after.Cookie);
-    }
-
-    [Fact]
-    public async Task LegacyDocument_WithoutCooldownUntil_IsIncludedInRotation()
-    {
-        var service = CreateService();
-        await service.AddAsync("cookie-a");
-        await service.AddAsync("cookie-b");
-
-        // Simulate legacy document: directly set CooldownUntil to null via raw update
-        var collection = fixture.Database.GetCollection<MongoDB.Bson.BsonDocument>(
-            MongoCollectionNames.Cookies);
-        var filter = new MongoDB.Bson.BsonDocument("cookie", "cookie-a");
-        var update = new MongoDB.Bson.BsonDocument("$set",
-            new MongoDB.Bson.BsonDocument("cooldownUntil",
-                MongoDB.Bson.BsonNull.Value));
-        await collection.UpdateOneAsync(filter, update);
-
-        var next = await service.NextAsync();
-        Assert.Equal("cookie-a", next.Cookie);
     }
 
     [Fact]

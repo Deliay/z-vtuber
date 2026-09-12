@@ -78,7 +78,7 @@ public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifeti
         var provider = new FailingProvider(
             Options, client, () => new InvalidOperationException("nav assert code"), failTimes: 1);
 
-        var result = await provider.GetProviderAsync("cookie1");
+        var result = await provider.GetProviderAsync("cookie1", "cookie1");
 
         Assert.NotNull(result);
         Assert.Single(client.ReportInvalidCalls);
@@ -93,8 +93,8 @@ public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifeti
         var provider = new FailingProvider(
             Options, client, () => new InvalidOperationException("nav assert code"), failTimes: 0);
 
-        var first = await provider.GetProviderAsync("cookie1");
-        var second = await provider.GetProviderAsync("cookie1");
+        var first = await provider.GetProviderAsync("cookie1", "cookie1");
+        var second = await provider.GetProviderAsync("cookie1", "cookie1");
 
         Assert.NotNull(first);
         Assert.NotNull(second);
@@ -109,10 +109,10 @@ public class BilibiliAccountProviderTests(MongoDbFixture fixture) : IAsyncLifeti
         var provider = new FailingProvider(
             Options, client, () => new RiskControlException("risk", "http://test", "cookie1"), failTimes: 1);
 
-        await Assert.ThrowsAsync<RiskControlException>(() => provider.GetProviderAsync("cookie1"));
+        await Assert.ThrowsAsync<RiskControlException>(() => provider.GetProviderAsync("cookie1", "cookie1"));
         Assert.Empty(client.ReportInvalidCalls);
 
-        var second = await provider.GetProviderAsync("cookie1");
+        var second = await provider.GetProviderAsync("cookie1", "cookie1");
         Assert.NotNull(second);
         Assert.Equal(2, provider.BuildCount);
     }
