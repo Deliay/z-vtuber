@@ -71,21 +71,26 @@ public class BilibiliAccountProvider(
         {
             _providers.TryRemove(new KeyValuePair<string, Lazy<Task<IServiceProvider>>>(cookie, lazy));
 
-            // Report invalid to cookie service and retry with new cookie if available
+            // Report invalid to cookie service and use the response to decide next action
             try
             {
-                await cookieServiceClient.ReportInvalidAsync(cookieId, "account_provider_build_failed", ct);
-                
-                // Try to get a new cookie and rebuild
-                var newCheckout = await cookieServiceClient.CheckoutAsync(ct);
-                var newLazy = new Lazy<Task<IServiceProvider>>(
-                    () => BuildProviderAsync(newCheckout.Cookie, options));
-                var newProvider = _providers.GetOrAdd(newCheckout.Cookie, _ => newLazy);
-                return await newProvider.Value;
+                var reportResult = await cookieServiceClient.ReportInvalidAsync(cookieId, ct);
+                if (reportResult.Status == ReportInvalidStatus.Refreshed)
+                {
+                    // Use new cookie from response to rebuild provider
+                    return await GetProviderAsync(reportResult.CookieId!, reportResult.Cookie!, ct);
+                }
+
+                // Session invalid, not found, or timeout — give up
+                throw new CookieSessionInvalidException();
             }
             catch (NoAvailableCookieException)
             {
                 logger.LogWarning("No available cookie for retry after build failure.");
+                throw;
+            }
+            catch (CookieSessionInvalidException)
+            {
                 throw;
             }
             catch (Exception reportEx)
@@ -115,4 +120,10 @@ public class BilibiliAccountProvider(
         await account.InitializeAsync(CancellationToken.None);
         return provider;
     }
+}
+
+public sealed class CookieSessionInvalidException : Exception
+{
+    public CookieSessionInvalidException()
+        : base("Cookie session is no longer valid.") { }
 }

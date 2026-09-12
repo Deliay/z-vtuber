@@ -7,9 +7,12 @@ using Z.Vtuber.Cookie.Pool;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class CookieDispatchTests(MongoDbFixture db)
+public class CookieDispatchTests(MongoDbFixture db) : IAsyncLifetime
 {
+    public Task InitializeAsync() => db.ResetAsync();
+
+    public Task DisposeAsync() => Task.CompletedTask;
+
     private IMongoCollection<CookieRecord> Collection =>
         db.Database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
 

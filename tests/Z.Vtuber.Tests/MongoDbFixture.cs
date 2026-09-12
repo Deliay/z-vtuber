@@ -1,3 +1,4 @@
+using System.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
 using Testcontainers.MongoDb;
@@ -7,17 +8,20 @@ namespace Z.Vtuber.Tests;
 
 public sealed class MongoDbFixture : IAsyncLifetime
 {
-    private readonly MongoDbContainer _container = new MongoDbBuilder("mongo:7.0")
+    private static readonly MongoDbContainer SharedContainer = new MongoDbBuilder("mongo:7.0")
         .WithEntrypoint("sh", "-c", "ulimit -n 65535 && exec docker-entrypoint.sh mongod")
         .Build();
+
+    private static int _counter;
+    private readonly string _databaseName = $"test_{Interlocked.Increment(ref _counter)}_{Guid.NewGuid():N}";
 
     public IMongoDatabase Database { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
-        await _container.StartAsync();
-        var client = new MongoClient(_container.GetConnectionString());
-        Database = client.GetDatabase("zvtuber_test");
+        await SharedContainer.StartAsync();
+        var client = new MongoClient(SharedContainer.GetConnectionString());
+        Database = client.GetDatabase(_databaseName);
 
         await ResetAsync();
     }
@@ -51,8 +55,5 @@ public sealed class MongoDbFixture : IAsyncLifetime
         await initializer.EnsureIndexesAsync();
     }
 
-    public Task DisposeAsync() => _container.DisposeAsync().AsTask();
+    public Task DisposeAsync() => Task.CompletedTask;
 }
-
-[CollectionDefinition("mongo")]
-public sealed class MongoCollection : ICollectionFixture<MongoDbFixture>;

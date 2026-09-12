@@ -47,6 +47,7 @@ public sealed class FakeBiliApiClient : IBiliApiClient
 public sealed class FakeCookiePoolService : ICookiePoolService
 {
     public string Cookie { get; set; } = "fake-cookie";
+    public Func<string, CancellationToken, Task<CookieRecord?>>? FindByCookieIdAsyncFunc { get; set; }
 
     public Task<CookieRecord> AddAsync(string cookie, string? accountId = null, CancellationToken ct = default) =>
         Task.FromResult(new CookieRecord { Cookie = cookie, AccountId = accountId, Status = CookieStatus.Active });
@@ -65,7 +66,8 @@ public sealed class FakeCookiePoolService : ICookiePoolService
         Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
 
     public Task<CookieRecord?> FindByCookieIdAsync(string cookieId, CancellationToken ct = default) =>
-        Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
+        FindByCookieIdAsyncFunc?.Invoke(cookieId, ct)
+        ?? Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
 
     public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default) =>
         Task.CompletedTask;
@@ -120,6 +122,7 @@ public sealed class FakeDistributedLockProvider : IDistributedLockProvider
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _semaphores = new();
     public TimeSpan? LastWaitTimeout { get; private set; }
+    public Action<string>? LockAcquired { get; set; }
 
     public async Task<IDistributedLockHandle?> AcquireAsync(string key, TimeSpan ttl, TimeSpan waitTimeout, CancellationToken ct = default)
     {
@@ -130,6 +133,7 @@ public sealed class FakeDistributedLockProvider : IDistributedLockProvider
         {
             if (await sem.WaitAsync(TimeSpan.FromMilliseconds(50), ct))
             {
+                LockAcquired?.Invoke(key);
                 return new FakeDistributedLockHandle(key, sem);
             }
             if (DateTime.UtcNow >= deadline)

@@ -93,6 +93,8 @@ public class CookieAccountController : ControllerBase
 
             var result = await _browserSessionManager.CreateLoginSessionAsync(accountId, ct);
 
+            session.QrCodeImage = result.QrCodeImage;
+            session.ExpiresAt = result.ExpiresAt;
             session.UserDataDir = Path.Combine(_options.BrowserSessionDataDir, accountId);
             await _sessionRepository.UpdateAsync(session, ct);
 

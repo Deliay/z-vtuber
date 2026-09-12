@@ -171,7 +171,7 @@ public class CookieReportInvalidTests
             LastRefreshAt = DateTime.UtcNow.AddSeconds(-5),
         });
 
-        var cookiePool = new FakeCookiePoolService();
+        var cookiePool = new FakeCookiePoolService { Cookie = "current-cookie" };
         var eventPublisher = new FakeCookieInvalidEventPublisher();
         var service = new InvalidationService(
             repo,
@@ -190,6 +190,65 @@ public class CookieReportInvalidTests
 
         Assert.Equal(InvalidationResult.Refreshed, result.Result);
         Assert.Empty(_browserSessionManager.RefreshedSessions);
+    }
+
+    [Fact]
+    public async Task InvalidationService_ConcurrentDedup_WhileLockWaiting_SecondRequestReturnsCurrentCookie()
+    {
+        var sessionId = ObjectId.GenerateNewId();
+        var repo = new FakeCookieSessionRepository();
+        repo.Sessions.Add(new CookieSessionRecord
+        {
+            Id = sessionId,
+            Status = "active",
+            Cookie = "old-cookie",
+            CookieId = "old-cookie-id",
+            LastRefreshAt = DateTime.UtcNow.MinValue,
+        });
+
+        var cookiePool = new FakeCookiePoolService
+        {
+            Cookie = "new-cookie-value",
+        };
+        var eventPublisher = new FakeCookieInvalidEventPublisher();
+        var lockProvider = new FakeDistributedLockProvider();
+        var service = new InvalidationService(
+            repo,
+            cookiePool,
+            lockProvider,
+            _browserSessionManager,
+            eventPublisher,
+            Options.Create(new CookieServiceOptions
+            {
+                ReportInvalidTimeoutSeconds = 60,
+                LockAcquireWaitMs = 5000,
+            }),
+            new Microsoft.Extensions.Logging.Abstractions.NullLogger<InvalidationService>());
+
+        lockProvider.LockAcquired = key =>
+        {
+            // Simulate the first request refreshing the session
+            // while the second request waits on the lock.
+            repo.Sessions[0].CookieId = "new-cookie-id";
+            repo.Sessions[0].Cookie = "new-cookie-value";
+            repo.Sessions[0].LastRefreshAt = DateTime.UtcNow;
+        };
+
+        var firstResult = await service.ReportInvalidAsync("old-cookie-id", CancellationToken.None);
+
+        Assert.Equal(InvalidationResult.Refreshed, firstResult.Result);
+        Assert.Equal("new-cookie-id", firstResult.NewCookieId);
+        Assert.Equal("new-cookie-value", firstResult.NewCookie);
+        Assert.Single(_browserSessionManager.RefreshedSessions);
+
+        lockProvider.LockAcquired = null;
+
+        var secondResult = await service.ReportInvalidAsync("old-cookie-id", CancellationToken.None);
+
+        Assert.Equal(InvalidationResult.Refreshed, secondResult.Result);
+        Assert.Equal("new-cookie-id", secondResult.NewCookieId);
+        Assert.Equal("new-cookie-value", secondResult.NewCookie);
+        Assert.Single(_browserSessionManager.RefreshedSessions);
     }
 }
 

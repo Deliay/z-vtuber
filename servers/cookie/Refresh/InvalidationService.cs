@@ -75,6 +75,8 @@ public class InvalidationService : IInvalidationService
         var lockTtl = TimeSpan.FromSeconds(_options.ReportInvalidTimeoutSeconds);
         var lockWait = TimeSpan.FromMilliseconds(_options.LockAcquireWaitMs);
 
+        var enqueueTime = DateTime.UtcNow;
+
         await using var lockHandle = await _lockProvider.AcquireAsync(lockKey, lockTtl, lockWait, ct);
         if (lockHandle is null)
         {
@@ -82,11 +84,26 @@ public class InvalidationService : IInvalidationService
             return new InvalidationResultValue { Result = InvalidationResult.Timeout };
         }
 
-        if (session.Status == "active" && session.LastRefreshAt > DateTime.UtcNow.AddSeconds(-30))
+        var freshSession = await _sessionRepository.GetByIdAsync(session.Id, ct);
+        if (freshSession is null)
         {
-            _logger.LogDebug("Session {SessionId} was recently refreshed, skipping invalidation (dedup)", session.Id);
-            return new InvalidationResultValue { Result = InvalidationResult.Refreshed, AccountId = cookieRecord.AccountId };
+            return new InvalidationResultValue { Result = InvalidationResult.NotFound };
         }
+
+        if (freshSession.Status == "active" && freshSession.LastRefreshAt > enqueueTime)
+        {
+            _logger.LogDebug("Session {SessionId} was recently refreshed by another caller, skipping invalidation (dedup)", session.Id);
+            var currentCookie = await _cookiePool.FindByCookieIdAsync(freshSession.CookieId, ct);
+            return new InvalidationResultValue
+            {
+                Result = InvalidationResult.Refreshed,
+                NewCookieId = freshSession.CookieId,
+                NewCookie = currentCookie?.Cookie,
+                AccountId = freshSession.Id.ToString(),
+            };
+        }
+
+        session = freshSession;
 
         var refreshDeadline = DateTime.UtcNow.AddSeconds(_options.ReportInvalidTimeoutSeconds);
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
