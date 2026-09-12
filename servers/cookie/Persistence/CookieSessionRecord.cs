@@ -12,6 +12,7 @@ public class CookieSessionRecord
     public long? Mid { get; set; }
     public string? Uname { get; set; }
     public string? CookieId { get; set; }
+    public string? Cookie { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime LastLoginAt { get; set; }
     public DateTime LastRefreshAt { get; set; }

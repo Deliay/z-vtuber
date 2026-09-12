@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Playwright;
 using MongoDB.Driver;
+using StackExchange.Redis;
 using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Services;
 using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Cookie.Configuration;
 using Z.Vtuber.Cookie.Controllers;
@@ -29,9 +32,29 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
 builder.Services.AddSingleton<MongoDbInitializer>();
 builder.Services.AddSingleton<ICookieSessionRepository, CookieSessionRepository>();
 builder.Services.AddSingleton<IDistributedLockProvider, RedisDistributedLockProvider>();
-builder.Services.AddSingleton<IBrowserSessionManager, BrowserSessionManager>();
+builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
 builder.Services.AddSingleton<ICookieDispatchService, CookieDispatchService>();
 builder.Services.AddSingleton<IInvalidationService, InvalidationService>();
+builder.Services.AddSingleton<ICookieInvalidEventPublisher, RedisCookieInvalidEventPublisher>();
+
+// Playwright
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+{
+    var connectionString = builder.Configuration.GetConnectionString("messaging")
+        ?? throw new InvalidOperationException("Missing ConnectionStrings:messaging");
+    return ConnectionMultiplexer.Connect(connectionString);
+});
+
+builder.Services.AddSingleton<IBrowser>(sp =>
+{
+    var playwright = Playwright.CreateAsync().GetAwaiter().GetResult();
+    return playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+    {
+        Headless = true,
+    }).GetAwaiter().GetResult();
+});
+
+builder.Services.AddSingleton<IBrowserSessionManager, BrowserSessionManager>();
 
 builder.Services.AddHostedService<SessionRefreshJob>();
 builder.Services.AddHostedService<LoginSessionWorker>();

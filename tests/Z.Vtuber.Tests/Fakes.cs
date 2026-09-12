@@ -85,18 +85,35 @@ public sealed class ProbeServiceProvider : IServiceProvider
 
 public sealed class FakeBrowserSessionManager : IBrowserSessionManager
 {
-    public Func<Task<string>>? CreateLoginSessionAsyncFunc { get; set; }
+    public Func<Task<Z.Vtuber.Cookie.Browser.LoginSessionResult>>? CreateLoginSessionAsyncFunc { get; set; }
+    public Func<string, TimeSpan, CancellationToken, Task<string?>>? WaitForNavResponseAsyncFunc { get; set; }
+    public Func<string, Task<string>>? ExtractCookiesAsyncFunc { get; set; }
     public Func<string, Task>? DeleteSessionAsyncFunc { get; set; }
     public Func<string, Task>? RefreshSessionAsyncFunc { get; set; }
     public List<string> CreatedSessions { get; } = [];
     public List<string> DeletedSessions { get; } = [];
     public List<string> RefreshedSessions { get; } = [];
 
-    public Task<string> CreateLoginSessionAsync(CancellationToken ct = default)
+    public Task<Z.Vtuber.Cookie.Browser.LoginSessionResult> CreateLoginSessionAsync(CancellationToken ct = default)
     {
         var accountId = Guid.NewGuid().ToString("N");
         CreatedSessions.Add(accountId);
-        return CreateLoginSessionAsyncFunc?.Invoke() ?? Task.FromResult(accountId);
+        return CreateLoginSessionAsyncFunc?.Invoke() ?? Task.FromResult(new Z.Vtuber.Cookie.Browser.LoginSessionResult
+        {
+            AccountId = accountId,
+            QrCodeImage = "fake-qr-base64",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(3),
+        });
+    }
+
+    public Task<string?> WaitForNavResponseAsync(string accountId, TimeSpan timeout, CancellationToken ct = default)
+    {
+        return WaitForNavResponseAsyncFunc?.Invoke(accountId, timeout, ct) ?? Task.FromResult<string?>("{\"isLogin\":true}");
+    }
+
+    public Task<string> ExtractCookiesAsync(string accountId, CancellationToken ct = default)
+    {
+        return ExtractCookiesAsyncFunc?.Invoke(accountId) ?? Task.FromResult("SESSDATA=fake; bili_jct=fake");
     }
 
     public Task DeleteSessionAsync(string accountId, CancellationToken ct = default)
@@ -259,6 +276,17 @@ public sealed class FakeCookieInvalidEventPublisher : ICookieInvalidEventPublish
             throw new InvalidOperationException("publish failed");
         }
 
+        PublishCalls.Add((cookieId, reason));
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class FakeCookieServiceInvalidEventPublisher : ICookieInvalidEventPublisher
+{
+    public List<(string CookieId, string Reason)> PublishCalls { get; } = [];
+
+    public Task PublishAsync(string cookieId, string reason, CancellationToken ct = default)
+    {
         PublishCalls.Add((cookieId, reason));
         return Task.CompletedTask;
     }
