@@ -28,7 +28,7 @@ public class DanmakuClientFactory(IBilibiliAccountProvider accountProvider, Cook
             // Cast to BilibiliAccountProvider to access the lock-free internal core.
             // The lock is already held by the caller (LiveEventSource).
             var provider = (BilibiliAccountProvider)accountProvider;
-            var sp = await provider.GetProviderInternalAsync(cookieId, cookie, ct);
+            var sp = await provider.GetProviderInternalAsync(cookieId, cookie, isRetry: false, ct);
             var client = BuildClient(sp);
             return (client, releaser);
         }

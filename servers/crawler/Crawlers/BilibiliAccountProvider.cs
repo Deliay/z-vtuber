@@ -35,14 +35,14 @@ public class BilibiliAccountProvider(
     public async Task<IServiceProvider> GetProviderAsync(string cookieId, string cookie, CancellationToken ct = default)
     {
         await using var _ = await gate.AcquireAsync(cookieId, ct);
-        return await GetProviderInternalAsync(cookieId, cookie, ct);
+        return await GetProviderInternalAsync(cookieId, cookie, isRetry: false, ct);
     }
 
     /// <summary>
     /// Lock-free internal core. Caller MUST hold the cookie lock via <see cref="CookieCallGate"/>.
     /// Used by both <see cref="GetProviderAsync"/> and <see cref="Live.DanmakuClientFactory"/>.
     /// </summary>
-    internal async Task<IServiceProvider> GetProviderInternalAsync(string cookieId, string cookie, CancellationToken ct = default)
+    internal async Task<IServiceProvider> GetProviderInternalAsync(string cookieId, string cookie, bool isRetry = false, CancellationToken ct = default)
     {
         // Fast path: if a cached entry exists and has completed, return immediately.
         if (_providers.TryGetValue(cookie, out var existing) && existing.IsValueCreated)
@@ -71,17 +71,23 @@ public class BilibiliAccountProvider(
         {
             _providers.TryRemove(new KeyValuePair<string, Lazy<Task<IServiceProvider>>>(cookie, lazy));
 
+            // Only report invalid on first attempt; retry path should not re-enter report-invalid
+            if (isRetry)
+            {
+                throw;
+            }
+
             // Report invalid to cookie service and use the response to decide next action
             try
             {
                 var reportResult = await cookieServiceClient.ReportInvalidAsync(cookieId, ct);
-                if (reportResult.Status == ReportInvalidStatus.Refreshed)
+                if (reportResult.Status == ReportInvalidStatus.Refreshed && !string.IsNullOrEmpty(reportResult.Cookie))
                 {
-                    // Use new cookie from response to rebuild provider
-                    return await GetProviderInternalAsync(reportResult.CookieId!, reportResult.Cookie!, ct);
+                    // Use new cookie from response to rebuild provider (one retry only, no report-invalid)
+                    return await GetProviderInternalAsync(reportResult.CookieId!, reportResult.Cookie!, isRetry: true, ct);
                 }
 
-                // Session invalid, not found, or timeout — give up
+                // Session invalid, not found, timeout, or Refreshed with null cookie — give up
                 throw new CookieSessionInvalidException();
             }
             catch (NoAvailableCookieException)
