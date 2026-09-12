@@ -31,11 +31,20 @@ var notifier = builder.AddProject<Projects.Z_Vtuber_Notifier>("notifier")
     .WithEnvironment("Z_VTUBER_MILKY_ACCESS_TOKEN", builder.AddParameter("milky-access-token", secret: true))
     .WithHttpHealthCheck("/health");
 
+var cookie = builder.AddProject<Projects.Z_Vtuber_Cookie>("cookie")
+    .WithReference(mongo)
+    .WaitFor(mongo)
+    .WithReference(messaging)
+    .WaitFor(messaging)
+    .WithHttpHealthCheck("/health");
+
 var web = builder.AddViteApp("web", "../../apps/web")
     .WithReference(api)
     .WithReference(notifier)
+    .WithReference(cookie)
     .WithEnvironment("VITE_API_URL", api.GetEndpoint("http"))
     .WithEnvironment("VITE_NOTIFY_URL", notifier.GetEndpoint("http"))
+    .WithEnvironment("VITE_COOKIE_URL", cookie.GetEndpoint("http"))
     .WithExternalHttpEndpoints();
 
 builder.Build().Run();
