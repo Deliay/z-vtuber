@@ -93,12 +93,20 @@ public class InvalidationService : IInvalidationService
         if (freshSession.Status == "active" && freshSession.LastRefreshAt > enqueueTime)
         {
             _logger.LogDebug("Session {SessionId} was recently refreshed by another caller, skipping invalidation (dedup)", session.Id);
-            var currentCookie = await _cookiePool.FindByCookieIdAsync(freshSession.CookieId, ct);
+            var currentCookie = await _cookiePool.FindByCookieIdAsync(freshSession.CookieId!, ct);
+            if (currentCookie is null || string.IsNullOrEmpty(currentCookie.Cookie))
+            {
+                return new InvalidationResultValue
+                {
+                    Result = InvalidationResult.SessionInvalid,
+                    AccountId = freshSession.Id.ToString(),
+                };
+            }
             return new InvalidationResultValue
             {
                 Result = InvalidationResult.Refreshed,
                 NewCookieId = freshSession.CookieId,
-                NewCookie = currentCookie?.Cookie,
+                NewCookie = currentCookie.Cookie,
                 AccountId = freshSession.Id.ToString(),
             };
         }

@@ -46,10 +46,17 @@ public sealed class CookieServiceClient : ICookieServiceClient
         if (response.IsSuccessStatusCode)
         {
             var result = await response.Content.ReadFromJsonAsync<ReportInvalidResponse>(ct);
+            if (result is null || string.IsNullOrEmpty(result.Cookie))
+            {
+                return new ReportInvalidResult
+                {
+                    Status = ReportInvalidStatus.SessionInvalid,
+                };
+            }
             return new ReportInvalidResult
             {
                 Status = ReportInvalidStatus.Refreshed,
-                CookieId = result!.CookieId,
+                CookieId = result.CookieId,
                 Cookie = result.Cookie,
             };
         }
