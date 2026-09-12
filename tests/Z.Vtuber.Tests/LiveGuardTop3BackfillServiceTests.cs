@@ -12,7 +12,6 @@ using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
 public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
