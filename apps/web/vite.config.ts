@@ -13,6 +13,10 @@ export default defineConfig({
         target: process.env.VITE_NOTIFY_URL || 'http://localhost:5100',
         changeOrigin: true,
       },
+      '/api/cookie': {
+        target: process.env.VITE_COOKIE_URL || 'http://localhost:5200',
+        changeOrigin: true,
+      },
       '/api': {
         target: process.env.VITE_API_URL || 'http://localhost:5000',
         changeOrigin: true,
