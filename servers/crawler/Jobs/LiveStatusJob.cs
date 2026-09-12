@@ -98,7 +98,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
         try
         {
             var checkout = await _cookieServiceClient.CheckoutAsync(ct);
-            var roomInfo = await _bili.GetLiveRoomInfoAsync(checkout.Cookie, roomId, ct);
+            var roomInfo = await _bili.GetLiveRoomInfoAsync(checkout.CookieId, checkout.Cookie, roomId, ct);
 
             var title = roomInfo.Title ?? string.Empty;
             var liveStatus = roomInfo.LiveStatus == 1;

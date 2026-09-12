@@ -12,7 +12,7 @@ RUN dotnet publish servers/cookie/Z.Vtuber.Cookie.csproj -c Release -o /app/publ
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
-# 安装 Playwright 依赖
+# Install Playwright system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 \
     libnspr4 \
@@ -35,7 +35,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .
-COPY --from=build /src/servers/cookie/bin/Debug/net10.0/.playwright /root/.cache/ms-playwright
+
+# Install Playwright browsers (Firefox)
+RUN dotnet tool install --global Microsoft.Playwright.CLI || true
+RUN dotnet playwright install firefox --with-deps
 
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "Z.Vtuber.Cookie.dll"]

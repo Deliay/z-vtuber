@@ -33,7 +33,7 @@ public sealed class BrowserishBiliApiClientTests
 
     private sealed class MockBilibiliAccountProvider : IBilibiliAccountProvider
     {
-        public async Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default)
+        public async Task<IServiceProvider> GetProviderAsync(string cookieId, string cookie, CancellationToken ct = default)
         {
             var services = new ServiceCollection();
             

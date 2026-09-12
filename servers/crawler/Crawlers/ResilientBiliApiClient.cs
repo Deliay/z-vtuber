@@ -1,9 +1,6 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Services;
@@ -36,26 +33,27 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         _logger = logger;
     }
 
-    public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default)
-        => ExecuteWithResilienceAsync(cookie, $"live:{roomId}", c => _direct.GetLiveRoomInfoAsync(c, roomId, ct),
-            c => _browser.GetLiveRoomInfoAsync(c, roomId, ct));
+    public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookieId, string cookie, long roomId, CancellationToken ct = default)
+        => ExecuteWithResilienceAsync(cookieId, cookie, $"live:{roomId}", c => _direct.GetLiveRoomInfoAsync(cookieId, c, roomId, ct),
+            c => _browser.GetLiveRoomInfoAsync(cookieId, c, roomId, ct));
 
-    public Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default)
-        => ExecuteWithResilienceAsync(cookie, $"nav:{ShortHash(cookie)}", c => _direct.GetNavInfoV2Async(c, ct),
-            c => _browser.GetNavInfoV2Async(c, ct));
+    public Task<NavInfo> GetNavInfoV2Async(string cookieId, string cookie, CancellationToken ct = default)
+        => ExecuteWithResilienceAsync(cookieId, cookie, $"nav:{ShortHash(cookie)}", c => _direct.GetNavInfoV2Async(cookieId, c, ct),
+            c => _browser.GetNavInfoV2Async(cookieId, c, ct));
 
-    public Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default)
-        => ExecuteWithResilienceAsync(cookie, $"space:{mid}", c => _direct.GetSpaceDynamicsAsync(c, mid, offset, ct),
-            c => _browser.GetSpaceDynamicsAsync(c, mid, offset, ct));
+    public Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookieId, string cookie, long mid, string offset, CancellationToken ct = default)
+        => ExecuteWithResilienceAsync(cookieId, cookie, $"space:{mid}", c => _direct.GetSpaceDynamicsAsync(cookieId, c, mid, offset, ct),
+            c => _browser.GetSpaceDynamicsAsync(cookieId, c, mid, offset, ct));
 
-    public Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
-        => ExecuteWithResilienceAsync(cookie, $"guard:{roomId}", c => _direct.GetRoomGuardListAsync(c, roomId, bId, page, ct),
-            c => _browser.GetRoomGuardListAsync(c, roomId, bId, page, ct));
+    public Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
+        => ExecuteWithResilienceAsync(cookieId, cookie, $"guard:{roomId}", c => _direct.GetRoomGuardListAsync(cookieId, c, roomId, bId, page, ct),
+            c => _browser.GetRoomGuardListAsync(cookieId, c, roomId, bId, page, ct));
 
     public Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
         => _direct.GetAccountInfoDataAsync(cookie, mid, ct);
 
     private async Task<T> ExecuteWithResilienceAsync<T>(
+        string cookieId,
         string cookie,
         string target,
         Func<string, Task<T>> directFunc,
@@ -80,7 +78,7 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
                 catch (RiskControlException ex)
                 {
                     _logger.LogWarning(ex, "Risk control on direct channel for {Target}", target);
-                    _ = ReportRiskControl(target, cookie, ex);
+                    _ = ReportRiskControl(target, cookieId, ex);
                     throw;
                 }
 
@@ -95,18 +93,19 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
                 catch (RiskControlException ex)
                 {
                     _logger.LogWarning(ex, "Risk control on browser channel for {Target}", target);
-                    _ = ReportRiskControl(target, cookie, ex);
+                    _ = ReportRiskControl(target, cookieId, ex);
                     throw;
                 }
 
             case BiliFetchMode.Auto:
             default:
-                return await ExecuteAutoAsync(target, cookie, directFunc, browserFunc);
+                return await ExecuteAutoAsync(target, cookieId, cookie, directFunc, browserFunc);
         }
     }
 
     private async Task<T> ExecuteAutoAsync<T>(
         string target,
+        string cookieId,
         string cookie,
         Func<string, Task<T>> directFunc,
         Func<string, Task<T>> browserFunc)
@@ -117,7 +116,7 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         {
             _logger.LogDebug("Using browser channel for {Target} (recovery {Count}/{Threshold})",
                 target, state.ConsecutiveBrowserSuccesses, _options.ChannelRecoverSuccessCount);
-            return await ExecuteBrowserWithRecoveryAsync(target, cookie, browserFunc, state);
+            return await ExecuteBrowserWithRecoveryAsync(target, cookieId, cookie, browserFunc, state);
         }
 
         try
@@ -131,15 +130,16 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         catch (RiskControlException ex)
         {
             _logger.LogWarning(ex, "Risk control on direct channel for {Target}, degrading to browser", target);
-            _ = ReportRiskControl(target, cookie, ex);
+            _ = ReportRiskControl(target, cookieId, ex);
             state.Channel = Channel.Browser;
             state.ConsecutiveBrowserSuccesses = 0;
-            return await ExecuteBrowserWithRecoveryAsync(target, cookie, browserFunc, state);
+            return await ExecuteBrowserWithRecoveryAsync(target, cookieId, cookie, browserFunc, state);
         }
     }
 
     private async Task<T> ExecuteBrowserWithRecoveryAsync<T>(
         string target,
+        string cookieId,
         string cookie,
         Func<string, Task<T>> browserFunc,
         ChannelState state)
@@ -163,32 +163,30 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         catch (RiskControlException ex)
         {
             _logger.LogWarning(ex, "Risk control on browser channel for {Target}", target);
-            _ = ReportRiskControl(target, cookie, ex);
+            _ = ReportRiskControl(target, cookieId, ex);
             throw;
         }
     }
 
-    private async Task ReportRiskControl(string target, string cookie, RiskControlException ex)
+    private async Task ReportRiskControl(string target, string cookieId, RiskControlException ex)
     {
         _backoff.ReportRiskControl(target);
         try
         {
-            // Cookie cooldown is now handled by the cookie service
-            // We just need to report the risk control event
-            _logger.LogInformation("Risk control reported for {Target}, cookie cooldown will be handled by cookie service.", target);
+            await _cookieServiceClient.CooldownAsync(cookieId, TimeSpan.FromMinutes(_options.CooldownMinutes));
         }
         catch (Exception ex2)
         {
-            _logger.LogError(ex2, "Failed to handle risk control for {Target}", target);
+            _logger.LogError(ex2, "Failed to cooldown cookie for {Target}", target);
         }
-        _logger.LogWarning("Risk control reported for {Target}, cookie {CookieTag} marked cooldown {Minutes}min",
-            target, ShortHash(cookie), _options.CooldownMinutes);
+        _logger.LogWarning("Risk control reported for {Target}, cookieId {CookieId} marked cooldown {Minutes}min",
+            target, cookieId, _options.CooldownMinutes);
     }
 
     private static string ShortHash(string cookie)
     {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(cookie));
-        return Convert.ToHexString(bytes[..4]).ToLowerInvariant();
+        var hash = cookie.GetHashCode(StringComparison.Ordinal);
+        return Math.Abs(hash).ToString("x8");
     }
 
     private enum Channel { Direct, Browser }

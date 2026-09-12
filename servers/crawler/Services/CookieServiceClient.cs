@@ -46,7 +46,7 @@ public sealed class CookieServiceClient : ICookieServiceClient
 
     public async Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default)
     {
-        var payload = new { CookieId = cookieId, DurationMinutes = (int)duration.TotalMinutes };
+        var payload = new { CookieId = cookieId, DurationSeconds = (int)duration.TotalSeconds };
         var response = await _http.PostAsJsonAsync("/api/cookie/cooldown", payload, ct);
         response.EnsureSuccessStatusCode();
     }

@@ -74,7 +74,7 @@ public sealed class BrowserishBiliApiClient : IBiliApiClient, IDisposable
         await Task.Delay(TimeSpan.FromSeconds(delay), ct);
     }
 
-    public async Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default)
+    public async Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookieId, string cookie, long roomId, CancellationToken ct = default)
     {
         await EnsureWarmupAsync(ct);
         await DelayAsync(ct);
@@ -103,12 +103,12 @@ public sealed class BrowserishBiliApiClient : IBiliApiClient, IDisposable
         };
     }
 
-    public async Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default)
+    public async Task<NavInfo> GetNavInfoV2Async(string cookieId, string cookie, CancellationToken ct = default)
     {
         await EnsureWarmupAsync(ct);
         await DelayAsync(ct);
 
-        var account = await _accountProvider.GetProviderAsync(cookie, ct);
+        var account = await _accountProvider.GetProviderAsync(cookieId, cookie, ct);
         var biliAccount = account.GetRequiredService<BilibiliAccount>();
         
         // Use wbi signature for nav request
@@ -130,12 +130,12 @@ public sealed class BrowserishBiliApiClient : IBiliApiClient, IDisposable
         return apiResponse.Data;
     }
 
-    public async Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default)
+    public async Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookieId, string cookie, long mid, string offset, CancellationToken ct = default)
     {
         await EnsureWarmupAsync(ct);
         await DelayAsync(ct);
 
-        var account = await _accountProvider.GetProviderAsync(cookie, ct);
+        var account = await _accountProvider.GetProviderAsync(cookieId, cookie, ct);
         var biliAccount = account.GetRequiredService<BilibiliAccount>();
         
         // Build parameters for wbi signature
@@ -183,7 +183,7 @@ public sealed class BrowserishBiliApiClient : IBiliApiClient, IDisposable
         return new SpaceDynamicsPage { HasMore = hasMore, Offset = nextOffset, Items = items };
     }
 
-    public async Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
+    public async Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
     {
         await EnsureWarmupAsync(ct);
         await DelayAsync(ct);

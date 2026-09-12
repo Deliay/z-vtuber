@@ -24,7 +24,7 @@ public sealed class ResilientBiliApiClientTests
         public Func<string, long, CancellationToken, Task<JsonElement>>? AccountInfoFunc { get; set; }
         public Func<string, long, long, int, CancellationToken, Task<GuardInfo>>? RoomGuardListFunc { get; set; }
 
-        public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default)
+        public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookieId, string cookie, long roomId, CancellationToken ct = default)
         {
             Interlocked.Increment(ref _callCount);
             LastCookie = cookie;
@@ -32,7 +32,7 @@ public sealed class ResilientBiliApiClientTests
                 ?? Task.FromResult(new LiveRoomInfo { Title = "default", RoomId = roomId, LiveStatus = 0 });
         }
 
-        public Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default)
+        public Task<NavInfo> GetNavInfoV2Async(string cookieId, string cookie, CancellationToken ct = default)
         {
             Interlocked.Increment(ref _callCount);
             LastCookie = cookie;
@@ -40,7 +40,7 @@ public sealed class ResilientBiliApiClientTests
                 ?? Task.FromResult(new NavInfo { Mid = 0 });
         }
 
-        public Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default)
+        public Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookieId, string cookie, long mid, string offset, CancellationToken ct = default)
         {
             Interlocked.Increment(ref _callCount);
             LastCookie = cookie;
@@ -56,7 +56,7 @@ public sealed class ResilientBiliApiClientTests
                 ?? Task.FromResult(JsonDocument.Parse("""{"mid":0}""").RootElement.Clone());
         }
 
-        public Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
+        public Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
         {
             Interlocked.Increment(ref _callCount);
             LastCookie = cookie;
@@ -180,15 +180,18 @@ public sealed class ResilientBiliApiClientTests
             }
         };
         var opts = DefaultOptions();
+        var cookieServiceClient = new FakeCookieServiceClient();
         var sut = new ResilientBiliApiClient(
             direct, browser, opts,
-            new CrawlBackoffRegistry(Options.Create(opts)), new FakeCookieServiceClient(),
+            new CrawlBackoffRegistry(Options.Create(opts)), cookieServiceClient,
             NullLogger<ResilientBiliApiClient>.Instance);
 
         var result = await sut.GetLiveRoomInfoAsync("cookie12345678", 123);
 
         Assert.True(browserCalled);
         Assert.Equal("from-browser", result.Title);
+        Assert.Single(cookieServiceClient.CooldownCalls);
+        Assert.Equal(TimeSpan.FromMinutes(opts.CooldownMinutes), cookieServiceClient.CooldownCalls[0].Duration);
     }
 
     [Fact]

@@ -63,10 +63,12 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
 
     private async Task CrawlAsync(long mid, CancellationToken ct)
     {
+        string cookieId;
         string cookie;
         try
         {
             var checkout = await _cookieServiceClient.CheckoutAsync(ct);
+            cookieId = checkout.CookieId;
             cookie = checkout.Cookie;
         }
         catch (NoAvailableCookieException)
@@ -83,7 +85,7 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
             SpaceDynamicsPage page;
             try
             {
-                page = await _bili.GetSpaceDynamicsAsync(cookie, mid, offset, ct);
+                page = await _bili.GetSpaceDynamicsAsync(cookieId, cookie, mid, offset, ct);
             }
             catch (CrawlBackoffActiveException ex)
             {

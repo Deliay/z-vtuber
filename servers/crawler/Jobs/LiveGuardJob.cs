@@ -125,10 +125,12 @@ public class LiveGuardJob : PeriodicJobBase
 
     private async Task CrawlAsync(long mid, string date, CancellationToken ct)
     {
+        string cookieId;
         string cookie;
         try
         {
             var checkout = await _cookieServiceClient.CheckoutAsync(ct);
+            cookieId = checkout.CookieId;
             cookie = checkout.Cookie;
         }
         catch (NoAvailableCookieException)
@@ -149,7 +151,7 @@ public class LiveGuardJob : PeriodicJobBase
             }
         }
 
-        var entries = await _fetcher.FetchAllAsync(cookie, mid, roomId.Value, ct);
+        var entries = await _fetcher.FetchAllAsync(cookieId, cookie, mid, roomId.Value, ct);
         if (entries is null)
         {
             return;

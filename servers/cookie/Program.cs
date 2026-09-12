@@ -4,7 +4,6 @@ using Microsoft.Playwright;
 using MongoDB.Driver;
 using StackExchange.Redis;
 using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Cookie.Configuration;

@@ -3,6 +3,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using StackExchange.Redis;
 using Z.Vtuber.Common.Live;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Cookie.Refresh;
 
 namespace Z.Vtuber.Tests;
@@ -15,7 +17,7 @@ public class RedisCookieInvalidEventPublisherTests(RedisFixture redis)
     [Fact]
     public async Task PublishAsync_SendsEventToChannel_SubscriberReceivesSamePayload()
     {
-        var publisher = new RedisCookieInvalidEventPublisher(redis.Connection, NullLogger<RedisCookieInvalidEventPublisher>.Instance);
+        var publisher = new RedisCookieInvalidEventPublisher(redis.Connection, new MockCookieAccountInfoRepository(), NullLogger<RedisCookieInvalidEventPublisher>.Instance);
         var subscriber = redis.Connection.GetSubscriber();
         var queue = await subscriber.SubscribeAsync(Channel);
 
@@ -26,8 +28,36 @@ public class RedisCookieInvalidEventPublisherTests(RedisFixture redis)
         var evt = JsonSerializer.Deserialize<CookieInvalidEvent>((string)msg.Message!);
         Assert.Equal(cookieId, evt!.CookieId);
         Assert.Equal("test_reason", evt.Reason);
-        Assert.Null(evt.Mid);
-        Assert.Null(evt.Uname);
+
+        await subscriber.UnsubscribeAsync(Channel);
+    }
+
+    [Fact]
+    public async Task PublishAsync_AccountInfoPresent_IncludesMidAndUname()
+    {
+        var cookieId = ObjectId.GenerateNewId();
+        var accountInfo = new CookieAccountInfoRecord
+        {
+            CookieId = cookieId,
+            Mid = 12345,
+            Uname = "test_user",
+            FetchedAt = DateTime.UtcNow,
+        };
+        var mockRepo = new MockCookieAccountInfoRepository
+        {
+            LookupResults = new Dictionary<ObjectId, CookieAccountInfoRecord> { [cookieId] = accountInfo },
+        };
+        var publisher = new RedisCookieInvalidEventPublisher(redis.Connection, mockRepo, NullLogger<RedisCookieInvalidEventPublisher>.Instance);
+        var subscriber = redis.Connection.GetSubscriber();
+        var queue = await subscriber.SubscribeAsync(Channel);
+
+        await publisher.PublishAsync(cookieId.ToString(), "test_reason");
+
+        var msg = await queue.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var evt = JsonSerializer.Deserialize<CookieInvalidEvent>((string)msg.Message!);
+        Assert.Equal(cookieId.ToString(), evt!.CookieId);
+        Assert.Equal(12345L, evt.Mid);
+        Assert.Equal("test_user", evt.Uname);
 
         await subscriber.UnsubscribeAsync(Channel);
     }
@@ -36,7 +66,7 @@ public class RedisCookieInvalidEventPublisherTests(RedisFixture redis)
     public async Task PublishAsync_AccountInfoMissing_MidAndUnameNull()
     {
         var cookieId = ObjectId.GenerateNewId();
-        var publisher = new RedisCookieInvalidEventPublisher(redis.Connection, NullLogger<RedisCookieInvalidEventPublisher>.Instance);
+        var publisher = new RedisCookieInvalidEventPublisher(redis.Connection, new MockCookieAccountInfoRepository(), NullLogger<RedisCookieInvalidEventPublisher>.Instance);
         var subscriber = redis.Connection.GetSubscriber();
         var queue = await subscriber.SubscribeAsync(Channel);
 
@@ -54,7 +84,7 @@ public class RedisCookieInvalidEventPublisherTests(RedisFixture redis)
     [Fact]
     public async Task PublishAsync_NoSubscriber_DoesNotThrow()
     {
-        var publisher = new RedisCookieInvalidEventPublisher(redis.Connection, NullLogger<RedisCookieInvalidEventPublisher>.Instance);
+        var publisher = new RedisCookieInvalidEventPublisher(redis.Connection, new MockCookieAccountInfoRepository(), NullLogger<RedisCookieInvalidEventPublisher>.Instance);
 
         await publisher.PublishAsync(ObjectId.GenerateNewId().ToString(), "test_reason");
 
@@ -65,7 +95,7 @@ public class RedisCookieInvalidEventPublisherTests(RedisFixture redis)
     public async Task PublishAsync_PayloadDoesNotContainCookieString()
     {
         var cookieId = ObjectId.GenerateNewId().ToString();
-        var publisher = new RedisCookieInvalidEventPublisher(redis.Connection, NullLogger<RedisCookieInvalidEventPublisher>.Instance);
+        var publisher = new RedisCookieInvalidEventPublisher(redis.Connection, new MockCookieAccountInfoRepository(), NullLogger<RedisCookieInvalidEventPublisher>.Instance);
         var subscriber = redis.Connection.GetSubscriber();
         var queue = await subscriber.SubscribeAsync(Channel);
 

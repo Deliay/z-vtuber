@@ -4,7 +4,6 @@ using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Configuration;
 using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Cookie.Refresh;
 
 namespace Z.Vtuber.Cookie.Refresh;

@@ -71,16 +71,16 @@ public class LiveEventSourceLockTimingTests
 
         public FakeDanmakuClientFactory(CookieCallGate gate) => _gate = gate;
 
-        public Task<IDanmakuClient> CreateAsync(string cookie, CancellationToken ct = default)
+        public Task<IDanmakuClient> CreateAsync(string cookieId, string cookie, CancellationToken ct = default)
         {
             var client = new FakeDanmakuClient();
             _clients[cookie] = client;
             return Task.FromResult<IDanmakuClient>(client);
         }
 
-        public async Task<(IDanmakuClient Client, IDistributedLockHandle Release)> CreateWithLockAsync(string cookie, CancellationToken ct = default)
+        public async Task<(IDanmakuClient Client, IDistributedLockHandle Release)> CreateWithLockAsync(string cookieId, string cookie, CancellationToken ct = default)
         {
-            var releaser = await _gate.AcquireAsync(cookie, ct);
+            var releaser = await _gate.AcquireAsync(cookieId, ct);
             var client = new FakeDanmakuClient();
             _clients[cookie] = client;
             _clientCreated.TrySetResult(client);
@@ -235,12 +235,12 @@ public class LiveEventSourceLockTimingTests
 
         public Task WaitForConnectFailed() => _connectFailed.Task;
 
-        public Task<IDanmakuClient> CreateAsync(string cookie, CancellationToken ct = default)
+        public Task<IDanmakuClient> CreateAsync(string cookieId, string cookie, CancellationToken ct = default)
             => Task.FromResult<IDanmakuClient>(new FakeDanmakuClient { ConnectShouldFail = true });
 
-        public async Task<(IDanmakuClient Client, IDistributedLockHandle Release)> CreateWithLockAsync(string cookie, CancellationToken ct = default)
+        public async Task<(IDanmakuClient Client, IDistributedLockHandle Release)> CreateWithLockAsync(string cookieId, string cookie, CancellationToken ct = default)
         {
-            var releaser = await _gate.AcquireAsync(cookie, ct);
+            var releaser = await _gate.AcquireAsync(cookieId, ct);
             var client = new FakeDanmakuClient { ConnectShouldFail = true };
             // Signal when ConnectAsync is called (it will throw)
             _ = Task.Run(async () =>

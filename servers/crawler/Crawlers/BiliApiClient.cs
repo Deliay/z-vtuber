@@ -21,10 +21,10 @@ public sealed class SpaceDynamicsPage
 public interface IBiliApiClient
 {
     Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default);
-    Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default);
-    Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default);
-    Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default);
-    Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default);
+    Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookieId, string cookie, long roomId, CancellationToken ct = default);
+    Task<NavInfo> GetNavInfoV2Async(string cookieId, string cookie, CancellationToken ct = default);
+    Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookieId, string cookie, long mid, string offset, CancellationToken ct = default);
+    Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default);
 }
 
 public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IBiliApiClient
@@ -41,23 +41,23 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
         return doc.RootElement.Clone();
     }
 
-    public async Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default)
+    public async Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookieId, string cookie, long roomId, CancellationToken ct = default)
     {
-        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var provider = await accountProvider.GetProviderAsync(cookieId, cookie, ct);
         var crawler = provider.GetRequiredService<BiliLiveCrawler>();
         return await crawler.GetLiveRoomInfo(roomId, ct);
     }
 
-    public async Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default)
+    public async Task<NavInfo> GetNavInfoV2Async(string cookieId, string cookie, CancellationToken ct = default)
     {
-        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var provider = await accountProvider.GetProviderAsync(cookieId, cookie, ct);
         var basic = provider.GetRequiredService<BiliBasicInfoCrawler>();
         return await basic.GetNavInfoV2(ct);
     }
 
-    public async Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default)
+    public async Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookieId, string cookie, long mid, string offset, CancellationToken ct = default)
     {
-        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var provider = await accountProvider.GetProviderAsync(cookieId, cookie, ct);
         var account = provider.GetRequiredService<BilibiliAccount>();
 
         var parameters = new List<KeyValuePair<string, string>>
@@ -100,9 +100,9 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
         return new SpaceDynamicsPage { HasMore = hasMore, Offset = nextOffset, Items = items };
     }
 
-    public async Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
+    public async Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
     {
-        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var provider = await accountProvider.GetProviderAsync(cookieId, cookie, ct);
         var crawler = provider.GetRequiredService<BiliLiveCrawler>();
         return await crawler.GetRoomGuardList(roomId, bId, page, ct);
     }

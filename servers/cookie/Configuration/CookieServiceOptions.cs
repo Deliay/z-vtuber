@@ -2,6 +2,8 @@ namespace Z.Vtuber.Cookie.Configuration;
 
 public class CookieServiceOptions
 {
+    public const string SectionName = "CookieService";
+
     public string BrowserSessionDataDir { get; set; } = "/data/browser-sessions";
     public int QrCodeExpiresSeconds { get; set; } = 180;
     public int RefreshIntervalMinutes { get; set; } = 10;

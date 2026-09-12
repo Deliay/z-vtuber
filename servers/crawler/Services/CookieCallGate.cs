@@ -20,21 +20,14 @@ public sealed class CookieCallGate
     /// handle that releases the lock when disposed. Caller MUST dispose the handle
     /// when the guarded section completes (including on exception paths).
     /// </summary>
-    public async Task<IDistributedLockHandle> AcquireAsync(string cookie, CancellationToken ct = default)
+    public async Task<IDistributedLockHandle> AcquireAsync(string cookieId, CancellationToken ct = default)
     {
-        var cookieTag = GetCookieTag(cookie);
-        var key = $"cookie-call:{cookieTag}";
+        var key = $"cookie-call:{cookieId}";
         var handle = await _lockProvider.AcquireAsync(key, TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(30), ct);
         if (handle is null)
         {
-            throw new TimeoutException($"Failed to acquire cookie lock for {cookieTag} within timeout.");
+            throw new TimeoutException($"Failed to acquire cookie lock for {cookieId} within timeout.");
         }
         return handle;
-    }
-
-    private static string GetCookieTag(string cookie)
-    {
-        // Use first 8 characters as tag for logging/locking
-        return cookie.Length > 8 ? cookie[..8] : cookie;
     }
 }

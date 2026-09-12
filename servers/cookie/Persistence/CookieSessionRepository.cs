@@ -1,7 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Cookie.Persistence;
 

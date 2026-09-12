@@ -110,7 +110,7 @@ public sealed class LiveEventSource(
             {
                 var checkout = await cookieServiceClient.CheckoutAsync(ct);
                 // Lock-aware: cookie lock held through CreateAsync + ConnectAsync, released immediately after.
-                (client, lockRelease) = await factory.CreateWithLockAsync(checkout.Cookie, ct);
+                (client, lockRelease) = await factory.CreateWithLockAsync(checkout.CookieId, checkout.Cookie, ct);
                 await client.ConnectAsync(roomId, ct);
 
                 // Lock released immediately after connection established — event loop does NOT hold the cookie lock.

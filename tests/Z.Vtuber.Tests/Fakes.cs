@@ -27,19 +27,19 @@ public sealed class FakeBiliApiClient : IBiliApiClient
 
     public Func<long, LiveRoomInfo>? LiveRoomInfoProvider { get; set; }
 
-    public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default) =>
+    public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookieId, string cookie, long roomId, CancellationToken ct = default) =>
         Task.FromResult(LiveRoomInfoProvider?.Invoke(roomId)
             ?? new LiveRoomInfo { Title = "title", RoomId = roomId, LiveStatus = 1 });
 
-    public Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default) =>
+    public Task<NavInfo> GetNavInfoV2Async(string cookieId, string cookie, CancellationToken ct = default) =>
         Task.FromResult(new NavInfo { Mid = 1 });
 
-    public Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default) =>
+    public Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookieId, string cookie, long mid, string offset, CancellationToken ct = default) =>
         Task.FromResult(new SpaceDynamicsPage { HasMore = false, Offset = string.Empty, Items = [] });
 
     public Func<long, int, GuardInfo>? RoomGuardListProvider { get; set; }
 
-    public Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default) =>
+    public Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default) =>
         Task.FromResult(RoomGuardListProvider?.Invoke(roomId, page)
             ?? new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
 }
@@ -69,26 +69,6 @@ public sealed class FakeCookiePoolService : ICookiePoolService
 
     public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default) =>
         Task.CompletedTask;
-}
-
-public sealed class FakeCookieNavProbeService : ICookieNavProbeService
-{
-    public Func<CookieRecord, CancellationToken, Task<CookieProbeOutcome>>? ProbeFunc { get; set; }
-    public int CallCount { get; private set; }
-
-    public Task<CookieProbeOutcome> ProbeAsync(CookieRecord record, CancellationToken ct = default)
-    {
-        CallCount++;
-        return ProbeFunc?.Invoke(record, ct) ?? Task.FromResult(CookieProbeOutcome.Success);
-    }
-}
-
-public sealed class ProbeServiceProvider : IServiceProvider
-{
-    public ICookieNavProbeService? Probe { get; set; }
-
-    public object? GetService(Type serviceType) =>
-        serviceType == typeof(ICookieNavProbeService) ? Probe : null;
 }
 
 public sealed class FakeBrowserSessionManager : IBrowserSessionManager
@@ -187,7 +167,7 @@ public sealed class MockCookieAccountInfoRepository : ICookieAccountInfoReposito
 {
     public List<CookieAccountInfoRecord> Upserts { get; } = [];
     public bool ThrowOnUpsert { get; set; }
-    public Dictionary<ObjectId, CookieAccountInfoRecord> LookupResults { get; set; } = new();
+    public Dictionary<MongoDB.Bson.ObjectId, CookieAccountInfoRecord> LookupResults { get; set; } = new();
 
     public Task UpsertAsync(CookieAccountInfoRecord record, CancellationToken ct = default)
     {

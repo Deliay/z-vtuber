@@ -10,7 +10,7 @@ public sealed class BiliApiClientTests
 {
     private sealed class StubAccountProvider(Func<IServiceProvider> build) : IBilibiliAccountProvider
     {
-        public Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default) =>
+        public Task<IServiceProvider> GetProviderAsync(string cookieId, string cookie, CancellationToken ct = default) =>
             Task.FromResult(build());
     }
 

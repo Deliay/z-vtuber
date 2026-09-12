@@ -11,7 +11,7 @@ namespace Z.Vtuber.Crawler.Crawlers;
 
 public interface IBilibiliAccountProvider
 {
-    Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default);
+    Task<IServiceProvider> GetProviderAsync(string cookieId, string cookie, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -32,17 +32,17 @@ public class BilibiliAccountProvider(
     /// <summary>
     /// Public entry point: acquires cookie lock, then delegates to the lock-free internal core.
     /// </summary>
-    public async Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default)
+    public async Task<IServiceProvider> GetProviderAsync(string cookieId, string cookie, CancellationToken ct = default)
     {
-        await using var _ = await gate.AcquireAsync(cookie, ct);
-        return await GetProviderInternalAsync(cookie, ct);
+        await using var _ = await gate.AcquireAsync(cookieId, ct);
+        return await GetProviderInternalAsync(cookieId, cookie, ct);
     }
 
     /// <summary>
     /// Lock-free internal core. Caller MUST hold the cookie lock via <see cref="CookieCallGate"/>.
     /// Used by both <see cref="GetProviderAsync"/> and <see cref="Live.DanmakuClientFactory"/>.
     /// </summary>
-    internal async Task<IServiceProvider> GetProviderInternalAsync(string cookie, CancellationToken ct = default)
+    internal async Task<IServiceProvider> GetProviderInternalAsync(string cookieId, string cookie, CancellationToken ct = default)
     {
         // Fast path: if a cached entry exists and has completed, return immediately.
         if (_providers.TryGetValue(cookie, out var existing) && existing.IsValueCreated)
@@ -74,13 +74,13 @@ public class BilibiliAccountProvider(
             // Report invalid to cookie service and retry with new cookie if available
             try
             {
-                await cookieServiceClient.ReportInvalidAsync(string.Empty, "account_provider_build_failed", ct);
+                await cookieServiceClient.ReportInvalidAsync(cookieId, "account_provider_build_failed", ct);
                 
                 // Try to get a new cookie and rebuild
-                var newCookie = await cookieServiceClient.CheckoutAsync(ct);
+                var newCheckout = await cookieServiceClient.CheckoutAsync(ct);
                 var newLazy = new Lazy<Task<IServiceProvider>>(
-                    () => BuildProviderAsync(newCookie.Cookie, options));
-                var newProvider = _providers.GetOrAdd(newCookie.Cookie, _ => newLazy);
+                    () => BuildProviderAsync(newCheckout.Cookie, options));
+                var newProvider = _providers.GetOrAdd(newCheckout.Cookie, _ => newLazy);
                 return await newProvider.Value;
             }
             catch (NoAvailableCookieException)

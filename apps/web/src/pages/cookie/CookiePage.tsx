@@ -36,6 +36,8 @@ export function CookiePage() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [pollError, setPollError] = useState<string | null>(null)
+  const [qrExpired, setQrExpired] = useState(false)
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -69,6 +71,7 @@ export function CookiePage() {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current)
     }
+    setPollError(null)
     pollTimerRef.current = setInterval(async () => {
       try {
         const status = await getCookieAccount(accountId)
@@ -79,22 +82,51 @@ export function CookiePage() {
           }
           setShowCreateModal(false)
           setPendingAccount(null)
+          setPollError(null)
           await fetchAccounts()
         }
-      } catch {
-        if (pollTimerRef.current) {
-          clearInterval(pollTimerRef.current)
-          pollTimerRef.current = null
+      } catch (err: any) {
+        if (err?.status === 404) {
+          if (pollTimerRef.current) {
+            clearInterval(pollTimerRef.current)
+            pollTimerRef.current = null
+          }
+          setShowCreateModal(false)
+          setPendingAccount(null)
+          setPollError(null)
+          await fetchAccounts()
+        } else {
+          setPollError('网络异常，请检查连接后重试')
         }
-        setShowCreateModal(false)
-        setPendingAccount(null)
-        await fetchAccounts()
       }
     }, POLL_INTERVAL)
   }
 
+  useEffect(() => {
+    if (!pendingAccount?.expiresAt) return
+    const expiresAt = new Date(pendingAccount.expiresAt).getTime()
+    const now = Date.now()
+    if (expiresAt <= now) {
+      setQrExpired(true)
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
+      return
+    }
+    const timeout = setTimeout(() => {
+      setQrExpired(true)
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
+    }, expiresAt - now)
+    return () => clearTimeout(timeout)
+  }, [pendingAccount?.expiresAt])
+
   const handleCreate = async () => {
     setCreateError(null)
+    setQrExpired(false)
     try {
       setCreating(true)
       const pending = await createCookieAccount()
@@ -121,6 +153,8 @@ export function CookiePage() {
     setShowCreateModal(false)
     setPendingAccount(null)
     setCreateError(null)
+    setPollError(null)
+    setQrExpired(false)
   }
 
   const handleDelete = async (accountId: string) => {
@@ -278,37 +312,82 @@ export function CookiePage() {
               </>
             ) : pendingAccount?.qrCodeImage ? (
               <>
-                <p style={{ marginBottom: '0.5rem', fontSize: '0.875rem', color: '#94a3b8' }}>
-                  请使用 B 站客户端扫描二维码
-                </p>
-                <img
-                  src={`data:image/png;base64,${pendingAccount.qrCodeImage}`}
-                  alt="扫码登录二维码"
-                  style={{ maxWidth: '260px', marginBottom: '0.5rem' }}
-                />
-                {pendingAccount.expiresAt && (
-                  <p style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
-                    过期时间：{formatDate(pendingAccount.expiresAt)}
-                  </p>
+                {qrExpired ? (
+                  <>
+                    <p style={{ color: '#f87171', marginBottom: '0.5rem' }}>
+                      二维码已过期，请重新生成
+                    </p>
+                    {pollError && (
+                      <p style={{ color: '#f87171', fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+                        {pollError}
+                      </p>
+                    )}
+                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                      <button
+                        onClick={() => {
+                          setQrExpired(false)
+                          setPendingAccount(null)
+                          handleCreate()
+                        }}
+                        style={{ padding: '0.5rem 1rem' }}
+                      >
+                        重新生成
+                      </button>
+                      <button
+                        onClick={handleCloseCreateModal}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          backgroundColor: '#475569',
+                          color: '#e2e8f0',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ marginBottom: '0.5rem', fontSize: '0.875rem', color: '#94a3b8' }}>
+                      请使用 B 站客户端扫描二维码
+                    </p>
+                    <img
+                      src={`data:image/png;base64,${pendingAccount.qrCodeImage}`}
+                      alt="扫码登录二维码"
+                      style={{ maxWidth: '260px', marginBottom: '0.5rem' }}
+                    />
+                    {pendingAccount.expiresAt && (
+                      <p style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                        过期时间：{formatDate(pendingAccount.expiresAt)}
+                      </p>
+                    )}
+                    {pollError && (
+                      <p style={{ fontSize: '0.75rem', color: '#f87171', marginBottom: '0.5rem' }}>
+                        {pollError}
+                      </p>
+                    )}
+                    <p style={{ fontSize: '0.75rem', color: '#eab308' }}>
+                      等待扫码中...
+                    </p>
+                    <div style={{ marginTop: '1rem' }}>
+                      <button
+                        onClick={handleCloseCreateModal}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          backgroundColor: '#475569',
+                          color: '#e2e8f0',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </>
                 )}
-                <p style={{ fontSize: '0.75rem', color: '#eab308' }}>
-                  等待扫码中...
-                </p>
-                <div style={{ marginTop: '1rem' }}>
-                  <button
-                    onClick={handleCloseCreateModal}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#475569',
-                      color: '#e2e8f0',
-                      border: 'none',
-                      borderRadius: '0.25rem',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    取消
-                  </button>
-                </div>
               </>
             ) : (
               <p>未获取到二维码，请重试</p>

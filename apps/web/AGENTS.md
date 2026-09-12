@@ -46,7 +46,7 @@ src/
 ## 开发流程
 
 - TDD 开发（先写测试再实现）
-- 契约式开发（基于 OpenAPI 契约生成客户端；`codegen` 同时从 `contracts/bilibili-crawler.openapi.yaml`、`contracts/weibo-crawler.openapi.yaml`、`contracts/notifier.openapi.yaml` 与 `contracts/cookie-service.openapi.yaml` 生成 `schema.d.ts`、`schema-weibo.d.ts`、`schema-notify.d.ts` 与 `schema-cookie.d.ts`）
+- 契约式开发（基于 OpenAPI 契约生成客户端；`codegen` 同时从 `contracts/bilibili-crawler.openapi.yaml`、`contracts/weibo-crawler.openapi.yaml`、`contracts/notifier.openapi.yaml` 与 `contracts/cookie.openapi.yaml` 生成 `schema.d.ts`、`schema-weibo.d.ts`、`schema-notify.d.ts` 与 `schema-cookie.d.ts`）
 - Cookie 管理页（`CookiePage.tsx`）：扫码登录化 — 帐号列表展示昵称/MID/Session 状态/Cookie 状态/最近刷新时间/最近登录时间，点击「新增帐号」打开弹窗发起扫码登录（QR 码轮询 + 自动关闭），支持删除帐号
 - 后台聚合：订阅管理页使用 `listBackstageSubscriptions` 聚合接口展示主播昵称列
 - 订阅管理页（`SubscriptionPage.tsx`）：新增订阅表单含平台选择（B站/微博）；选微博时仅填 uid；列表含平台标识列，存量条目默认 B站；取消/创建按平台调用对应接口
