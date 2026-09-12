@@ -20,6 +20,7 @@ var cookie = builder.AddProject<Projects.Z_Vtuber_Cookie>("cookie")
     .WaitFor(mongo)
     .WithReference(messaging)
     .WaitFor(messaging)
+    .WithEnvironment("CookieService:BrowserSessionDataDir", "/data/browser-sessions")
     .WithHttpHealthCheck("/health");
 
 var crawler = builder.AddProject<Projects.Z_Vtuber_Crawler>("crawler")

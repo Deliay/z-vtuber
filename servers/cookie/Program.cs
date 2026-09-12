@@ -22,6 +22,7 @@ builder.AddMongoDBClient("mongo");
 builder.AddRedisClient("messaging");
 
 builder.Services.AddOptions<CookieServiceOptions>()
+    .BindConfiguration(CookieServiceOptions.SectionName)
     .Validate(o => !string.IsNullOrWhiteSpace(o.BrowserSessionDataDir),
         "缺少必需配置 BrowserSessionDataDir")
     .ValidateOnStart();
