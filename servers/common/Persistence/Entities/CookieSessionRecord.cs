@@ -1,7 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
-namespace Z.Vtuber.Cookie.Persistence;
+namespace Z.Vtuber.Common.Persistence.Entities;
 
 public class CookieSessionRecord
 {
@@ -13,6 +13,7 @@ public class CookieSessionRecord
     public string? Uname { get; set; }
     public string? CookieId { get; set; }
     public string? Cookie { get; set; }
+    public string? QrCodeImage { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime LastLoginAt { get; set; }
     public DateTime LastRefreshAt { get; set; }

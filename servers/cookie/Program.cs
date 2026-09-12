@@ -36,6 +36,7 @@ builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
 builder.Services.AddSingleton<ICookieDispatchService, CookieDispatchService>();
 builder.Services.AddSingleton<IInvalidationService, InvalidationService>();
 builder.Services.AddSingleton<ICookieInvalidEventPublisher, RedisCookieInvalidEventPublisher>();
+builder.Services.AddSingleton<ICookieAccountInfoRepository, CookieAccountInfoRepository>();
 
 // Playwright
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>

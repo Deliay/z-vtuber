@@ -39,6 +39,7 @@ public class CookieDispatchController : ControllerBase
             return Ok(new CookieCheckoutResponse
             {
                 CookieId = result.CookieId,
+                AccountId = result.AccountId,
                 Cookie = result.Cookie,
             });
         }
@@ -88,10 +89,15 @@ public class CookieDispatchController : ControllerBase
             return BadRequest(new { error = "durationSeconds must be >= 1" });
         }
 
-        await _dispatchService.SetCooldownAsync(
+        var modified = await _dispatchService.SetCooldownAsync(
             request.CookieId,
             TimeSpan.FromSeconds(request.DurationSeconds),
             ct);
+
+        if (!modified)
+        {
+            return NotFound(new { error = "cookie_not_found" });
+        }
 
         return NoContent();
     }
@@ -100,6 +106,7 @@ public class CookieDispatchController : ControllerBase
 public class CookieCheckoutResponse
 {
     public string CookieId { get; set; } = string.Empty;
+    public string? AccountId { get; set; }
     public string? Cookie { get; set; }
     public bool Refreshed { get; set; }
 }

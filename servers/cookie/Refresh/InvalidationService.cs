@@ -1,10 +1,8 @@
 using Microsoft.Extensions.Options;
-using Microsoft.Playwright;
-using MongoDB.Bson;
 using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
+using Z.Vtuber.Cookie.Browser;
 using Z.Vtuber.Cookie.Configuration;
 using Z.Vtuber.Cookie.Persistence;
 
@@ -20,7 +18,7 @@ public class InvalidationService : IInvalidationService
     private readonly ICookieSessionRepository _sessionRepository;
     private readonly ICookiePoolService _cookiePool;
     private readonly IDistributedLockProvider _lockProvider;
-    private readonly Z.Vtuber.Cookie.Browser.IBrowserSessionManager _browserSessionManager;
+    private readonly IBrowserSessionManager _browserSessionManager;
     private readonly ICookieInvalidEventPublisher _eventPublisher;
     private readonly CookieServiceOptions _options;
     private readonly ILogger<InvalidationService> _logger;
@@ -29,7 +27,7 @@ public class InvalidationService : IInvalidationService
         ICookieSessionRepository sessionRepository,
         ICookiePoolService cookiePool,
         IDistributedLockProvider lockProvider,
-        Z.Vtuber.Cookie.Browser.IBrowserSessionManager browserSessionManager,
+        IBrowserSessionManager browserSessionManager,
         ICookieInvalidEventPublisher eventPublisher,
         IOptions<CookieServiceOptions> options,
         ILogger<InvalidationService> logger)
@@ -45,19 +43,16 @@ public class InvalidationService : IInvalidationService
 
     public async Task<InvalidationResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default)
     {
-        // Find cookie in common pool
-        var cookieRecord = await _cookiePool.FindByCookieAsync(cookieId, ct);
+        var cookieRecord = await _cookiePool.FindByCookieIdAsync(cookieId, ct);
         if (cookieRecord is null)
         {
             return InvalidationResult.NotFound;
         }
 
-        // Find session by cookieId
         var session = await _sessionRepository.GetByCookieIdAsync(cookieId, ct);
         if (session is null)
         {
-            // No session associated - historical cookie, mark offline directly
-            await _cookiePool.MarkOfflineAsync(cookieId, ct);
+            await _cookiePool.MarkOfflineAsync(cookieRecord.Cookie, ct);
             try
             {
                 await _eventPublisher.PublishAsync(cookieId, "no_session", ct);
@@ -69,41 +64,77 @@ public class InvalidationService : IInvalidationService
             return InvalidationResult.SessionInvalid;
         }
 
-        // Acquire distributed lock for serializing invalidation
-        var lockKey = $"lock:cookie-invalidate:{cookieId}";
-        var lockTtl = TimeSpan.FromSeconds(_options.RefreshLockTtlSeconds);
+        var lockKey = $"lock:cookie-refresh:{session.Id}";
+        var lockTtl = TimeSpan.FromSeconds(_options.ReportInvalidTimeoutSeconds);
         var lockWait = TimeSpan.FromMilliseconds(_options.LockAcquireWaitMs);
 
         await using var lockHandle = await _lockProvider.AcquireAsync(lockKey, lockTtl, lockWait, ct);
         if (lockHandle is null)
         {
-            _logger.LogWarning("Could not acquire invalidation lock for cookie {CookieId}", cookieId);
+            _logger.LogWarning("Could not acquire invalidation lock for session {SessionId}", session.Id);
             return InvalidationResult.Timeout;
         }
 
-        // Mark cookie offline
-        await _cookiePool.MarkOfflineAsync(cookieId, ct);
-
-        // Mark session as invalid if active
-        if (session.Status == "active")
+        if (session.Status == "active" && session.LastRefreshAt > DateTime.UtcNow.AddSeconds(-30))
         {
-            await _sessionRepository.TransitionStatusAsync(session.Id, "active", "invalid", ct);
+            _logger.LogDebug("Session {SessionId} was recently refreshed, skipping invalidation", session.Id);
+            return InvalidationResult.SessionInvalid;
         }
 
-        // Publish invalid event
+        var refreshDeadline = DateTime.UtcNow.AddSeconds(_options.ReportInvalidTimeoutSeconds);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(refreshDeadline - DateTime.UtcNow);
+
         try
         {
-            await _eventPublisher.PublishAsync(cookieId, "report_invalid", ct);
+            await _browserSessionManager.RefreshSessionAsync(session.Id.ToString(), timeoutCts.Token);
+
+            var newCookie = await _browserSessionManager.ExtractCookiesAsync(session.Id.ToString(), timeoutCts.Token);
+
+            await _cookiePool.MarkOfflineAsync(cookieRecord.Cookie, ct);
+            var newCookieRecord = await _cookiePool.AddAsync(newCookie, session.Id.ToString(), ct);
+
+            session.Cookie = newCookie;
+            session.CookieId = newCookieRecord.Id.ToString();
+            session.LastRefreshAt = DateTime.UtcNow;
+            session.ConsecutiveRefreshFailures = 0;
+            await _sessionRepository.UpdateAsync(session, ct);
+
+            try
+            {
+                await _eventPublisher.PublishAsync(cookieId, "refreshed", ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to publish refreshed event for cookie {CookieId}", cookieId);
+            }
+
+            return InvalidationResult.Refreshed;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to publish invalid event for cookie {CookieId}", cookieId);
+            _logger.LogWarning(ex, "Immediate refresh failed for session {SessionId}", session.Id);
+
+            await _cookiePool.MarkOfflineAsync(cookieRecord.Cookie, ct);
+
+            if (session.Status == "active")
+            {
+                await _sessionRepository.TransitionStatusAsync(session.Id, "active", "invalid", ct);
+            }
+
+            try
+            {
+                await _eventPublisher.PublishAsync(cookieId, "report_invalid", ct);
+            }
+            catch (Exception pubEx)
+            {
+                _logger.LogWarning(pubEx, "Failed to publish invalid event for cookie {CookieId}", cookieId);
+            }
+
+            await _browserSessionManager.DeleteSessionAsync(session.Id.ToString(), ct);
+
+            return InvalidationResult.SessionInvalid;
         }
-
-        // Clean up browser context
-        await _browserSessionManager.DeleteSessionAsync(session.Id.ToString(), ct);
-
-        return InvalidationResult.SessionInvalid;
     }
 }
 

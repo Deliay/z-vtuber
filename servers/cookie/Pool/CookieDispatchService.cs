@@ -9,7 +9,7 @@ namespace Z.Vtuber.Cookie.Pool;
 public interface ICookieDispatchService
 {
     Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default);
-    Task SetCooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default);
+    Task<bool> SetCooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default);
     Task<IReadOnlyList<CookieItem>> GetAvailableAsync(CancellationToken ct = default);
 }
 
@@ -51,21 +51,23 @@ public class CookieDispatchService : ICookieDispatchService
         return new CookieCheckoutResult
         {
             CookieId = record.Id.ToString(),
+            AccountId = record.AccountId,
             Cookie = record.Cookie,
         };
     }
 
-    public async Task SetCooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default)
+    public async Task<bool> SetCooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default)
     {
         if (!ObjectId.TryParse(cookieId, out var objectId))
         {
-            return;
+            return false;
         }
 
         var filter = Builders<CookieRecord>.Filter.Eq(c => c.Id, objectId);
         var update = Builders<CookieRecord>.Update
             .Set(c => c.CooldownUntil, DateTime.UtcNow + duration);
-        await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
+        var result = await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
+        return result.ModifiedCount > 0;
     }
 
     public async Task<IReadOnlyList<CookieItem>> GetAvailableAsync(CancellationToken ct = default)
@@ -83,10 +85,12 @@ public class CookieDispatchService : ICookieDispatchService
         return records.Select(r => new CookieItem
         {
             CookieId = r.Id.ToString(),
+            AccountId = r.AccountId,
             Status = r.Status,
             LastCheckedAt = r.LastCheckedAt,
             LastUsedAt = r.LastUsedAt,
             CooldownUntil = r.CooldownUntil,
+            LastRefreshAt = r.LastRefreshAt,
         }).ToList();
     }
 }
@@ -94,14 +98,17 @@ public class CookieDispatchService : ICookieDispatchService
 public class CookieCheckoutResult
 {
     public string CookieId { get; set; } = string.Empty;
+    public string? AccountId { get; set; }
     public string Cookie { get; set; } = string.Empty;
 }
 
 public class CookieItem
 {
     public string CookieId { get; set; } = string.Empty;
+    public string? AccountId { get; set; }
     public string Status { get; set; } = string.Empty;
     public DateTime? LastCheckedAt { get; set; }
     public DateTime? LastUsedAt { get; set; }
     public DateTime? CooldownUntil { get; set; }
+    public DateTime? LastRefreshAt { get; set; }
 }

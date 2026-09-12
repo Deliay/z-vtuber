@@ -3,10 +3,11 @@ using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Browser;
 using Z.Vtuber.Cookie.Configuration;
-using Z.Vtuber.Cookie.Persistence;
+using Z.Vtuber.Cookie.Refresh;
 
 namespace Z.Vtuber.Cookie.Controllers;
 
@@ -18,6 +19,7 @@ public class CookieAccountController : ControllerBase
     private readonly IBrowserSessionManager _browserSessionManager;
     private readonly ICookiePoolService _cookiePool;
     private readonly IDistributedLockProvider _lockProvider;
+    private readonly ICookieInvalidEventPublisher _eventPublisher;
     private readonly CookieServiceOptions _options;
     private readonly ILogger<CookieAccountController> _logger;
 
@@ -26,6 +28,7 @@ public class CookieAccountController : ControllerBase
         IBrowserSessionManager browserSessionManager,
         ICookiePoolService cookiePool,
         IDistributedLockProvider lockProvider,
+        ICookieInvalidEventPublisher eventPublisher,
         IOptions<CookieServiceOptions> options,
         ILogger<CookieAccountController> logger)
     {
@@ -33,6 +36,7 @@ public class CookieAccountController : ControllerBase
         _browserSessionManager = browserSessionManager;
         _cookiePool = cookiePool;
         _lockProvider = lockProvider;
+        _eventPublisher = eventPublisher;
         _options = options.Value;
         _logger = logger;
     }
@@ -54,6 +58,7 @@ public class CookieAccountController : ControllerBase
             Mid = s.Mid,
             Uname = s.Uname,
             CookieId = s.CookieId,
+            CookieStatus = s.CookieId != null ? "active" : null,
             LastRefreshAt = s.LastRefreshAt,
             LastLoginAt = s.LastLoginAt,
             CreatedAt = s.CreatedAt,
@@ -74,21 +79,28 @@ public class CookieAccountController : ControllerBase
 
         try
         {
-            var result = await _browserSessionManager.CreateLoginSessionAsync(ct);
+            var expiresAt = DateTime.UtcNow.AddSeconds(_options.QrCodeExpiresSeconds);
 
             var session = new CookieSessionRecord
             {
                 Status = "pending_login",
                 CreatedAt = DateTime.UtcNow,
-                ExpiresAt = result.ExpiresAt,
-                UserDataDir = Path.Combine(_options.BrowserSessionDataDir, result.AccountId),
+                ExpiresAt = expiresAt,
             };
 
             await _sessionRepository.InsertAsync(session, ct);
 
+            var accountId = session.Id.ToString();
+
+            var result = await _browserSessionManager.CreateLoginSessionAsync(accountId, ct);
+
+            session.UserDataDir = Path.Combine(_options.BrowserSessionDataDir, accountId);
+            session.QrCodeImage = result.QrCodeImage;
+            await _sessionRepository.UpdateAsync(session, ct);
+
             return StatusCode(202, new PendingAccountResponse
             {
-                AccountId = session.Id.ToString(),
+                AccountId = accountId,
                 Status = "pending_login",
                 QrCodeImage = result.QrCodeImage,
                 ExpiresAt = result.ExpiresAt,
@@ -121,6 +133,7 @@ public class CookieAccountController : ControllerBase
             Status = session.Status,
             Mid = session.Mid,
             Uname = session.Uname,
+            QrCodeImage = session.QrCodeImage,
             ExpiresAt = session.ExpiresAt,
         });
     }
@@ -136,8 +149,24 @@ public class CookieAccountController : ControllerBase
         var session = await _sessionRepository.GetByIdAsync(objectId, ct);
         if (session is not null)
         {
+            // Offline cookie if exists
+            if (!string.IsNullOrEmpty(session.CookieId))
+            {
+                await _cookiePool.MarkOfflineAsync(session.CookieId, ct);
+            }
+
             await _browserSessionManager.DeleteSessionAsync(session.Id.ToString(), ct);
             await _sessionRepository.DeleteAsync(objectId, ct);
+
+            // Publish account_removed event
+            try
+            {
+                await _eventPublisher.PublishAsync(session.CookieId ?? accountId, "account_removed", ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to publish account_removed event for account {AccountId}", accountId);
+            }
         }
 
         return NoContent();
@@ -151,6 +180,7 @@ public class AccountItem
     public long? Mid { get; set; }
     public string? Uname { get; set; }
     public string? CookieId { get; set; }
+    public string? CookieStatus { get; set; }
     public DateTime LastRefreshAt { get; set; }
     public DateTime LastLoginAt { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -170,5 +200,6 @@ public class AccountStatusResponse
     public string Status { get; set; } = string.Empty;
     public long? Mid { get; set; }
     public string? Uname { get; set; }
+    public string? QrCodeImage { get; set; }
     public DateTime ExpiresAt { get; set; }
 }

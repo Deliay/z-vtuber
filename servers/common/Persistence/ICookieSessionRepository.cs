@@ -1,6 +1,7 @@
 using MongoDB.Bson;
+using Z.Vtuber.Common.Persistence.Entities;
 
-namespace Z.Vtuber.Cookie.Persistence;
+namespace Z.Vtuber.Common.Persistence;
 
 public interface ICookieSessionRepository
 {

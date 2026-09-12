@@ -1,11 +1,12 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
+using MongoDB.Driver;
 using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Configuration;
-using Z.Vtuber.Cookie.Persistence;
 using MongoDB.Bson;
 
 namespace Z.Vtuber.Cookie.Browser;
@@ -112,7 +113,30 @@ public class LoginSessionWorker : BackgroundService
         var cookie = await _browserSessionManager.ExtractCookiesAsync(session.Id.ToString(), ct);
 
         // Create cookie record in common pool
-        var cookieRecord = await _cookiePool.AddAsync(cookie, ct);
+        var cookieRecord = await _cookiePool.AddAsync(cookie, session.Id.ToString(), ct);
+
+        // Parse mid from nav response
+        long? mid = null;
+        string? uname = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(navResponse);
+            if (doc.RootElement.TryGetProperty("data", out var data))
+            {
+                if (data.TryGetProperty("mid", out var midElement))
+                {
+                    mid = midElement.GetInt64();
+                }
+                if (data.TryGetProperty("uname", out var unameElement))
+                {
+                    uname = unameElement.GetString();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse mid from nav response for session {SessionId}", session.Id);
+        }
 
         // Transition session to active
         var migrated = await _sessionRepository.TransitionStatusAsync(
@@ -124,11 +148,16 @@ public class LoginSessionWorker : BackgroundService
             session.Cookie = cookie;
             session.CookieId = cookieRecord.Id.ToString();
             session.LastLoginAt = DateTime.UtcNow;
-            session.Mid = cookieRecord.Id.GetHashCode(); // Will be updated by nav probe
+            session.Mid = mid;
+            session.Uname = uname;
             await _sessionRepository.UpdateAsync(session, ct);
 
-            _logger.LogInformation("Login successful for session {SessionId}, cookie created {CookieId}",
-                session.Id, cookieRecord.Id);
+            // Update cookie record with AccountId
+            var update = Builders<CookieRecord>.Update.Set(c => c.AccountId, session.Id.ToString());
+            await _cookiePool.UpdateAsync(cookieRecord.Id.ToString(), update, ct);
+
+            _logger.LogInformation("Login successful for session {SessionId}, cookie created {CookieId}, mid {Mid}",
+                session.Id, cookieRecord.Id, mid);
         }
     }
 

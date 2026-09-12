@@ -24,7 +24,7 @@ public class BilibiliCookieController(ICookiePoolService cookiePool) : Controlle
             return BadRequest(new { error = "cookie must not be empty." });
         }
 
-        var record = await cookiePool.AddAsync(request.Cookie, ct);
+        var record = await cookiePool.AddAsync(request.Cookie, ct: ct);
         return Ok(ToDto(record));
     }
 
