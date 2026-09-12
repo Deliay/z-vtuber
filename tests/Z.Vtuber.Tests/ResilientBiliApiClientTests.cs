@@ -18,17 +18,17 @@ public sealed class ResilientBiliApiClientTests
         private int _callCount;
         public int CallCount => _callCount;
         public string? LastCookie { get; private set; }
-        public Func<string, long, CancellationToken, Task<LiveRoomInfo>>? LiveRoomInfoFunc { get; set; }
-        public Func<string, CancellationToken, Task<NavInfo>>? NavInfoFunc { get; set; }
-        public Func<string, long, string, CancellationToken, Task<SpaceDynamicsPage>>? SpaceDynamicsFunc { get; set; }
+        public Func<string, string, long, CancellationToken, Task<LiveRoomInfo>>? LiveRoomInfoFunc { get; set; }
+        public Func<string, string, CancellationToken, Task<NavInfo>>? NavInfoFunc { get; set; }
+        public Func<string, string, long, string, CancellationToken, Task<SpaceDynamicsPage>>? SpaceDynamicsFunc { get; set; }
         public Func<string, long, CancellationToken, Task<JsonElement>>? AccountInfoFunc { get; set; }
-        public Func<string, long, long, int, CancellationToken, Task<GuardInfo>>? RoomGuardListFunc { get; set; }
+        public Func<string, string, long, long, int, CancellationToken, Task<GuardInfo>>? RoomGuardListFunc { get; set; }
 
         public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookieId, string cookie, long roomId, CancellationToken ct = default)
         {
             Interlocked.Increment(ref _callCount);
             LastCookie = cookie;
-            return LiveRoomInfoFunc?.Invoke(cookie, roomId, ct)
+            return LiveRoomInfoFunc?.Invoke(cookieId, cookie, roomId, ct)
                 ?? Task.FromResult(new LiveRoomInfo { Title = "default", RoomId = roomId, LiveStatus = 0 });
         }
 
@@ -36,7 +36,7 @@ public sealed class ResilientBiliApiClientTests
         {
             Interlocked.Increment(ref _callCount);
             LastCookie = cookie;
-            return NavInfoFunc?.Invoke(cookie, ct)
+            return NavInfoFunc?.Invoke(cookieId, cookie, ct)
                 ?? Task.FromResult(new NavInfo { Mid = 0 });
         }
 
@@ -44,7 +44,7 @@ public sealed class ResilientBiliApiClientTests
         {
             Interlocked.Increment(ref _callCount);
             LastCookie = cookie;
-            return SpaceDynamicsFunc?.Invoke(cookie, mid, offset, ct)
+            return SpaceDynamicsFunc?.Invoke(cookieId, cookie, mid, offset, ct)
                 ?? Task.FromResult(new SpaceDynamicsPage { HasMore = false, Offset = "", Items = [] });
         }
 
@@ -60,7 +60,7 @@ public sealed class ResilientBiliApiClientTests
         {
             Interlocked.Increment(ref _callCount);
             LastCookie = cookie;
-            return RoomGuardListFunc?.Invoke(cookie, roomId, bId, page, ct)
+            return RoomGuardListFunc?.Invoke(cookieId, cookie, roomId, bId, page, ct)
                 ?? Task.FromResult(new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
         }
     }
@@ -90,7 +90,7 @@ public sealed class ResilientBiliApiClientTests
             new CrawlBackoffRegistry(Options.Create(opts)), new FakeCookieServiceClient(),
             NullLogger<ResilientBiliApiClient>.Instance);
 
-        await sut.GetLiveRoomInfoAsync("cookie1", 123);
+        await sut.GetLiveRoomInfoAsync("cookie1", "cookie1", 123);
 
         Assert.Equal(1, direct.CallCount);
         Assert.Equal(0, browser.CallCount);
@@ -108,7 +108,7 @@ public sealed class ResilientBiliApiClientTests
             new CrawlBackoffRegistry(Options.Create(opts)), new FakeCookieServiceClient(),
             NullLogger<ResilientBiliApiClient>.Instance);
 
-        await sut.GetLiveRoomInfoAsync("cookie1", 123);
+        await sut.GetLiveRoomInfoAsync("cookie1", "cookie1", 123);
 
         Assert.Equal(0, direct.CallCount);
         Assert.Equal(1, browser.CallCount);
@@ -126,7 +126,7 @@ public sealed class ResilientBiliApiClientTests
             registry, new FakeCookieServiceClient(),
             NullLogger<ResilientBiliApiClient>.Instance);
 
-        await sut.GetLiveRoomInfoAsync("cookie1", 123);
+        await sut.GetLiveRoomInfoAsync("cookie1", "cookie1", 123);
 
         var allowed = registry.TryAcquire("cookie1", out var wait);
         Assert.True(allowed);
@@ -138,12 +138,12 @@ public sealed class ResilientBiliApiClientTests
     {
         var direct = new TrackingBiliApiClient
         {
-            LiveRoomInfoFunc = (_, _, _) => throw MakeRiskControl("cookie12345678")
+            LiveRoomInfoFunc = (_, _, _, _) => throw MakeRiskControl("cookie12345678")
         };
         var browserCalled = false;
         var browser = new TrackingBiliApiClient
         {
-            LiveRoomInfoFunc = (_, roomId, _) =>
+            LiveRoomInfoFunc = (_, _, roomId, _) =>
             {
                 browserCalled = true;
                 return Task.FromResult(new LiveRoomInfo { Title = "from-browser", RoomId = roomId, LiveStatus = 1 });
@@ -155,7 +155,7 @@ public sealed class ResilientBiliApiClientTests
             new CrawlBackoffRegistry(Options.Create(opts)), new FakeCookieServiceClient(),
             NullLogger<ResilientBiliApiClient>.Instance);
 
-        var result = await sut.GetLiveRoomInfoAsync("cookie12345678", 123);
+        var result = await sut.GetLiveRoomInfoAsync("cookie12345678", "cookie12345678", 123);
 
         Assert.True(browserCalled);
         Assert.Equal("from-browser", result.Title);
@@ -168,12 +168,12 @@ public sealed class ResilientBiliApiClientTests
     {
         var direct = new TrackingBiliApiClient
         {
-            LiveRoomInfoFunc = (_, _, _) => throw MakeRiskControl("cookie12345678")
+            LiveRoomInfoFunc = (_, _, _, _) => throw MakeRiskControl("cookie12345678")
         };
         var browserCalled = false;
         var browser = new TrackingBiliApiClient
         {
-            LiveRoomInfoFunc = (_, roomId, _) =>
+            LiveRoomInfoFunc = (_, _, roomId, _) =>
             {
                 browserCalled = true;
                 return Task.FromResult(new LiveRoomInfo { Title = "from-browser", RoomId = roomId, LiveStatus = 1 });
@@ -186,7 +186,7 @@ public sealed class ResilientBiliApiClientTests
             new CrawlBackoffRegistry(Options.Create(opts)), cookieServiceClient,
             NullLogger<ResilientBiliApiClient>.Instance);
 
-        var result = await sut.GetLiveRoomInfoAsync("cookie12345678", 123);
+        var result = await sut.GetLiveRoomInfoAsync("cookie12345678", "cookie12345678", 123);
 
         Assert.True(browserCalled);
         Assert.Equal("from-browser", result.Title);
@@ -208,7 +208,7 @@ public sealed class ResilientBiliApiClientTests
             NullLogger<ResilientBiliApiClient>.Instance);
 
         await Assert.ThrowsAsync<CrawlBackoffActiveException>(
-            () => sut.GetLiveRoomInfoAsync("cookie1", 123));
+            () => sut.GetLiveRoomInfoAsync("cookie1", "cookie1", 123));
     }
 
     [Fact]
@@ -216,12 +216,12 @@ public sealed class ResilientBiliApiClientTests
     {
         var direct = new TrackingBiliApiClient
         {
-            LiveRoomInfoFunc = (_, _, _) => throw MakeRiskControl("cookie12345678")
+            LiveRoomInfoFunc = (_, _, _, _) => throw MakeRiskControl("cookie12345678")
         };
         var browserCallCount = 0;
         var browser = new TrackingBiliApiClient
         {
-            LiveRoomInfoFunc = (_, roomId, _) =>
+            LiveRoomInfoFunc = (_, _, roomId, _) =>
             {
                 Interlocked.Increment(ref browserCallCount);
                 return Task.FromResult(new LiveRoomInfo { Title = "browser", RoomId = roomId, LiveStatus = 1 });
@@ -235,20 +235,20 @@ public sealed class ResilientBiliApiClientTests
             NullLogger<ResilientBiliApiClient>.Instance);
 
         // Trigger degradation
-        await sut.GetLiveRoomInfoAsync("cookie12345678", 123);
+        await sut.GetLiveRoomInfoAsync("cookie12345678", "cookie12345678", 123);
         Assert.Equal(1, browserCallCount);
 
         // 2 more browser successes
-        await sut.GetLiveRoomInfoAsync("cookie12345678", 123);
-        await sut.GetLiveRoomInfoAsync("cookie12345678", 123);
+        await sut.GetLiveRoomInfoAsync("cookie12345678", "cookie12345678", 123);
+        await sut.GetLiveRoomInfoAsync("cookie12345678", "cookie12345678", 123);
         Assert.Equal(3, browserCallCount);
 
         // Now direct works again - switch direct func back
-        direct.LiveRoomInfoFunc = (_, roomId, _) =>
+        direct.LiveRoomInfoFunc = (_, _, roomId, _) =>
             Task.FromResult(new LiveRoomInfo { Title = "direct-now", RoomId = roomId, LiveStatus = 1 });
 
         // Next call should use direct (recovered)
-        var result = await sut.GetLiveRoomInfoAsync("cookie12345678", 123);
+        var result = await sut.GetLiveRoomInfoAsync("cookie12345678", "cookie12345678", 123);
         Assert.Equal("direct-now", result.Title);
         Assert.Equal(3, browserCallCount); // no more browser calls
     }
@@ -258,11 +258,11 @@ public sealed class ResilientBiliApiClientTests
     {
         var direct = new TrackingBiliApiClient
         {
-            LiveRoomInfoFunc = (_, _, _) => throw MakeRiskControl("cookie1")
+            LiveRoomInfoFunc = (_, _, _, _) => throw MakeRiskControl("cookie1")
         };
         var browser = new TrackingBiliApiClient
         {
-            LiveRoomInfoFunc = (_, roomId, _) =>
+            LiveRoomInfoFunc = (_, _, roomId, _) =>
                 Task.FromResult(new LiveRoomInfo { Title = "browser", RoomId = roomId, LiveStatus = 1 })
         };
         var opts = DefaultOptions();
@@ -273,7 +273,7 @@ public sealed class ResilientBiliApiClientTests
             NullLogger<ResilientBiliApiClient>.Instance);
 
         var ex = await Assert.ThrowsAsync<RiskControlException>(
-            () => sut.GetLiveRoomInfoAsync("cookie1", 123));
+            () => sut.GetLiveRoomInfoAsync("cookie1", "cookie1", 123));
 
         Assert.NotNull(ex);
         Assert.Equal(1, direct.CallCount);
@@ -286,7 +286,7 @@ public sealed class ResilientBiliApiClientTests
         var direct = new TrackingBiliApiClient();
         var browser = new TrackingBiliApiClient
         {
-            LiveRoomInfoFunc = (_, roomId, _) =>
+            LiveRoomInfoFunc = (_, _, roomId, _) =>
                 Task.FromResult(new LiveRoomInfo { Title = "browser", RoomId = roomId, LiveStatus = 1 })
         };
         var opts = DefaultOptions();
@@ -296,7 +296,7 @@ public sealed class ResilientBiliApiClientTests
             new CrawlBackoffRegistry(Options.Create(opts)), new FakeCookieServiceClient(),
             NullLogger<ResilientBiliApiClient>.Instance);
 
-        await sut.GetLiveRoomInfoAsync("cookie1", 123);
+        await sut.GetLiveRoomInfoAsync("cookie1", "cookie1", 123);
 
         Assert.Equal(0, direct.CallCount);
         Assert.Equal(1, browser.CallCount);
@@ -317,7 +317,7 @@ public sealed class ResilientBiliApiClientTests
             NullLogger<ResilientBiliApiClient>.Instance);
 
         await Assert.ThrowsAsync<CrawlBackoffActiveException>(
-            () => sut.GetRoomGuardListAsync("cookie1", 123, 456));
+            () => sut.GetRoomGuardListAsync("cookie1", "cookie1", 123, 456));
 
         Assert.Equal(0, direct.CallCount);
         Assert.Equal(0, browser.CallCount);
@@ -328,12 +328,12 @@ public sealed class ResilientBiliApiClientTests
     {
         var direct = new TrackingBiliApiClient
         {
-            RoomGuardListFunc = (_, _, _, _, _) => throw MakeRiskControl("cookie12345678")
+            RoomGuardListFunc = (_, _, _, _, _, _) => throw MakeRiskControl("cookie12345678")
         };
         var browserCalled = false;
         var browser = new TrackingBiliApiClient
         {
-            RoomGuardListFunc = (_, roomId, bId, page, _) =>
+            RoomGuardListFunc = (_, _, roomId, bId, page, _) =>
             {
                 browserCalled = true;
                 return Task.FromResult(new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
@@ -345,7 +345,7 @@ public sealed class ResilientBiliApiClientTests
             new CrawlBackoffRegistry(Options.Create(opts)), new FakeCookieServiceClient(),
             NullLogger<ResilientBiliApiClient>.Instance);
 
-        await sut.GetRoomGuardListAsync("cookie12345678", 123, 456);
+        await sut.GetRoomGuardListAsync("cookie12345678", "cookie12345678", 123, 456);
 
         Assert.True(browserCalled);
         Assert.Equal(1, direct.CallCount);

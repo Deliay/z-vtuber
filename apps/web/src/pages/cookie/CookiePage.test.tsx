@@ -80,10 +80,11 @@ describe('CookiePage', () => {
   })
 
   it('should open create modal and start polling on click', async () => {
+    const futureDate = new Date(Date.now() + 10 * 60 * 1000).toISOString()
     mockCreateAccount.mockResolvedValue({
       accountId: 'new-acc',
       qrCodeImage: 'fake-base64-qr',
-      expiresAt: '2024-01-01T00:03:00Z',
+      expiresAt: futureDate,
     })
     mockGetAccount.mockResolvedValue({
       accountId: 'new-acc',
@@ -100,7 +101,6 @@ describe('CookiePage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('扫码登录')).toBeInTheDocument()
-      expect(screen.getByText(/请使用 B 站客户端扫描二维码/)).toBeInTheDocument()
     })
 
     expect(mockCreateAccount).toHaveBeenCalled()

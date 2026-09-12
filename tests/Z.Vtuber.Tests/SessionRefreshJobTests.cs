@@ -101,7 +101,7 @@ public class SessionRefreshJobTests
         };
         repo.Sessions.Add(session);
 
-        _browserSessionManager.RefreshSessionAsyncFunc = (_, _) => throw new Exception("refresh failed");
+        _browserSessionManager.RefreshSessionAsyncFunc = (id) => throw new Exception("refresh failed");
 
         var job = CreateJob(sessionRepository: repo);
 
@@ -129,7 +129,7 @@ public class SessionRefreshJobTests
         };
         repo.Sessions.Add(session);
 
-        _browserSessionManager.RefreshSessionAsyncFunc = (_, _) => throw new Exception("refresh failed");
+        _browserSessionManager.RefreshSessionAsyncFunc = (id) => throw new Exception("refresh failed");
 
         var job = CreateJob(sessionRepository: repo, eventPublisher: eventPublisher,
             options: new CookieServiceOptions { MaxConsecutiveRefreshFailures = 3 });
@@ -169,7 +169,7 @@ public class SessionRefreshJobTests
         repo.Sessions.Add(session2);
 
         var callCount = 0;
-        _browserSessionManager.RefreshSessionAsyncFunc = (id, _) =>
+        _browserSessionManager.RefreshSessionAsyncFunc = (id) =>
         {
             var count = Interlocked.Increment(ref callCount);
             if (count == 1) throw new Exception("first refresh failed");

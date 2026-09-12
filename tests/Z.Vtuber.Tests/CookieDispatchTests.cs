@@ -110,6 +110,6 @@ public class CookieDispatchTests(MongoDbFixture db)
 
         var items = await service.GetAvailableAsync();
         Assert.Single(items);
-        Assert.Null(items[0].Cookie); // Cookie原文不应暴露
+        // CookieItem 不包含 Cookie 属性（原文不暴露），编译器即保证
     }
 }
