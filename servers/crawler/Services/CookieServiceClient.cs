@@ -4,7 +4,14 @@ using Z.Vtuber.Common.Services;
 
 namespace Z.Vtuber.Crawler.Services;
 
-public sealed class CookieServiceClient
+public interface ICookieServiceClient
+{
+    Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default);
+    Task ReportInvalidAsync(string cookieId, string reason, CancellationToken ct = default);
+    Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default);
+}
+
+public sealed class CookieServiceClient : ICookieServiceClient
 {
     private readonly HttpClient _http;
     private readonly ILogger<CookieServiceClient> _logger;

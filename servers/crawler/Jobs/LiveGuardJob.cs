@@ -13,7 +13,7 @@ public class LiveGuardJob : PeriodicJobBase
     private const int BeijingOffsetHours = 8;
 
     private readonly ISubscriptionService _subscription;
-    private readonly CookieServiceClient _cookieServiceClient;
+    private readonly ICookieServiceClient _cookieServiceClient;
     private readonly AccountBasicInfoRepository _accountRepository;
     private readonly LiveGuardRepository _guardRepository;
     private readonly IAccountInfoCrawler _accountInfoCrawler;
@@ -25,7 +25,7 @@ public class LiveGuardJob : PeriodicJobBase
 
     public LiveGuardJob(
         ISubscriptionService subscription,
-        CookieServiceClient cookieServiceClient,
+        ICookieServiceClient cookieServiceClient,
         AccountBasicInfoRepository accountRepository,
         LiveGuardRepository guardRepository,
         IAccountInfoCrawler accountInfoCrawler,

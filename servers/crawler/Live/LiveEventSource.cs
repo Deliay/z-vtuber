@@ -12,7 +12,7 @@ namespace Z.Vtuber.Crawler.Live;
 public sealed class LiveEventSource(
     ISubscriptionService subscription,
     AccountBasicInfoRepository accountRepository,
-    CookieServiceClient cookieServiceClient,
+    ICookieServiceClient cookieServiceClient,
     IDanmakuClientFactory factory,
     LiveEventRepository eventRepository,
     LiveEventTextIndexRepository textIndexRepository,

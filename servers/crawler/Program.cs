@@ -68,6 +68,7 @@ builder.Services.AddHttpClient<CookieServiceClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["CookieService:BaseUrl"] ?? "http://cookie-service");
 });
+builder.Services.AddSingleton<ICookieServiceClient>(sp => sp.GetRequiredService<CookieServiceClient>());
 
 builder.Services.AddSingleton<CookieCallGate>();
 builder.Services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
@@ -83,7 +84,7 @@ builder.Services.AddSingleton<IBiliApiClient>(sp => new ResilientBiliApiClient(
     sp.GetRequiredService<BrowserishBiliApiClient>(),
     sp.GetRequiredService<BilibiliCrawlerOptions>(),
     sp.GetRequiredService<ICrawlBackoffRegistry>(),
-    sp.GetRequiredService<CookieServiceClient>(),
+    sp.GetRequiredService<ICookieServiceClient>(),
     sp.GetRequiredService<ILogger<ResilientBiliApiClient>>()));
 builder.Services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
 // 微博链路使用按 WeiboCrawlerOptions 独立配置的退避实例（与 B 站参数隔离）

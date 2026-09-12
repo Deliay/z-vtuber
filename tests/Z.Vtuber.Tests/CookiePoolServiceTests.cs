@@ -187,6 +187,62 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
             => Task.FromResult(new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
     }
 
+    private sealed class FakeProbeService : ICookieNavProbeService
+    {
+        private readonly IBiliApiClient _bili;
+        private readonly ICookiePoolService _pool;
+        private readonly ICookieAccountInfoRepository _repo;
+
+        public FakeProbeService(IBiliApiClient bili, ICookiePoolService pool, ICookieAccountInfoRepository repo)
+        {
+            _bili = bili;
+            _pool = pool;
+            _repo = repo;
+        }
+
+        public async Task<CookieProbeOutcome> ProbeAsync(CookieRecord record, CancellationToken ct = default)
+        {
+            try
+            {
+                var nav = await _bili.GetNavInfoV2Async(record.Cookie, ct);
+                if (nav.Mid > 0)
+                {
+                    try
+                    {
+                        await _repo.UpsertAsync(new CookieAccountInfoRecord
+                        {
+                            CookieId = record.Id,
+                            Mid = nav.Mid,
+                            Uname = nav.Name ?? "",
+                            FetchedAt = DateTime.UtcNow,
+                        }, ct);
+                    }
+                    catch
+                    {
+                        // Persist failure does not affect probe outcome
+                    }
+                    return CookieProbeOutcome.Success;
+                }
+                await _pool.MarkOfflineAsync(record.Cookie, ct);
+                return CookieProbeOutcome.Offline;
+            }
+            catch (RiskControlException)
+            {
+                await _pool.MarkCooldownAsync(record.Cookie, TimeSpan.FromMinutes(30), ct);
+                return CookieProbeOutcome.Cooldown;
+            }
+            catch (CrawlBackoffActiveException)
+            {
+                return CookieProbeOutcome.Backoff;
+            }
+            catch
+            {
+                await _pool.MarkOfflineAsync(record.Cookie, ct);
+                return CookieProbeOutcome.Offline;
+            }
+        }
+    }
+
     private (CookiePoolService Pool, NavBiliApiClient Bili, MockCookieAccountInfoRepository Repo) CreateProbingPool(
         NavBiliApiClient? bili = null)
     {
@@ -194,8 +250,7 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IAsyncLifetime
         var pool = new CookiePoolService(fixture.Database, provider);
         var resolvedBili = bili ?? new NavBiliApiClient();
         var repo = new MockCookieAccountInfoRepository();
-        provider.Probe = new CookieNavProbeService(
-            resolvedBili, pool, repo, new FakeCookieInvalidEventPublisher(), Options, NullLogger<CookieNavProbeService>.Instance);
+        provider.Probe = new FakeProbeService(resolvedBili, pool, repo);
         return (pool, resolvedBili, repo);
     }
 

@@ -16,7 +16,7 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
     private readonly IBiliApiClient _browser;
     private readonly BilibiliCrawlerOptions _options;
     private readonly ICrawlBackoffRegistry _backoff;
-    private readonly CookieServiceClient _cookieServiceClient;
+    private readonly ICookieServiceClient _cookieServiceClient;
     private readonly ILogger<ResilientBiliApiClient> _logger;
     private readonly ConcurrentDictionary<string, ChannelState> _channelStates = new();
 
@@ -25,7 +25,7 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
         IBiliApiClient browser,
         BilibiliCrawlerOptions options,
         ICrawlBackoffRegistry backoff,
-        CookieServiceClient cookieServiceClient,
+        ICookieServiceClient cookieServiceClient,
         ILogger<ResilientBiliApiClient> logger)
     {
         _direct = direct;

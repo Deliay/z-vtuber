@@ -10,7 +10,7 @@ namespace Z.Vtuber.Crawler.Jobs;
 public sealed class LiveStatusJob : PeriodicJobBase
 {
     private readonly IBiliApiClient _bili;
-    private readonly CookieServiceClient _cookieServiceClient;
+    private readonly ICookieServiceClient _cookieServiceClient;
     private readonly ISubscriptionService _subscription;
     private readonly IAccountInfoCrawler _accountInfoCrawler;
     private readonly AccountBasicInfoRepository _accountRepository;
@@ -23,7 +23,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
 
     public LiveStatusJob(
         IBiliApiClient bili,
-        CookieServiceClient cookieServiceClient,
+        ICookieServiceClient cookieServiceClient,
         ISubscriptionService subscription,
         IAccountInfoCrawler accountInfoCrawler,
         AccountBasicInfoRepository accountRepository,

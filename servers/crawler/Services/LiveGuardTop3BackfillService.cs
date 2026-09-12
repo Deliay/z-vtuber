@@ -15,7 +15,7 @@ public class LiveGuardTop3BackfillService
 
     private readonly AccountBasicInfoRepository _accountRepository;
     private readonly LiveGuardRepository _guardRepository;
-    private readonly CookieServiceClient _cookieServiceClient;
+    private readonly ICookieServiceClient _cookieServiceClient;
     private readonly IAccountInfoCrawler _accountInfoCrawler;
     private readonly IMongoCollection<MetaRecord> _metaCollection;
     private readonly LiveGuardListFetcher _fetcher;
@@ -25,7 +25,7 @@ public class LiveGuardTop3BackfillService
     public LiveGuardTop3BackfillService(
         AccountBasicInfoRepository accountRepository,
         LiveGuardRepository guardRepository,
-        CookieServiceClient cookieServiceClient,
+        ICookieServiceClient cookieServiceClient,
         IAccountInfoCrawler accountInfoCrawler,
         IMongoDatabase database,
         LiveGuardListFetcher fetcher,

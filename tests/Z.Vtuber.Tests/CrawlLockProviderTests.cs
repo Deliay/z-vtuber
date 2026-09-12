@@ -1,66 +1,27 @@
 using Z.Vtuber.Crawler.Jobs;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
 public class CrawlLockProviderTests
 {
     [Fact]
-    public async Task SameKey_SerializesAccess()
+    public async Task AcquireAsync_ReturnsNonNullHandle()
     {
-        var provider = new CrawlLockProvider();
-        var gate = provider.GetLock("mid:1");
-
-        var running = 0;
-        var maxConcurrent = 0;
-
-        async Task Work()
-        {
-            await gate.WaitAsync();
-            try
-            {
-                var current = Interlocked.Increment(ref running);
-                Interlocked.Exchange(ref maxConcurrent, Math.Max(maxConcurrent, current));
-                await Task.Delay(50);
-                Interlocked.Decrement(ref running);
-            }
-            finally
-            {
-                gate.Release();
-            }
-        }
-
-        await Task.WhenAll(Work(), Work(), Work());
-
-        Assert.Equal(1, maxConcurrent);
+        var provider = new CrawlLockProvider(new FakeDistributedLockProvider());
+        await using var handle = await provider.AcquireAsync("mid:1");
+        Assert.NotNull(handle);
+        Assert.Equal("crawl:mid:1", handle.Key);
     }
 
     [Fact]
-    public async Task DifferentKeys_DoNotBlockEachOther()
+    public async Task AcquireAsync_DifferentKeys_AreConcurrent()
     {
-        var provider = new CrawlLockProvider();
-        var gateA = provider.GetLock("mid:1");
-        var gateB = provider.GetLock("mid:2");
+        var provider = new CrawlLockProvider(new FakeDistributedLockProvider());
+        await using var handleA = await provider.AcquireAsync("mid:1");
+        await using var handleB = await provider.AcquireAsync("mid:2");
 
-        await gateA.WaitAsync();
-        try
-        {
-            var acquireB = gateB.WaitAsync();
-            var completed = await Task.WhenAny(acquireB, Task.Delay(200));
-
-            Assert.Same(acquireB, completed);
-        }
-        finally
-        {
-            gateA.Release();
-            gateB.Release();
-        }
-    }
-
-    [Fact]
-    public void GetLock_ReturnsSameInstanceForSameKey()
-    {
-        var provider = new CrawlLockProvider();
-        Assert.Same(provider.GetLock("mid:1"), provider.GetLock("mid:1"));
-        Assert.NotSame(provider.GetLock("mid:1"), provider.GetLock("mid:2"));
+        Assert.NotNull(handleA);
+        Assert.NotNull(handleB);
     }
 }

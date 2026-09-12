@@ -6,6 +6,7 @@ using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Crawler.Weibo;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
@@ -29,7 +30,7 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IAsyncLifetime
         subscription,
         repository,
         cookies,
-        new CrawlLockProvider(),
+        new CrawlLockProvider(new FakeDistributedLockProvider()),
         backoff ?? new CrawlBackoffRegistry(
             TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5),
         options ?? new WeiboCrawlerOptions { MaxPagesPerCrawl = 5 },

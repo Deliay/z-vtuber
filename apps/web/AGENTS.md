@@ -23,13 +23,14 @@ src/
 │   ├── client.test.ts     # API 客户端单元测试
 │   ├── schema.d.ts        # OpenAPI 生成的类型定义（B 站，自动生成勿手改）
 │   ├── schema-weibo.d.ts  # OpenAPI 生成的类型定义（微博，自动生成勿手改）
-│   └── schema-notify.d.ts # OpenAPI 生成的类型定义（通知，自动生成勿手改）
+│   ├── schema-notify.d.ts # OpenAPI 生成的类型定义（通知，自动生成勿手改）
+│   └── schema-cookie.d.ts # OpenAPI 生成的类型定义（Cookie 服务，自动生成勿手改）
 ├── pages/
 │   ├── subscription/
 │   │   ├── SubscriptionPage.tsx      # 订阅管理页
 │   │   └── SubscriptionPage.test.tsx # 订阅管理页测试
 │   ├── cookie/
-│   │   ├── CookiePage.tsx            # Cookie 管理页
+│   │   ├── CookiePage.tsx            # Cookie 管理页（扫码登录化：帐号列表 + 新增帐号弹窗 + QR 码轮询）
 │   │   └── CookiePage.test.tsx       # Cookie 管理页测试
 │   └── notification/
 │       ├── NotificationPage.tsx      # 通知管理页（群维度：group_id/group_name）
@@ -45,8 +46,9 @@ src/
 ## 开发流程
 
 - TDD 开发（先写测试再实现）
-- 契约式开发（基于 OpenAPI 契约生成客户端；`codegen` 同时从 `contracts/bilibili-crawler.openapi.yaml`、`contracts/weibo-crawler.openapi.yaml` 与 `contracts/notifier.openapi.yaml` 生成 `schema.d.ts`、`schema-weibo.d.ts` 与 `schema-notify.d.ts`）
-- 后台聚合：订阅/Cookie 管理页使用 `listBackstageSubscriptions`/`listBackstageCookies` 聚合接口，分别展示主播/帐号昵称列（昵称缺失显示「暂无资料」），现有增删/录入操作不变
+- 契约式开发（基于 OpenAPI 契约生成客户端；`codegen` 同时从 `contracts/bilibili-crawler.openapi.yaml`、`contracts/weibo-crawler.openapi.yaml`、`contracts/notifier.openapi.yaml` 与 `contracts/cookie-service.openapi.yaml` 生成 `schema.d.ts`、`schema-weibo.d.ts`、`schema-notify.d.ts` 与 `schema-cookie.d.ts`）
+- Cookie 管理页（`CookiePage.tsx`）：扫码登录化 — 帐号列表展示昵称/MID/Session 状态/Cookie 状态/最近刷新时间/最近登录时间，点击「新增帐号」打开弹窗发起扫码登录（QR 码轮询 + 自动关闭），支持删除帐号
+- 后台聚合：订阅管理页使用 `listBackstageSubscriptions` 聚合接口展示主播昵称列
 - 订阅管理页（`SubscriptionPage.tsx`）：新增订阅表单含平台选择（B站/微博）；选微博时仅填 uid；列表含平台标识列，存量条目默认 B站；取消/创建按平台调用对应接口
 - 参考：`docs/engineering/common-rules.md`
 
@@ -65,6 +67,8 @@ npm run codegen    # 重新生成 API 类型
 开发环境下，Vite 会将 `/api` 请求代理到后端服务器：
 - 本地开发：默认代理到 `http://localhost:5000`
 - Aspire 编排：通过 `VITE_API_URL` 环境变量配置
+
+Cookie 服务接口（`/api/cookie/*`）由 cookie 服务独立提供，前端通过代理访问。
 
 ## 相关规范引用
 

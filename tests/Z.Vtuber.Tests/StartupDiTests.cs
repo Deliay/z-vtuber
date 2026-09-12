@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
+using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Configuration;
@@ -39,7 +40,8 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         services.AddSingleton<ISubscriptionService, SubscriptionService>();
         services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
         services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
-        services.AddSingleton<ICookieInvalidEventPublisher, FakeCookieInvalidEventPublisher>();
+        services.AddSingleton<ICookieServiceClient, FakeCookieServiceClient>();
+        services.AddSingleton<IDistributedLockProvider, FakeDistributedLockProvider>();
         services.AddSingleton<CookieCallGate>();
         services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
         services.AddSingleton<BiliApiClient>();
@@ -50,8 +52,8 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
             sp.GetRequiredService<BiliApiClient>(),
             sp.GetRequiredService<BrowserishBiliApiClient>(),
             sp.GetRequiredService<BilibiliCrawlerOptions>(),
-            sp.GetRequiredService<ICookiePoolService>(),
             sp.GetRequiredService<ICrawlBackoffRegistry>(),
+            sp.GetRequiredService<ICookieServiceClient>(),
             sp.GetRequiredService<ILogger<ResilientBiliApiClient>>()));
         services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
         services.AddSingleton<CrawlLockProvider>();
@@ -62,11 +64,9 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
 
         var provider = services.BuildServiceProvider();
 
-        // 解析 IHostedService 实例以触发 LiveGuardJob 的构造（DI 依赖图完整）
         var hosted = provider.GetServices<IHostedService>().OfType<LiveGuardJob>().ToList();
         Assert.Single(hosted);
 
-        // 解析 LiveGuardTop3BackfillService 以验证其依赖可解析
         var backfillService = provider.GetRequiredService<LiveGuardTop3BackfillService>();
         Assert.NotNull(backfillService);
     }
@@ -85,11 +85,10 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionService>();
         services.AddSingleton<IWeiboVisitorCookieProvider, WeiboVisitorCookieProvider>();
         services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
-        // B 站共享退避实例（接口）
         services.AddSingleton<ICrawlBackoffRegistry>(new CrawlBackoffRegistry(Options.Create(new BilibiliCrawlerOptions())));
-        // 微博链路独立的退避实例（按 WeiboCrawlerOptions 独立参数构造）
         services.AddSingleton(new CrawlBackoffRegistry(
             TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5));
+        services.AddSingleton<IDistributedLockProvider, FakeDistributedLockProvider>();
         services.AddSingleton<CrawlLockProvider>();
         services.AddHostedService<WeiboTimelineJob>();
 
@@ -98,7 +97,6 @@ public class StartupDiTests(MongoDbFixture fixture) : IAsyncLifetime
         var hosted = provider.GetServices<IHostedService>().OfType<WeiboTimelineJob>().ToList();
         Assert.Single(hosted);
 
-        // 微博退避实例必须与 B 站共享实例不同（独立参数生效）
         var weiboBackoff = provider.GetRequiredService<CrawlBackoffRegistry>();
         var bilibiliBackoff = provider.GetRequiredService<ICrawlBackoffRegistry>();
         Assert.NotSame(bilibiliBackoff, weiboBackoff);

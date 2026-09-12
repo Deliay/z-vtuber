@@ -10,7 +10,7 @@ namespace Z.Vtuber.Crawler.Jobs;
 public sealed class SpaceTimelineJob : PeriodicJobBase
 {
     private readonly IBiliApiClient _bili;
-    private readonly CookieServiceClient _cookieServiceClient;
+    private readonly ICookieServiceClient _cookieServiceClient;
     private readonly ISubscriptionService _subscription;
     private readonly SpaceTimelineRepository _repository;
     private readonly CrawlLockProvider _locks;
@@ -19,7 +19,7 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
 
     public SpaceTimelineJob(
         IBiliApiClient bili,
-        CookieServiceClient cookieServiceClient,
+        ICookieServiceClient cookieServiceClient,
         ISubscriptionService subscription,
         SpaceTimelineRepository repository,
         CrawlLockProvider locks,

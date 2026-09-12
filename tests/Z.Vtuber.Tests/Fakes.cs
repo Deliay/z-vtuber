@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Crawler.Crawlers;
@@ -9,6 +10,7 @@ using Z.Vtuber.Crawler.Weibo;
 using Z.Vtuber.Notifier.Milky;
 using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Cookie.Browser;
+using Z.Vtuber.Cookie.Refresh;
 
 namespace Z.Vtuber.Tests;
 
@@ -131,37 +133,26 @@ public sealed class FakeBrowserSessionManager : IBrowserSessionManager
 
 public sealed class FakeDistributedLockProvider : IDistributedLockProvider
 {
-    public Func<string, TimeSpan, TimeSpan, CancellationToken, Task<IDistributedLockHandle?>>? AcquireAsyncFunc { get; set; }
-    public List<string> AcquiredKeys { get; } = [];
-    public List<string> ReleasedKeys { get; } = [];
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _semaphores = new();
 
-    public Task<IDistributedLockHandle?> AcquireAsync(string key, TimeSpan ttl, TimeSpan waitTimeout, CancellationToken ct = default)
+    public async Task<IDistributedLockHandle?> AcquireAsync(string key, TimeSpan ttl, TimeSpan waitTimeout, CancellationToken ct = default)
     {
-        AcquiredKeys.Add(key);
-        if (AcquireAsyncFunc is not null)
-        {
-            return AcquireAsyncFunc(key, ttl, waitTimeout, ct);
-        }
-        // 默认返回一个假的锁句柄
-        return Task.FromResult<IDistributedLockHandle?>(new FakeDistributedLockHandle(key, this));
-    }
-
-    public void ReleaseKey(string key)
-    {
-        ReleasedKeys.Add(key);
+        var sem = _semaphores.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await sem.WaitAsync(ct);
+        return new FakeDistributedLockHandle(key, sem);
     }
 }
 
 public sealed class FakeDistributedLockHandle : IDistributedLockHandle
 {
-    private readonly FakeDistributedLockProvider _provider;
+    private readonly SemaphoreSlim _semaphore;
     public string Key { get; }
     public bool IsDisposed { get; private set; }
 
-    public FakeDistributedLockHandle(string key, FakeDistributedLockProvider provider)
+    public FakeDistributedLockHandle(string key, SemaphoreSlim semaphore)
     {
         Key = key;
-        _provider = provider;
+        _semaphore = semaphore;
     }
 
     public ValueTask DisposeAsync()
@@ -169,7 +160,7 @@ public sealed class FakeDistributedLockHandle : IDistributedLockHandle
         if (!IsDisposed)
         {
             IsDisposed = true;
-            _provider.ReleaseKey(Key);
+            _semaphore.Release();
         }
         return ValueTask.CompletedTask;
     }
@@ -264,30 +255,30 @@ public sealed class FakeMilkyApiClient : IMilkyApiClient
     }
 }
 
-public sealed class FakeCookieInvalidEventPublisher : ICookieInvalidEventPublisher
+public sealed class FakeCookieServiceClient : ICookieServiceClient
 {
-    public List<(string CookieId, string Reason)> PublishCalls { get; } = [];
-    public bool ThrowOnPublish { get; set; }
+    public Func<CancellationToken, Task<CookieCheckoutResult>>? CheckoutFunc { get; set; }
+    public List<(string CookieId, string Reason)> ReportInvalidCalls { get; } = [];
+    public List<(string CookieId, TimeSpan Duration)> CooldownCalls { get; } = [];
 
-    public Task PublishAsync(string cookieId, string reason, CancellationToken ct = default)
+    public Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default)
     {
-        if (ThrowOnPublish)
+        return CheckoutFunc?.Invoke(ct) ?? Task.FromResult(new CookieCheckoutResult
         {
-            throw new InvalidOperationException("publish failed");
-        }
+            CookieId = "fake-id",
+            Cookie = "fake-cookie",
+        });
+    }
 
-        PublishCalls.Add((cookieId, reason));
+    public Task ReportInvalidAsync(string cookieId, string reason, CancellationToken ct = default)
+    {
+        ReportInvalidCalls.Add((cookieId, reason));
         return Task.CompletedTask;
     }
-}
 
-public sealed class FakeCookieServiceInvalidEventPublisher : ICookieInvalidEventPublisher
-{
-    public List<(string CookieId, string Reason)> PublishCalls { get; } = [];
-
-    public Task PublishAsync(string cookieId, string reason, CancellationToken ct = default)
+    public Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default)
     {
-        PublishCalls.Add((cookieId, reason));
+        CooldownCalls.Add((cookieId, duration));
         return Task.CompletedTask;
     }
 }

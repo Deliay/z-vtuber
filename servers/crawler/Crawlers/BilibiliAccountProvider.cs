@@ -23,7 +23,7 @@ public interface IBilibiliAccountProvider
 /// </summary>
 public class BilibiliAccountProvider(
     BilibiliCrawlerOptions options,
-    CookieServiceClient cookieServiceClient,
+    ICookieServiceClient cookieServiceClient,
     CookieCallGate gate,
     ILogger<BilibiliAccountProvider> logger) : IBilibiliAccountProvider
 {

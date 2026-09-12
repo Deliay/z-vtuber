@@ -9,6 +9,7 @@ using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
@@ -81,7 +82,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         DateTime? utcNow = null,
         AccountBasicInfoRepository? accountRepo = null,
         BilibiliCrawlerOptions? options = null,
-        ICookiePoolService? cookiePool = null,
+        ICookieServiceClient? cookieServiceClient = null,
         ISubscriptionService? subscription = null,
         FakeTimeProvider? timeProvider = null)
     {
@@ -90,16 +91,16 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             new FakeBiliApiClient(),
             accountRepo,
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             NullLogger<AccountInfoCrawler>.Instance);
 
         return new LiveGuardJob(
             subscription ?? new SubscriptionService(fixture.Database),
-            cookiePool ?? new FakeCookiePoolService(),
+            cookieServiceClient ?? new FakeCookieServiceClient(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
             accountInfoCrawler,
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             options ?? GuardOptions(),
             timeProvider ?? new FakeTimeProvider(utcNow ?? BeijingDateTime(2026, 8, 31, 23)),
             NullLogger<LiveGuardJob>.Instance,
@@ -349,16 +350,16 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             bili,
             accountRepo,
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             NullLogger<AccountInfoCrawler>.Instance);
 
         var job = new LiveGuardJob(
             new SubscriptionService(fixture.Database),
-            new FakeCookiePoolService(),
+            new FakeCookieServiceClient(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
             accountInfoCrawler,
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             GuardOptions(),
             new FakeTimeProvider(BeijingDateTime(2026, 8, 31, 23)),
             NullLogger<LiveGuardJob>.Instance,
@@ -387,16 +388,16 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             bili,
             accountRepo,
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             NullLogger<AccountInfoCrawler>.Instance);
 
         var job = new LiveGuardJob(
             new SubscriptionService(fixture.Database),
-            new FakeCookiePoolService(),
+            new FakeCookieServiceClient(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
             accountInfoCrawler,
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             GuardOptions(),
             new FakeTimeProvider(BeijingDateTime(2026, 8, 31, 23)),
             NullLogger<LiveGuardJob>.Instance,
@@ -434,8 +435,8 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         {
             FetchFunc = (_, _, _, _) => throw new Exception("should not be called")
         };
-        var cookiePool = new NoCookiePoolService();
-        var job = CreateJob(fetcher, cookiePool: cookiePool);
+        var noCookieClient = new NoCookieServiceClient();
+        var job = CreateJob(fetcher, cookieServiceClient: noCookieClient);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -463,14 +464,11 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Equal(0, stored.GuardCount);
     }
 
-    private sealed class NoCookiePoolService : ICookiePoolService
+    private sealed class NoCookieServiceClient : ICookieServiceClient
     {
-        public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<CookieRecord> NextAsync(CancellationToken ct = default) => throw new NoAvailableCookieException();
-        public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
-        public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
-        public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<CookieRecord>>([]);
-        public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) => Task.FromResult<CookieRecord?>(null);
+        public Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default) => throw new NoAvailableCookieException();
+        public Task ReportInvalidAsync(string cookieId, string reason, CancellationToken ct = default) => Task.CompletedTask;
+        public Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     private static System.Text.Json.JsonElement JsonDoc(string channelBody)
