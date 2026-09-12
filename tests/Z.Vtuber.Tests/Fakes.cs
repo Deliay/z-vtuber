@@ -7,6 +7,8 @@ using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Crawler.Weibo;
 using Z.Vtuber.Notifier.Milky;
+using Z.Vtuber.Common.Locking;
+using Z.Vtuber.Cookie.Browser;
 
 namespace Z.Vtuber.Tests;
 
@@ -79,6 +81,81 @@ public sealed class ProbeServiceProvider : IServiceProvider
 
     public object? GetService(Type serviceType) =>
         serviceType == typeof(ICookieNavProbeService) ? Probe : null;
+}
+
+public sealed class FakeBrowserSessionManager : IBrowserSessionManager
+{
+    public Func<Task<string>>? CreateLoginSessionAsyncFunc { get; set; }
+    public Func<string, Task>? DeleteSessionAsyncFunc { get; set; }
+    public Func<string, Task>? RefreshSessionAsyncFunc { get; set; }
+    public List<string> CreatedSessions { get; } = [];
+    public List<string> DeletedSessions { get; } = [];
+    public List<string> RefreshedSessions { get; } = [];
+
+    public Task<string> CreateLoginSessionAsync(CancellationToken ct = default)
+    {
+        var accountId = Guid.NewGuid().ToString("N");
+        CreatedSessions.Add(accountId);
+        return CreateLoginSessionAsyncFunc?.Invoke() ?? Task.FromResult(accountId);
+    }
+
+    public Task DeleteSessionAsync(string accountId, CancellationToken ct = default)
+    {
+        DeletedSessions.Add(accountId);
+        return DeleteSessionAsyncFunc?.Invoke(accountId) ?? Task.CompletedTask;
+    }
+
+    public Task RefreshSessionAsync(string accountId, CancellationToken ct = default)
+    {
+        RefreshedSessions.Add(accountId);
+        return RefreshSessionAsyncFunc?.Invoke(accountId) ?? Task.CompletedTask;
+    }
+}
+
+public sealed class FakeDistributedLockProvider : IDistributedLockProvider
+{
+    public Func<string, TimeSpan, TimeSpan, CancellationToken, Task<IDistributedLockHandle?>>? AcquireAsyncFunc { get; set; }
+    public List<string> AcquiredKeys { get; } = [];
+    public List<string> ReleasedKeys { get; } = [];
+
+    public Task<IDistributedLockHandle?> AcquireAsync(string key, TimeSpan ttl, TimeSpan waitTimeout, CancellationToken ct = default)
+    {
+        AcquiredKeys.Add(key);
+        if (AcquireAsyncFunc is not null)
+        {
+            return AcquireAsyncFunc(key, ttl, waitTimeout, ct);
+        }
+        // 默认返回一个假的锁句柄
+        return Task.FromResult<IDistributedLockHandle?>(new FakeDistributedLockHandle(key, this));
+    }
+
+    public void ReleaseKey(string key)
+    {
+        ReleasedKeys.Add(key);
+    }
+}
+
+public sealed class FakeDistributedLockHandle : IDistributedLockHandle
+{
+    private readonly FakeDistributedLockProvider _provider;
+    public string Key { get; }
+    public bool IsDisposed { get; private set; }
+
+    public FakeDistributedLockHandle(string key, FakeDistributedLockProvider provider)
+    {
+        Key = key;
+        _provider = provider;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (!IsDisposed)
+        {
+            IsDisposed = true;
+            _provider.ReleaseKey(Key);
+        }
+        return ValueTask.CompletedTask;
+    }
 }
 
 public sealed class MockCookieAccountInfoRepository : ICookieAccountInfoRepository
