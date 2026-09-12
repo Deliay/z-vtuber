@@ -9,7 +9,15 @@ namespace Z.Vtuber.Cookie.Refresh;
 
 public interface IInvalidationService
 {
-    Task<InvalidationResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default);
+    Task<InvalidationResultValue> ReportInvalidAsync(string cookieId, CancellationToken ct = default);
+}
+
+public class InvalidationResultValue
+{
+    public InvalidationResult Result { get; set; }
+    public string? NewCookieId { get; set; }
+    public string? NewCookie { get; set; }
+    public string? AccountId { get; set; }
 }
 
 public class InvalidationService : IInvalidationService
@@ -40,12 +48,12 @@ public class InvalidationService : IInvalidationService
         _logger = logger;
     }
 
-    public async Task<InvalidationResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default)
+    public async Task<InvalidationResultValue> ReportInvalidAsync(string cookieId, CancellationToken ct = default)
     {
         var cookieRecord = await _cookiePool.FindByCookieIdAsync(cookieId, ct);
         if (cookieRecord is null)
         {
-            return InvalidationResult.NotFound;
+            return new InvalidationResultValue { Result = InvalidationResult.NotFound };
         }
 
         var session = await _sessionRepository.GetByCookieIdAsync(cookieId, ct);
@@ -60,7 +68,7 @@ public class InvalidationService : IInvalidationService
             {
                 _logger.LogWarning(ex, "Failed to publish invalid event for cookie {CookieId}", cookieId);
             }
-            return InvalidationResult.SessionInvalid;
+            return new InvalidationResultValue { Result = InvalidationResult.SessionInvalid, AccountId = cookieRecord.AccountId };
         }
 
         var lockKey = $"lock:cookie-refresh:{session.Id}";
@@ -71,13 +79,13 @@ public class InvalidationService : IInvalidationService
         if (lockHandle is null)
         {
             _logger.LogWarning("Could not acquire invalidation lock for session {SessionId}", session.Id);
-            return InvalidationResult.Timeout;
+            return new InvalidationResultValue { Result = InvalidationResult.Timeout };
         }
 
         if (session.Status == "active" && session.LastRefreshAt > DateTime.UtcNow.AddSeconds(-30))
         {
-            _logger.LogDebug("Session {SessionId} was recently refreshed, skipping invalidation", session.Id);
-            return InvalidationResult.SessionInvalid;
+            _logger.LogDebug("Session {SessionId} was recently refreshed, skipping invalidation (dedup)", session.Id);
+            return new InvalidationResultValue { Result = InvalidationResult.Refreshed, AccountId = cookieRecord.AccountId };
         }
 
         var refreshDeadline = DateTime.UtcNow.AddSeconds(_options.ReportInvalidTimeoutSeconds);
@@ -108,7 +116,13 @@ public class InvalidationService : IInvalidationService
                 _logger.LogWarning(ex, "Failed to publish refreshed event for cookie {CookieId}", cookieId);
             }
 
-            return InvalidationResult.Refreshed;
+            return new InvalidationResultValue
+            {
+                Result = InvalidationResult.Refreshed,
+                NewCookieId = newCookieRecord.Id.ToString(),
+                NewCookie = newCookie,
+                AccountId = cookieRecord.AccountId,
+            };
         }
         catch (Exception ex)
         {
@@ -123,7 +137,7 @@ public class InvalidationService : IInvalidationService
 
             try
             {
-                await _eventPublisher.PublishAsync(cookieId, "report_invalid", ct);
+                await _eventPublisher.PublishAsync(cookieId, "session_invalid", ct);
             }
             catch (Exception pubEx)
             {
@@ -132,7 +146,7 @@ public class InvalidationService : IInvalidationService
 
             await _browserSessionManager.DeleteSessionAsync(session.Id.ToString(), ct);
 
-            return InvalidationResult.SessionInvalid;
+            return new InvalidationResultValue { Result = InvalidationResult.SessionInvalid, AccountId = cookieRecord.AccountId };
         }
     }
 }

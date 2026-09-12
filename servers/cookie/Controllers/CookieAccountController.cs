@@ -131,6 +131,7 @@ public class CookieAccountController : ControllerBase
             Status = session.Status,
             Mid = session.Mid,
             Uname = session.Uname,
+            QrCodeImage = session.Status == "pending_login" ? session.QrCodeImage : null,
             ExpiresAt = session.ExpiresAt,
         });
     }

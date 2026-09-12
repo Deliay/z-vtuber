@@ -16,10 +16,12 @@ public interface ICookieDispatchService
 public class CookieDispatchService : ICookieDispatchService
 {
     private readonly IMongoCollection<CookieRecord> _collection;
+    private readonly IMongoCollection<CookieSessionRecord> _sessionCollection;
 
     public CookieDispatchService(IMongoDatabase database)
     {
         _collection = database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
+        _sessionCollection = database.GetCollection<CookieSessionRecord>(MongoCollectionNames.CookieSessions);
     }
 
     public async Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default)
@@ -82,10 +84,23 @@ public class CookieDispatchService : ICookieDispatchService
 
         var records = await _collection.Find(filter).Sort(sort).ToListAsync(ct);
 
+        var accountIds = records
+            .Where(r => !string.IsNullOrEmpty(r.AccountId))
+            .Select(r => r.AccountId!)
+            .Distinct()
+            .ToList();
+
+        var sessions = accountIds.Count > 0
+            ? await _sessionCollection.Find(s => accountIds.Contains(s.Id.ToString())).ToListAsync(ct)
+            : [];
+
+        var sessionLookup = sessions.ToDictionary(s => s.Id.ToString(), s => s.Uname);
+
         return records.Select(r => new CookieItem
         {
             CookieId = r.Id.ToString(),
             AccountId = r.AccountId,
+            Uname = r.AccountId != null && sessionLookup.TryGetValue(r.AccountId, out var uname) ? uname : null,
             Status = r.Status,
             LastCheckedAt = r.LastCheckedAt,
             LastUsedAt = r.LastUsedAt,
@@ -106,6 +121,7 @@ public class CookieItem
 {
     public string CookieId { get; set; } = string.Empty;
     public string? AccountId { get; set; }
+    public string? Uname { get; set; }
     public string Status { get; set; } = string.Empty;
     public DateTime? LastCheckedAt { get; set; }
     public DateTime? LastUsedAt { get; set; }

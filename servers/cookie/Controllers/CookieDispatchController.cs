@@ -59,18 +59,21 @@ public class CookieDispatchController : ControllerBase
 
         var result = await _invalidationService.ReportInvalidAsync(request.CookieId, ct);
 
-        return result switch
+        return result.Result switch
         {
             InvalidationResult.NotFound => NotFound(new { error = "cookie_not_found" }),
             InvalidationResult.SessionInvalid => StatusCode(410, new
             {
                 cookieId = request.CookieId,
+                accountId = result.AccountId,
                 reason = "session_invalid",
             }),
             InvalidationResult.Timeout => StatusCode(504, new { error = "timeout" }),
             _ => Ok(new CookieCheckoutResponse
             {
-                CookieId = request.CookieId,
+                CookieId = result.NewCookieId ?? request.CookieId,
+                AccountId = result.AccountId,
+                Cookie = result.NewCookie,
                 Refreshed = true,
             }),
         };
