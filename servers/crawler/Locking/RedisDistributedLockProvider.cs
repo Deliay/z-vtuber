@@ -17,61 +17,65 @@ public sealed class RedisDistributedLockProvider : IDistributedLockProvider
     public async Task<IDistributedLockHandle?> AcquireAsync(string key, TimeSpan ttl, TimeSpan waitTimeout, CancellationToken ct = default)
     {
         var db = _redis.GetDatabase();
-        var lockKey = $"lock:{key}";
-        var lockValue = Guid.NewGuid().ToString("N");
+        var token = Guid.NewGuid().ToString("N");
         var deadline = DateTime.UtcNow + waitTimeout;
+        var random = new Random();
 
-        while (DateTime.UtcNow < deadline)
+        while (true)
         {
-            ct.ThrowIfCancellationRequested();
-
-            var acquired = await db.StringSetAsync(lockKey, lockValue, ttl, When.NotExists);
-            if (acquired)
+            if (await db.LockTakeAsync(key, token, ttl))
             {
-                _logger.LogDebug("Acquired distributed lock {Key} with TTL {Ttl}.", key, ttl);
-                return new RedisLockHandle(db, lockKey, lockValue, _logger);
+                _logger.LogDebug("Acquired distributed lock {Key} with token {Token}", key, token);
+                return new RedisLockHandle(db, key, token, _logger);
             }
 
-            // Wait before retrying
-            var remaining = deadline - DateTime.UtcNow;
-            var delay = TimeSpan.FromMilliseconds(Math.Min(100, remaining.TotalMilliseconds));
-            await Task.Delay(delay, ct);
-        }
+            if (DateTime.UtcNow >= deadline)
+            {
+                _logger.LogDebug("Failed to acquire distributed lock {Key} within timeout", key);
+                return null;
+            }
 
-        _logger.LogDebug("Failed to acquire distributed lock {Key} within {Timeout}.", key, waitTimeout);
-        return null;
+            var retryMs = random.Next(50, 201);
+            await Task.Delay(retryMs, ct);
+        }
     }
 
-    private sealed class RedisLockHandle : IDistributedLockHandle
+internal sealed class RedisLockHandle : IDistributedLockHandle
+{
+    private readonly IDatabase _db;
+    private readonly ILogger _logger;
+    private bool _disposed;
+
+    public string Key { get; }
+    public string Token { get; }
+
+    public RedisLockHandle(IDatabase db, string key, string token, ILogger logger)
     {
-        private readonly IDatabase _db;
-        private readonly string _key;
-        private readonly string _value;
-        private readonly ILogger _logger;
-        private bool _disposed;
+        _db = db;
+        Key = key;
+        Token = token;
+        _logger = logger;
+    }
 
-        public RedisLockHandle(IDatabase db, string key, string value, ILogger logger)
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
         {
-            _db = db;
-            _key = key;
-            _value = value;
-            _logger = logger;
+            return;
         }
 
-        public string Key => _key;
+        _disposed = true;
 
-        public async ValueTask DisposeAsync()
+        // Only release if we still own the lock (token match)
+        var acquired = await _db.LockReleaseAsync(Key, Token);
+        if (acquired)
         {
-            if (_disposed) return;
-            _disposed = true;
-
-            // Release lock only if we own it
-            var currentValue = await _db.StringGetAsync(_key);
-            if (currentValue == _value)
-            {
-                await _db.KeyDeleteAsync(_key);
-                _logger.LogDebug("Released distributed lock {Key}.", _key);
-            }
+            _logger.LogDebug("Released distributed lock {Key}", Key);
+        }
+        else
+        {
+            _logger.LogDebug("Lock {Key} already expired or owned by another holder", Key);
         }
     }
+}
 }
