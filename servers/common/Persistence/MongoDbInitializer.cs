@@ -731,17 +731,84 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
     }
 
     public const string LiveEventPayloadObjectBackfillMigrationKey = "live_event_payload_object_backfill_v1";
+    private static readonly TimeSpan StaleRunningThreshold = TimeSpan.FromMinutes(30);
 
     public async Task BackfillLiveEventPayloadObjectAsync(CancellationToken ct = default)
     {
         var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        var markerExists = await meta.Find(r => r.Key == LiveEventPayloadObjectBackfillMigrationKey)
-            .AnyAsync(ct);
-        if (markerExists)
+
+        // Atomic lock: only one instance wins the race
+        var filter = Builders<MetaRecord>.Filter.Eq(r => r.Key, LiveEventPayloadObjectBackfillMigrationKey);
+        var now = DateTime.UtcNow;
+
+        // Case 1: marker already applied → skip
+        var existing = await meta.Find(filter).FirstOrDefaultAsync(ct);
+        if (existing?.Status == "applied")
         {
             logger.LogInformation("Live event payload object backfill already applied; skipping.");
             return;
         }
+
+        // Case 2: marker in "running" and not stale → skip (another instance is doing it)
+        if (existing?.Status == "running" && existing.StartedAt.HasValue && (now - existing.StartedAt.Value) < StaleRunningThreshold)
+        {
+            logger.LogInformation("Live event payload object backfill is running in another instance; skipping.");
+            return;
+        }
+
+        // Case 3: marker in "running" but stale (process crashed) → take over
+        if (existing?.Status == "running" && existing.StartedAt.HasValue && (now - existing.StartedAt.Value) >= StaleRunningThreshold)
+        {
+            logger.LogWarning("Live event payload object backfill stale running detected (started at {StartedAt}); taking over.", existing.StartedAt.Value);
+        }
+
+        // Case 4: no marker, "applied" without Status (legacy), or stale running → try atomic acquire
+        var update = Builders<MetaRecord>.Update
+            .SetOnInsert(r => r.Status, "running")
+            .SetOnInsert(r => r.StartedAt, now);
+        var options = new FindOneAndUpdateOptions<MetaRecord> { IsUpsert = true, ReturnDocument = ReturnDocument.Before };
+
+        var acquired = await meta.FindOneAndUpdateAsync(filter, update, options, ct);
+
+        // If acquired is null → new document was inserted by us → we won the lock
+        // If acquired is not null and Status is "applied" → someone finished between our read and now → skip
+        // If acquired is not null and Status is "running" with our StartedAt → we are the owner (first caller)
+        // If acquired is not null and Status is "running" with different StartedAt → skip (another instance won)
+        if (acquired is not null)
+        {
+            if (acquired.Status == "applied")
+            {
+                logger.LogInformation("Live event payload object backfill already applied; skipping.");
+                return;
+            }
+
+            if (acquired.Status == "running" && acquired.StartedAt.HasValue && acquired.StartedAt.Value != now)
+            {
+                // Another instance holds the lock and it's not stale (checked above)
+                if ((now - acquired.StartedAt.Value) < StaleRunningThreshold)
+                {
+                    logger.LogInformation("Live event payload object backfill is running in another instance; skipping.");
+                    return;
+                }
+                // Stale but we already tried to acquire above — check if we won via SetOnInsert
+                // If the ReplaceOne below changes nothing, it means another instance inserted first
+                var replaced = await meta.ReplaceOneAsync(
+                    Builders<MetaRecord>.Filter.And(filter,
+                        Builders<MetaRecord>.Filter.Eq(r => r.Status, "running"),
+                        Builders<MetaRecord>.Filter.Lt(r => r.StartedAt, now - StaleRunningThreshold)),
+                    new MetaRecord { Key = LiveEventPayloadObjectBackfillMigrationKey, Status = "running", StartedAt = now },
+                    new ReplaceOptions { IsUpsert = false },
+                    ct);
+
+                if (replaced.MatchedCount == 0)
+                {
+                    logger.LogInformation("Live event payload object backfill is running in another instance; skipping.");
+                    return;
+                }
+            }
+        }
+
+        logger.LogInformation("Live event payload object backfill acquired lock; starting migration.");
 
         const int batchSize = 500;
         var rawCollection = database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
@@ -817,7 +884,15 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         logger.LogInformation("Live event payload object backfill total processed {Total} records, skipped {Skipped} (dirty or non-JSON-object).", totalProcessed, skippedCount);
 
-        await MarkMigrationAppliedAsync(LiveEventPayloadObjectBackfillMigrationKey, ct);
+        // Mark as applied
+        await meta.ReplaceOneAsync(
+            Builders<MetaRecord>.Filter.And(
+                Builders<MetaRecord>.Filter.Eq(r => r.Key, LiveEventPayloadObjectBackfillMigrationKey),
+                Builders<MetaRecord>.Filter.Eq(r => r.Status, "running")),
+            new MetaRecord { Key = LiveEventPayloadObjectBackfillMigrationKey, Status = "applied", StartedAt = now },
+            new ReplaceOptions { IsUpsert = true },
+            ct);
+
         logger.LogInformation("Live event payload object backfill completed and marked as applied.");
     }
 
@@ -837,4 +912,15 @@ public sealed class MetaRecord
 {
     [MongoDB.Bson.Serialization.Attributes.BsonId]
     public string Key { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Migration status: "applied" (completed) or "running" (in progress by another instance).
+    /// Only used by migrations that need distributed locking (e.g. BackfillLiveEventPayloadObjectAsync).
+    /// </summary>
+    public string? Status { get; set; }
+
+    /// <summary>
+    /// Timestamp when the migration was started (used to detect stale "running" state).
+    /// </summary>
+    public DateTime? StartedAt { get; set; }
 }

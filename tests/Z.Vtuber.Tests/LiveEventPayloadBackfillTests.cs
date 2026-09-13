@@ -156,7 +156,7 @@ public class LiveEventPayloadBackfillTests(MongoDbFixture fixture) : IClassFixtu
     }
 
     [Fact]
-    public async Task BackfillLiveEventPayloadObject_AllowsConcurrentExecution()
+    public async Task BackfillLiveEventPayloadObject_ConcurrentExecution_OnlyOneProcessesRecords()
     {
         var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
 
@@ -172,9 +172,85 @@ public class LiveEventPayloadBackfillTests(MongoDbFixture fixture) : IClassFixtu
             initializer1.BackfillLiveEventPayloadObjectAsync(),
             initializer2.BackfillLiveEventPayloadObjectAsync());
 
+        // Marker should be applied
         var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
         var marker = await meta.Find(r => r.Key == MongoDbInitializer.LiveEventPayloadObjectBackfillMigrationKey)
             .FirstOrDefaultAsync();
         Assert.NotNull(marker);
+        Assert.Equal("applied", marker.Status);
+
+        // All records should be converted exactly once — no duplicate processing
+        var records = await fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent)
+            .Find(FilterDefinition<LiveEventRecord>.Empty)
+            .ToListAsync();
+        Assert.Equal(10, records.Count);
+        Assert.All(records, r => Assert.Equal(BsonType.Document, r.Payload.BsonType));
+    }
+
+    [Fact]
+    public async Task BackfillLiveEventPayloadObject_SecondCallSkipsWhenApplied()
+    {
+        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+
+        var docs = Enumerable.Range(0, 5)
+            .Select(i => CreateRawEvent("danmaku", $"{{\"info\":[\"18\",\"Message {i}\"]}}"))
+            .ToList();
+        await collection.InsertManyAsync(docs);
+
+        // First call executes the migration
+        var initializer1 = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer1.BackfillLiveEventPayloadObjectAsync();
+
+        // All records converted
+        var records = await fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent)
+            .Find(FilterDefinition<LiveEventRecord>.Empty)
+            .ToListAsync();
+        Assert.All(records, r => Assert.Equal(BsonType.Document, r.Payload.BsonType));
+
+        // Second call should skip (marker is "applied")
+        var initializer2 = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer2.BackfillLiveEventPayloadObjectAsync();
+
+        // Records unchanged — second call did not reprocess
+        var records2 = await fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent)
+            .Find(FilterDefinition<LiveEventRecord>.Empty)
+            .ToListAsync();
+        Assert.Equal(5, records2.Count);
+        Assert.All(records2, r => Assert.Equal(BsonType.Document, r.Payload.BsonType));
+    }
+
+    [Fact]
+    public async Task BackfillLiveEventPayloadObject_StaleRunning_TakenOverByNewInstance()
+    {
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+
+        // Simulate a stale "running" marker from a crashed instance (>30 min ago)
+        await meta.InsertOneAsync(new MetaRecord
+        {
+            Key = MongoDbInitializer.LiveEventPayloadObjectBackfillMigrationKey,
+            Status = "running",
+            StartedAt = DateTime.UtcNow.AddMinutes(-60)
+        });
+
+        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var docs = Enumerable.Range(0, 5)
+            .Select(i => CreateRawEvent("danmaku", $"{{\"info\":[\"18\",\"Message {i}\"]}}"))
+            .ToList();
+        await collection.InsertManyAsync(docs);
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.BackfillLiveEventPayloadObjectAsync();
+
+        // Marker should be applied
+        var marker = await meta.Find(r => r.Key == MongoDbInitializer.LiveEventPayloadObjectBackfillMigrationKey)
+            .FirstOrDefaultAsync();
+        Assert.NotNull(marker);
+        Assert.Equal("applied", marker.Status);
+
+        // Records should be converted
+        var records = await fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent)
+            .Find(FilterDefinition<LiveEventRecord>.Empty)
+            .ToListAsync();
+        Assert.All(records, r => Assert.Equal(BsonType.Document, r.Payload.BsonType));
     }
 }
