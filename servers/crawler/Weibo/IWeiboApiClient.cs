@@ -48,8 +48,15 @@ public sealed class WeiboApiClient : IWeiboApiClient
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.TryAddWithoutValidation("User-Agent", _options.UserAgent);
-        request.Headers.TryAddWithoutValidation("Referer", "https://m.weibo.cn/");
+        request.Headers.TryAddWithoutValidation("Referer", $"https://m.weibo.cn/u/{uid}");
         request.Headers.TryAddWithoutValidation("Accept", "application/json");
+        request.Headers.TryAddWithoutValidation("x-requested-with", "XMLHttpRequest");
+        request.Headers.TryAddWithoutValidation("mweibo-pwa", "1");
+        request.Headers.TryAddWithoutValidation("sec-ch-ua-platform", "\"iOS\"");
+        request.Headers.TryAddWithoutValidation("sec-ch-ua-mobile", "?1");
+        request.Headers.TryAddWithoutValidation("sec-fetch-mode", "cors");
+        request.Headers.TryAddWithoutValidation("sec-fetch-dest", "empty");
+        request.Headers.TryAddWithoutValidation("sec-fetch-mode", "cors");
         if (!string.IsNullOrEmpty(lease.Cookie))
         {
             request.Headers.TryAddWithoutValidation("Cookie", lease.Cookie);
