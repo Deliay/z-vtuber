@@ -97,14 +97,26 @@ public class LiveEventPayloadParserTests
     }
 
     [Theory]
-    [InlineData("danmaku", """{"info":["18","Hello",[123,"user"]]}""")]
-    [InlineData("gift", """{"data":{"coin_type":"gold","discount_price":100}}""")]
-    [InlineData("super_chat", """{"data":{"message":"SC","uid":123}}""")]
-    [InlineData("gift_v2", """{"data":{},"raw":"test"}""")]
-    public void ToBsonDocument_AllEventTypes_ReturnsDocument(string type, string payload)
+    [InlineData("""{"info":["18","Hello",[123,"user"]]}""")]
+    [InlineData("""{"data":{"coin_type":"gold","discount_price":100}}""")]
+    [InlineData("""{"data":{"message":"SC","uid":123}}""")]
+    [InlineData("""{"data":{},"raw":"test"}""")]
+    public void ToBsonDocument_AllEventTypes_ReturnsDocument(string payload)
     {
         var result = LiveEventPayloadParser.ToBsonDocument(payload);
         Assert.Equal(BsonType.Document, result.BsonType);
+    }
+
+    [Fact]
+    public void TryToBsonDocument_GiftV2WithRawField_ReturnsTrue()
+    {
+        // gift_v2 normal payload: { "data": {...}, "raw": "<string>" }
+        // Top-level "raw" field is part of normal structure, NOT degradation
+        var ok = LiveEventPayloadParser.TryToBsonDocument("""{"data":{"coin_type":"gold"},"raw":"original_content"}""", out var result);
+
+        Assert.True(ok);
+        Assert.True(result.Contains("data"));
+        Assert.True(result.Contains("raw"));
     }
 
     [Fact]

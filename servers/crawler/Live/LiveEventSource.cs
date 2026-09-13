@@ -174,17 +174,19 @@ public sealed class LiveEventSource(
                         continue;
                     }
 
+                    var payloadDegraded = !LiveEventPayloadParser.TryToBsonDocument(liveEvent.Payload, out var parsedPayload);
+
                     var liveEventRecord = new LiveEventRecord
                     {
                         RoomId = liveEvent.RoomId,
                         LiveSessionId = liveEvent.LiveSessionId,
                         Type = liveEvent.Type,
-                        Payload = LiveEventPayloadParser.ToBsonDocument(liveEvent.Payload),
+                        Payload = parsedPayload,
                         OccurredAt = liveEvent.OccurredAt,
                         Price = liveEvent.Price ?? GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
                     };
 
-                    if (liveEventRecord.Payload.Contains("raw"))
+                    if (payloadDegraded)
                     {
                         logger.LogWarning("Payload degraded to raw wrapper for {Type} event in room {RoomId} at {OccurredAt}; original payload is not a valid JSON object.",
                             liveEvent.Type, liveEvent.RoomId, liveEvent.OccurredAt);
