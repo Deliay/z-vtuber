@@ -1,10 +1,24 @@
-using System.Collections.Concurrent;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Crawler.Jobs;
 
 public sealed class CrawlLockProvider
 {
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+    private readonly IDistributedLockProvider _lockProvider;
 
-    public SemaphoreSlim GetLock(string key) => _locks.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
+    public CrawlLockProvider(IDistributedLockProvider lockProvider)
+    {
+        _lockProvider = lockProvider;
+    }
+
+    public async Task<IDistributedLockHandle> AcquireAsync(string key, CancellationToken ct = default)
+    {
+        var lockKey = $"crawl:{key}";
+        var handle = await _lockProvider.AcquireAsync(lockKey, TimeSpan.FromMinutes(10), TimeSpan.FromSeconds(30), ct);
+        if (handle is null)
+        {
+            throw new TimeoutException($"Failed to acquire crawl lock for {key} within timeout.");
+        }
+        return handle;
+    }
 }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Crawler.Crawlers;
@@ -7,6 +8,9 @@ using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Crawler.Weibo;
 using Z.Vtuber.Notifier.Milky;
+using Z.Vtuber.Common.Locking;
+using Z.Vtuber.Cookie.Browser;
+using Z.Vtuber.Cookie.Refresh;
 
 namespace Z.Vtuber.Tests;
 
@@ -23,19 +27,19 @@ public sealed class FakeBiliApiClient : IBiliApiClient
 
     public Func<long, LiveRoomInfo>? LiveRoomInfoProvider { get; set; }
 
-    public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookie, long roomId, CancellationToken ct = default) =>
+    public Task<LiveRoomInfo> GetLiveRoomInfoAsync(string cookieId, string cookie, long roomId, CancellationToken ct = default) =>
         Task.FromResult(LiveRoomInfoProvider?.Invoke(roomId)
             ?? new LiveRoomInfo { Title = "title", RoomId = roomId, LiveStatus = 1 });
 
-    public Task<NavInfo> GetNavInfoV2Async(string cookie, CancellationToken ct = default) =>
+    public Task<NavInfo> GetNavInfoV2Async(string cookieId, string cookie, CancellationToken ct = default) =>
         Task.FromResult(new NavInfo { Mid = 1 });
 
-    public Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookie, long mid, string offset, CancellationToken ct = default) =>
+    public Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookieId, string cookie, long mid, string offset, CancellationToken ct = default) =>
         Task.FromResult(new SpaceDynamicsPage { HasMore = false, Offset = string.Empty, Items = [] });
 
     public Func<long, int, GuardInfo>? RoomGuardListProvider { get; set; }
 
-    public Task<GuardInfo> GetRoomGuardListAsync(string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default) =>
+    public Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default) =>
         Task.FromResult(RoomGuardListProvider?.Invoke(roomId, page)
             ?? new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
 }
@@ -43,9 +47,10 @@ public sealed class FakeBiliApiClient : IBiliApiClient
 public sealed class FakeCookiePoolService : ICookiePoolService
 {
     public string Cookie { get; set; } = "fake-cookie";
+    public Func<string, CancellationToken, Task<CookieRecord?>>? FindByCookieIdAsyncFunc { get; set; }
 
-    public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default) =>
-        Task.FromResult(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+    public Task<CookieRecord> AddAsync(string cookie, string? accountId = null, CancellationToken ct = default) =>
+        Task.FromResult(new CookieRecord { Id = MongoDB.Bson.ObjectId.GenerateNewId(), Cookie = cookie, AccountId = accountId, Status = CookieStatus.Active });
 
     public Task<CookieRecord> NextAsync(CancellationToken ct = default) =>
         Task.FromResult(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
@@ -59,32 +64,114 @@ public sealed class FakeCookiePoolService : ICookiePoolService
 
     public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) =>
         Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+
+    public Task<CookieRecord?> FindByCookieIdAsync(string cookieId, CancellationToken ct = default) =>
+        FindByCookieIdAsyncFunc?.Invoke(cookieId, ct)
+        ?? Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = Cookie, Status = CookieStatus.Active });
+
+    public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default) =>
+        Task.CompletedTask;
 }
 
-public sealed class FakeCookieNavProbeService : ICookieNavProbeService
+public sealed class FakeBrowserSessionManager : IBrowserSessionManager
 {
-    public Func<CookieRecord, CancellationToken, Task<CookieProbeOutcome>>? ProbeFunc { get; set; }
-    public int CallCount { get; private set; }
+    public Func<string, Task<Z.Vtuber.Cookie.Browser.LoginSessionResult>>? CreateLoginSessionAsyncFunc { get; set; }
+    public Func<string, TimeSpan, CancellationToken, Task<string?>>? WaitForNavResponseAsyncFunc { get; set; }
+    public Func<string, Task<string>>? ExtractCookiesAsyncFunc { get; set; }
+    public Func<string, Task>? DeleteSessionAsyncFunc { get; set; }
+    public Func<string, Task>? RefreshSessionAsyncFunc { get; set; }
+    public List<string> CreatedSessions { get; } = [];
+    public List<string> DeletedSessions { get; } = [];
+    public List<string> RefreshedSessions { get; } = [];
 
-    public Task<CookieProbeOutcome> ProbeAsync(CookieRecord record, CancellationToken ct = default)
+    public Task<Z.Vtuber.Cookie.Browser.LoginSessionResult> CreateLoginSessionAsync(string accountId, CancellationToken ct = default)
     {
-        CallCount++;
-        return ProbeFunc?.Invoke(record, ct) ?? Task.FromResult(CookieProbeOutcome.Success);
+        CreatedSessions.Add(accountId);
+        return CreateLoginSessionAsyncFunc?.Invoke(accountId) ?? Task.FromResult(new Z.Vtuber.Cookie.Browser.LoginSessionResult
+        {
+            AccountId = accountId,
+            QrCodeImage = "fake-qr-base64",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(3),
+        });
+    }
+
+    public Task<string?> WaitForNavResponseAsync(string accountId, TimeSpan timeout, CancellationToken ct = default)
+    {
+        return WaitForNavResponseAsyncFunc?.Invoke(accountId, timeout, ct) ?? Task.FromResult<string?>("{\"isLogin\":true}");
+    }
+
+    public Task<string> ExtractCookiesAsync(string accountId, CancellationToken ct = default)
+    {
+        return ExtractCookiesAsyncFunc?.Invoke(accountId) ?? Task.FromResult("SESSDATA=fake; bili_jct=fake");
+    }
+
+    public Task DeleteSessionAsync(string accountId, CancellationToken ct = default)
+    {
+        DeletedSessions.Add(accountId);
+        return DeleteSessionAsyncFunc?.Invoke(accountId) ?? Task.CompletedTask;
+    }
+
+    public Task RefreshSessionAsync(string accountId, CancellationToken ct = default)
+    {
+        RefreshedSessions.Add(accountId);
+        return RefreshSessionAsyncFunc?.Invoke(accountId) ?? Task.CompletedTask;
     }
 }
 
-public sealed class ProbeServiceProvider : IServiceProvider
+public sealed class FakeDistributedLockProvider : IDistributedLockProvider
 {
-    public ICookieNavProbeService? Probe { get; set; }
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _semaphores = new();
+    public TimeSpan? LastWaitTimeout { get; private set; }
+    public Action<string>? LockAcquired { get; set; }
 
-    public object? GetService(Type serviceType) =>
-        serviceType == typeof(ICookieNavProbeService) ? Probe : null;
+    public async Task<IDistributedLockHandle?> AcquireAsync(string key, TimeSpan ttl, TimeSpan waitTimeout, CancellationToken ct = default)
+    {
+        LastWaitTimeout = waitTimeout;
+        var sem = _semaphores.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        var deadline = DateTime.UtcNow + waitTimeout;
+        while (true)
+        {
+            if (await sem.WaitAsync(TimeSpan.FromMilliseconds(50), ct))
+            {
+                LockAcquired?.Invoke(key);
+                return new FakeDistributedLockHandle(key, sem);
+            }
+            if (DateTime.UtcNow >= deadline)
+            {
+                return null;
+            }
+        }
+    }
+}
+
+public sealed class FakeDistributedLockHandle : IDistributedLockHandle
+{
+    private readonly SemaphoreSlim _semaphore;
+    public string Key { get; }
+    public bool IsDisposed { get; private set; }
+
+    public FakeDistributedLockHandle(string key, SemaphoreSlim semaphore)
+    {
+        Key = key;
+        _semaphore = semaphore;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (!IsDisposed)
+        {
+            IsDisposed = true;
+            _semaphore.Release();
+        }
+        return ValueTask.CompletedTask;
+    }
 }
 
 public sealed class MockCookieAccountInfoRepository : ICookieAccountInfoRepository
 {
     public List<CookieAccountInfoRecord> Upserts { get; } = [];
     public bool ThrowOnUpsert { get; set; }
+    public Dictionary<MongoDB.Bson.ObjectId, CookieAccountInfoRecord> LookupResults { get; set; } = new();
 
     public Task UpsertAsync(CookieAccountInfoRecord record, CancellationToken ct = default)
     {
@@ -99,7 +186,7 @@ public sealed class MockCookieAccountInfoRepository : ICookieAccountInfoReposito
 
     public Task<Dictionary<MongoDB.Bson.ObjectId, CookieAccountInfoRecord>> GetByCookieIdsAsync(
         IReadOnlyCollection<MongoDB.Bson.ObjectId> cookieIds, CancellationToken ct = default)
-        => Task.FromResult(new Dictionary<MongoDB.Bson.ObjectId, CookieAccountInfoRecord>());
+        => Task.FromResult(LookupResults);
 }
 
 public sealed class MockCookiePoolService : ICookiePoolService
@@ -113,8 +200,8 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<CookieRecord>>(ActiveCookies);
 
-    public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default)
-        => Task.FromResult(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+    public Task<CookieRecord> AddAsync(string cookie, string? accountId = null, CancellationToken ct = default)
+        => Task.FromResult(new CookieRecord { Cookie = cookie, AccountId = accountId, Status = CookieStatus.Active });
 
     public Task<CookieRecord> NextAsync(CancellationToken ct = default)
         => Task.FromResult(new CookieRecord { Cookie = "next", Status = CookieStatus.Active });
@@ -145,6 +232,12 @@ public sealed class MockCookiePoolService : ICookiePoolService
 
     public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default)
         => Task.FromResult(FindByCookieFunc?.Invoke(cookie));
+
+    public Task<CookieRecord?> FindByCookieIdAsync(string cookieId, CancellationToken ct = default)
+        => Task.FromResult<CookieRecord?>(null);
+
+    public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 
 public sealed class FakeMilkyApiClient : IMilkyApiClient
@@ -170,19 +263,30 @@ public sealed class FakeMilkyApiClient : IMilkyApiClient
     }
 }
 
-public sealed class FakeCookieInvalidEventPublisher : ICookieInvalidEventPublisher
+public sealed class FakeCookieServiceClient : ICookieServiceClient
 {
-    public List<(string CookieId, string Reason)> PublishCalls { get; } = [];
-    public bool ThrowOnPublish { get; set; }
+    public Func<CancellationToken, Task<CookieCheckoutResult>>? CheckoutFunc { get; set; }
+    public List<string> ReportInvalidCalls { get; } = [];
+    public List<(string CookieId, TimeSpan Duration)> CooldownCalls { get; } = [];
 
-    public Task PublishAsync(string cookieId, string reason, CancellationToken ct = default)
+    public Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default)
     {
-        if (ThrowOnPublish)
+        return CheckoutFunc?.Invoke(ct) ?? Task.FromResult(new CookieCheckoutResult
         {
-            throw new InvalidOperationException("publish failed");
-        }
+            CookieId = "fake-id",
+            Cookie = "fake-cookie",
+        });
+    }
 
-        PublishCalls.Add((cookieId, reason));
+    public Task<ReportInvalidResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default)
+    {
+        ReportInvalidCalls.Add(cookieId);
+        return Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.Refreshed, CookieId = cookieId, Cookie = cookieId });
+    }
+
+    public Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default)
+    {
+        CooldownCalls.Add((cookieId, duration));
         return Task.CompletedTask;
     }
 }

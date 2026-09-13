@@ -9,8 +9,7 @@ using Z.Vtuber.Tests;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class NotifyConfigControllerTests(MongoDbFixture fixture) : IAsyncLifetime
+public class NotifyConfigControllerTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
     public Task DisposeAsync() => Task.CompletedTask;

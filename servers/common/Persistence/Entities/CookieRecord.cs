@@ -10,6 +10,8 @@ public sealed class CookieRecord
 
     public string Cookie { get; set; } = string.Empty;
 
+    public string? AccountId { get; set; }
+
     public string Status { get; set; } = CookieStatus.Active;
 
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
@@ -20,6 +22,9 @@ public sealed class CookieRecord
 
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime? CooldownUntil { get; set; }
+
+    [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+    public DateTime? LastRefreshAt { get; set; }
 }
 
 public static class CookieStatus

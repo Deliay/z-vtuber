@@ -10,7 +10,7 @@ public sealed class BiliApiClientTests
 {
     private sealed class StubAccountProvider(Func<IServiceProvider> build) : IBilibiliAccountProvider
     {
-        public Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default) =>
+        public Task<IServiceProvider> GetProviderAsync(string cookieId, string cookie, CancellationToken ct = default) =>
             Task.FromResult(build());
     }
 
@@ -38,7 +38,7 @@ public sealed class BiliApiClientTests
         """;
         var client = new BiliApiClient(ProviderWithGuardHandler(json));
 
-        var result = await client.GetRoomGuardListAsync("cookie", 100, 200, 1);
+        var result = await client.GetRoomGuardListAsync("cookie", "cookie", 100, 200, 1);
 
         Assert.Equal(1, result.Info.PageCount);
         Assert.Single(result.List);

@@ -8,8 +8,7 @@ using Z.Vtuber.Common.Services;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IAsyncLifetime
+public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -17,7 +16,7 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IAsyncLi
 
     private static BilibiliBackstageController CreateController(IMongoDatabase database) => new(
         new SubscriptionService(database),
-        new CookiePoolService(database, new ProbeServiceProvider()),
+        new CookiePoolService(database),
         new AccountBasicInfoRepository(database),
         new CookieAccountInfoRepository(database));
 

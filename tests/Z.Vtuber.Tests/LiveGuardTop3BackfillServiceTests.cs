@@ -8,11 +8,11 @@ using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncLifetime
+public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -66,7 +66,7 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncL
     private LiveGuardTop3BackfillService CreateService(
         FakeBiliApiClient bili,
         DateTime? utcNow = null,
-        ICookiePoolService? cookiePool = null,
+        ICookieServiceClient? cookieServiceClient = null,
         FakeTimeProvider? timeProvider = null)
     {
         var accountRepo = new AccountBasicInfoRepository(fixture.Database);
@@ -75,12 +75,12 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncL
         return new LiveGuardTop3BackfillService(
             accountRepo,
             guardRepo,
-            cookiePool ?? new FakeCookiePoolService(),
+            cookieServiceClient ?? new FakeCookieServiceClient(),
             new AccountInfoCrawler(
                 bili,
                 accountRepo,
                 new LiveSessionRepository(fixture.Database),
-                new CrawlLockProvider(),
+                new CrawlLockProvider(new FakeDistributedLockProvider()),
                 NullLogger<AccountInfoCrawler>.Instance),
             fixture.Database,
             new LiveGuardListFetcher(bili, new BilibiliCrawlerOptions(), NullLogger<LiveGuardListFetcher>.Instance),
@@ -331,21 +331,18 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IAsyncL
         {
             RoomGuardListProvider = (_, _) => throw new Exception("should not be called"),
         };
-        var cookiePool = new NoCookiePoolService();
-        var service = CreateService(bili, cookiePool: cookiePool);
+        var cookieServiceClient = new NoCookieServiceClient();
+        var service = CreateService(bili, cookieServiceClient: cookieServiceClient);
 
         await service.ExecuteAsync(CancellationToken.None);
 
         Assert.False(await IsMarkedAsync(Mid1));
     }
 
-    private sealed class NoCookiePoolService : ICookiePoolService
+    private sealed class NoCookieServiceClient : ICookieServiceClient
     {
-        public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<CookieRecord> NextAsync(CancellationToken ct = default) => throw new NoAvailableCookieException();
-        public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
-        public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
-        public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<CookieRecord>>([]);
-        public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) => Task.FromResult<CookieRecord?>(null);
+        public Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default) => throw new NoAvailableCookieException();
+        public Task<ReportInvalidResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default) => Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.Refreshed, CookieId = cookieId });
+        public Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
     }
 }

@@ -1,0 +1,285 @@
+openapi: 3.1.0
+info:
+  title: Cookie Service API
+  version: 1.0.0
+  description: 无头浏览器 Cookie 服务 API（统一前缀 /api/cookie）
+servers:
+  - url: /
+paths:
+  /api/cookie/accounts:
+    get:
+      summary: 列出全部帐号 session
+      operationId: listAccounts
+      responses:
+        "200":
+          description: 帐号 session 列表（不含 cookie 原文）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountList"
+    post:
+      summary: 新增帐号（扫码登录）
+      operationId: createAccount
+      responses:
+        "202":
+          description: 创建成功，返回登录二维码
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingAccount"
+        "429":
+          description: 并发登录 session 上限
+  /api/cookie/accounts/{accountId}:
+    get:
+      summary: 查询帐号 session 状态
+      operationId: getAccount
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 帐号 session 状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountStatus"
+        "404":
+          description: 帐号不存在
+    delete:
+      summary: 删除帐号 session
+      operationId: deleteAccount
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: 删除成功
+  /api/cookie/available:
+    get:
+      summary: 可用 cookie 列表
+      operationId: listAvailableCookies
+      responses:
+        "200":
+          description: 可用 cookie 列表（不含 cookie 原文）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieList"
+  /api/cookie/checkout:
+    post:
+      summary: 取下一个可用 cookie（round-robin）
+      operationId: checkoutCookie
+      responses:
+        "200":
+          description: 成功获取 cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieCheckout"
+        "404":
+          description: 无可用 cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/cookie/report-invalid:
+    post:
+      summary: 阻塞式宣告失效并尝试即时刷新
+      operationId: reportInvalidCookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportInvalidRequest"
+      responses:
+        "200":
+          description: 刷新成功，返回新 cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieCheckout"
+        "404":
+          description: cookieId 不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: session 失效
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInvalidResponse"
+        "504":
+          description: 超时上限
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/cookie/cooldown:
+    post:
+      summary: 设置 cookie 冷却（风控冷却语义）
+      operationId: setCookieCooldown
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CooldownRequest"
+      responses:
+        "204":
+          description: 冷却设置成功
+        "404":
+          description: cookieId 不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    AccountList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountItem"
+    AccountItem:
+      type: object
+      properties:
+        accountId:
+          type: string
+        status:
+          type: string
+          enum: [pending_login, active, expired, invalid]
+        mid:
+          type: integer
+          format: int64
+        uname:
+          type: string
+        cookieStatus:
+          type: string
+        lastRefreshAt:
+          type: string
+          format: date-time
+        lastLoginAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    PendingAccount:
+      type: object
+      properties:
+        accountId:
+          type: string
+        status:
+          type: string
+          enum: [pending_login]
+        qrCodeImage:
+          type: string
+          description: base64 encoded PNG image
+        expiresAt:
+          type: string
+          format: date-time
+    AccountStatus:
+      type: object
+      properties:
+        accountId:
+          type: string
+        status:
+          type: string
+          enum: [pending_login, active, expired, invalid]
+        mid:
+          type: integer
+          format: int64
+        uname:
+          type: string
+        qrCodeImage:
+          type: string
+          description: base64 encoded PNG image (only for pending_login)
+        expiresAt:
+          type: string
+          format: date-time
+    CookieList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CookieItem"
+    CookieItem:
+      type: object
+      properties:
+        cookieId:
+          type: string
+        accountId:
+          type: string
+        uname:
+          type: string
+        status:
+          type: string
+        lastCheckedAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+        lastRefreshAt:
+          type: string
+          format: date-time
+    CookieCheckout:
+      type: object
+      properties:
+        cookieId:
+          type: string
+        accountId:
+          type: string
+        cookie:
+          type: string
+          description: cookie 原文
+        refreshed:
+          type: boolean
+          description: 是否为刷新后的新 cookie (仅 report-invalid 返回)
+    ReportInvalidRequest:
+      type: object
+      required: [cookieId]
+      properties:
+        cookieId:
+          type: string
+    SessionInvalidResponse:
+      type: object
+      description: |
+        事件 reason 说明：
+        - session_invalid: session 失效（包括 report-invalid 和 refresh_nav_missing）
+        - no_session: 无关联 session 的历史 cookie（仅事件流使用，410 响应统一返回 session_invalid）
+        - account_removed: 帐号被删除
+      properties:
+        cookieId:
+          type: string
+        accountId:
+          type: string
+        reason:
+          type: string
+          enum: [session_invalid, no_session, account_removed]
+    CooldownRequest:
+      type: object
+      required: [cookieId, durationSeconds]
+      properties:
+        cookieId:
+          type: string
+        durationSeconds:
+          type: integer
+          minimum: 1
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string

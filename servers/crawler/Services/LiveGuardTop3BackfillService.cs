@@ -15,7 +15,7 @@ public class LiveGuardTop3BackfillService
 
     private readonly AccountBasicInfoRepository _accountRepository;
     private readonly LiveGuardRepository _guardRepository;
-    private readonly ICookiePoolService _cookiePool;
+    private readonly ICookieServiceClient _cookieServiceClient;
     private readonly IAccountInfoCrawler _accountInfoCrawler;
     private readonly IMongoCollection<MetaRecord> _metaCollection;
     private readonly LiveGuardListFetcher _fetcher;
@@ -25,7 +25,7 @@ public class LiveGuardTop3BackfillService
     public LiveGuardTop3BackfillService(
         AccountBasicInfoRepository accountRepository,
         LiveGuardRepository guardRepository,
-        ICookiePoolService cookiePool,
+        ICookieServiceClient cookieServiceClient,
         IAccountInfoCrawler accountInfoCrawler,
         IMongoDatabase database,
         LiveGuardListFetcher fetcher,
@@ -34,7 +34,7 @@ public class LiveGuardTop3BackfillService
     {
         _accountRepository = accountRepository;
         _guardRepository = guardRepository;
-        _cookiePool = cookiePool;
+        _cookieServiceClient = cookieServiceClient;
         _accountInfoCrawler = accountInfoCrawler;
         _metaCollection = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
         _fetcher = fetcher;
@@ -55,10 +55,13 @@ public class LiveGuardTop3BackfillService
         var failedCount = 0;
         var backfilledEntriesCount = 0;
 
+        string cookieId;
         string cookie;
         try
         {
-            cookie = (await _cookiePool.NextAsync(ct)).Cookie;
+            var checkout = await _cookieServiceClient.CheckoutAsync(ct);
+            cookieId = checkout.CookieId;
+            cookie = checkout.Cookie;
         }
         catch (NoAvailableCookieException)
         {
@@ -89,7 +92,7 @@ public class LiveGuardTop3BackfillService
                     continue;
                 }
 
-                var entries = await _fetcher.FetchAllAsync(cookie, mid, roomId.Value, ct);
+                var entries = await _fetcher.FetchAllAsync(cookieId, cookie, mid, roomId.Value, ct);
                 if (entries is null)
                 {
                     _logger.LogWarning("Backfill skipped for mid {Mid}: fetch failed.", mid);

@@ -5,6 +5,7 @@
     <Project Path="common/Z.Vtuber.Common.csproj" />
     <Project Path="crawler/Z.Vtuber.Crawler.csproj" />
     <Project Path="notifier/Z.Vtuber.Notifier.csproj" />
+    <Project Path="cookie/Z.Vtuber.Cookie.csproj" />
   </Folder>
 
   <Folder Name="/tests/">

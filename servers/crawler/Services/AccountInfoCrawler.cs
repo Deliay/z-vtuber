@@ -20,16 +20,8 @@ public sealed class AccountInfoCrawler(
 {
     public async Task CrawlAsync(long mid, CancellationToken ct = default)
     {
-        var gate = locks.GetLock($"account:{mid}");
-        await gate.WaitAsync(ct);
-        try
-        {
-            await CrawlCoreAsync(mid, ct);
-        }
-        finally
-        {
-            gate.Release();
-        }
+        await using var gate = await locks.AcquireAsync($"account:{mid}", ct);
+        await CrawlCoreAsync(mid, ct);
     }
 
     private async Task CrawlCoreAsync(long mid, CancellationToken ct)

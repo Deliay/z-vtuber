@@ -8,8 +8,7 @@ using Z.Vtuber.Controllers;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class WeiboSubscriptionControllerTests(MongoDbFixture fixture) : IAsyncLifetime
+public class WeiboSubscriptionControllerTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 

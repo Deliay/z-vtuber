@@ -28,6 +28,7 @@
     <ProjectReference Include="..\..\servers\common\Z.Vtuber.Common.csproj" />
     <ProjectReference Include="..\..\servers\crawler\Z.Vtuber.Crawler.csproj" />
     <ProjectReference Include="..\..\servers\notifier\Z.Vtuber.Notifier.csproj" />
+    <ProjectReference Include="..\..\servers\cookie\Z.Vtuber.Cookie.csproj" />
   </ItemGroup>
 
 </Project>

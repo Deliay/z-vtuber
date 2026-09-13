@@ -1,28 +1,29 @@
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
 public class CookieCallGateTests
 {
+    private static CookieCallGate CreateGate() => new(new FakeDistributedLockProvider());
+
     [Fact]
     public async Task AcquireAsync_ConcurrentCallsForSameCookie_AreSerialized()
     {
-        var gate = new CookieCallGate();
+        var gate = CreateGate();
         var order = new List<int>();
         var holder = await gate.AcquireAsync("cookie1");
 
         var waiterTask = Task.Run(async () =>
         {
-            using var _ = await gate.AcquireAsync("cookie1");
+            await using var _ = await gate.AcquireAsync("cookie1");
             order.Add(2);
         });
 
-        // Waiter should not complete while holder is active
         await Task.Delay(100);
         Assert.False(waiterTask.IsCompleted);
 
-        // Release holder — waiter should now complete
-        holder.Dispose();
+        await holder.DisposeAsync();
         await waiterTask;
         Assert.Single(order);
         Assert.Equal(2, order[0]);
@@ -31,19 +32,19 @@ public class CookieCallGateTests
     [Fact]
     public async Task AcquireAsync_DifferentCookies_AreConcurrent()
     {
-        var gate = new CookieCallGate();
+        var gate = CreateGate();
         var order = new System.Collections.Concurrent.ConcurrentBag<int>();
 
         var t1 = Task.Run(async () =>
         {
-            using var _ = await gate.AcquireAsync("cookie1");
+            await using var _ = await gate.AcquireAsync("cookie1");
             order.Add(1);
             await Task.Delay(50);
         });
 
         var t2 = Task.Run(async () =>
         {
-            using var _ = await gate.AcquireAsync("cookie2");
+            await using var _ = await gate.AcquireAsync("cookie2");
             order.Add(2);
             await Task.Delay(50);
         });
@@ -56,17 +57,15 @@ public class CookieCallGateTests
     [Fact]
     public async Task AcquireAsync_DisposeReleasesLock()
     {
-        var gate = new CookieCallGate();
+        var gate = CreateGate();
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        using (await gate.AcquireAsync("cookie1"))
+        await using (await gate.AcquireAsync("cookie1"))
         {
-            // Lock held
         }
 
-        // Lock should be immediately available
         sw.Restart();
-        using (await gate.AcquireAsync("cookie1"))
+        await using (await gate.AcquireAsync("cookie1"))
         {
         }
         sw.Stop();
@@ -78,11 +77,11 @@ public class CookieCallGateTests
     [Fact]
     public async Task AcquireAsync_MultipleSequentialAcquiresWork()
     {
-        var gate = new CookieCallGate();
+        var gate = CreateGate();
 
         for (int i = 0; i < 5; i++)
         {
-            using var handle = await gate.AcquireAsync("cookie1");
+            await using var handle = await gate.AcquireAsync("cookie1");
             Assert.NotNull(handle);
         }
     }
@@ -90,8 +89,7 @@ public class CookieCallGateTests
     [Fact]
     public async Task AcquireAsync_SerializationGuarantee()
     {
-        // Verifies that N concurrent callers are serialized (not parallel)
-        var gate = new CookieCallGate();
+        var gate = CreateGate();
         var concurrentCount = 0;
         var maxConcurrent = 0;
 
@@ -99,7 +97,7 @@ public class CookieCallGateTests
 
         var tasks = Enumerable.Range(0, 4).Select(_ => Task.Run(async () =>
         {
-            using var _ = await gate.AcquireAsync("cookie1");
+            await using var _ = await gate.AcquireAsync("cookie1");
             var c = Interlocked.Increment(ref concurrentCount);
             var prev = Interlocked.CompareExchange(ref maxConcurrent, c, c);
             if (c > prev) Interlocked.CompareExchange(ref maxConcurrent, c, prev);
@@ -107,11 +105,10 @@ public class CookieCallGateTests
             Interlocked.Decrement(ref concurrentCount);
         })).ToArray();
 
-        await Task.Delay(50); // Let tasks queue up
-        holder.Dispose();
+        await Task.Delay(50);
+        await holder.DisposeAsync();
         await Task.WhenAll(tasks);
 
-        // With serialization, only 1 caller should be active at a time
         Assert.Equal(1, maxConcurrent);
     }
 }

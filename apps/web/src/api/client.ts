@@ -1,6 +1,7 @@
 import type { components } from './schema'
 import type { components as weiboComponents } from './schema-weibo'
 import type { components as notifyComponents } from './schema-notify'
+import type { components as cookieComponents } from './schema-cookie'
 
 const BASE_URL = '/api'
 
@@ -173,4 +174,51 @@ export async function getWeiboTimeline(
 
 export async function deleteNotificationBinding(id: string): Promise<void> {
   return request<void>(`/notify/subscriptions/${id}`, { method: 'DELETE' })
+}
+
+export async function listCookieAccounts(): Promise<cookieComponents['schemas']['AccountItem'][]> {
+  const data = await request<cookieComponents['schemas']['AccountList']>(
+    '/cookie/accounts',
+  )
+  return data.items ?? []
+}
+
+export async function createCookieAccount(): Promise<cookieComponents['schemas']['PendingAccount']> {
+  return request<cookieComponents['schemas']['PendingAccount']>('/cookie/accounts', {
+    method: 'POST',
+  })
+}
+
+export async function getCookieAccount(
+  accountId: string,
+): Promise<cookieComponents['schemas']['AccountStatus']> {
+  return request<cookieComponents['schemas']['AccountStatus']>(
+    `/cookie/accounts/${accountId}`,
+  )
+}
+
+export async function deleteCookieAccount(accountId: string): Promise<void> {
+  return request<void>(`/cookie/accounts/${accountId}`, { method: 'DELETE' })
+}
+
+export async function listAvailableCookies(): Promise<cookieComponents['schemas']['CookieItem'][]> {
+  const data = await request<cookieComponents['schemas']['CookieList']>(
+    '/cookie/available',
+  )
+  return data.items ?? []
+}
+
+export async function checkoutCookie(): Promise<cookieComponents['schemas']['CookieCheckout']> {
+  return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/checkout', {
+    method: 'POST',
+  })
+}
+
+export async function reportInvalidCookie(
+  cookieId: string,
+): Promise<cookieComponents['schemas']['CookieCheckout']> {
+  return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/report-invalid', {
+    method: 'POST',
+    body: JSON.stringify({ cookieId }),
+  })
 }

@@ -5,8 +5,7 @@ using Z.Vtuber.Crawler;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class CrawlerHealthCheckTests(MongoDbFixture fixture)
+public class CrawlerHealthCheckTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>
 {
     [Fact]
     public async Task CheckHealth_MongoReachable_ReturnsHealthy()

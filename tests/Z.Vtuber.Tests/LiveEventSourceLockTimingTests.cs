@@ -9,6 +9,7 @@ using Z.Vtuber.Common.Live;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
@@ -70,16 +71,16 @@ public class LiveEventSourceLockTimingTests
 
         public FakeDanmakuClientFactory(CookieCallGate gate) => _gate = gate;
 
-        public Task<IDanmakuClient> CreateAsync(string cookie, CancellationToken ct = default)
+        public Task<IDanmakuClient> CreateAsync(string cookieId, string cookie, CancellationToken ct = default)
         {
             var client = new FakeDanmakuClient();
             _clients[cookie] = client;
             return Task.FromResult<IDanmakuClient>(client);
         }
 
-        public async Task<(IDanmakuClient Client, IDisposable Release)> CreateWithLockAsync(string cookie, CancellationToken ct = default)
+        public async Task<(IDanmakuClient Client, IDistributedLockHandle Release)> CreateWithLockAsync(string cookieId, string cookie, CancellationToken ct = default)
         {
-            var releaser = await _gate.AcquireAsync(cookie, ct);
+            var releaser = await _gate.AcquireAsync(cookieId, ct);
             var client = new FakeDanmakuClient();
             _clients[cookie] = client;
             _clientCreated.TrySetResult(client);
@@ -104,8 +105,8 @@ public class LiveEventSourceLockTimingTests
 
     private sealed class FakeCookiePool : ICookiePoolService
     {
-        public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default)
-            => Task.FromResult(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+        public Task<CookieRecord> AddAsync(string cookie, string? accountId = null, CancellationToken ct = default)
+            => Task.FromResult(new CookieRecord { Cookie = cookie, AccountId = accountId, Status = CookieStatus.Active });
         public Task<CookieRecord> NextAsync(CancellationToken ct = default)
             => Task.FromResult(new CookieRecord { Cookie = "test-cookie", Status = CookieStatus.Active });
         public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
@@ -114,6 +115,10 @@ public class LiveEventSourceLockTimingTests
             => Task.FromResult<IReadOnlyList<CookieRecord>>([]);
         public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default)
             => Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = cookie, Status = CookieStatus.Active });
+        public Task<CookieRecord?> FindByCookieIdAsync(string cookieId, CancellationToken ct = default)
+            => Task.FromResult<CookieRecord?>(new CookieRecord { Cookie = "test-cookie", Status = CookieStatus.Active });
+        public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 
     private sealed class FakeLiveEventPublisher : ILiveEventPublisher
@@ -137,7 +142,7 @@ public class LiveEventSourceLockTimingTests
         return new LiveEventSource(
             new FakeSubscriptionService(),
             null!,
-            new FakeCookiePool(),
+            new FakeCookieServiceClient(),
             factory,
             null!,
             null!,
@@ -149,7 +154,7 @@ public class LiveEventSourceLockTimingTests
     [Fact]
     public async Task RunRoomAsync_LockReleasedDuringEventLoop_OtherAcquireCompletesQuickly()
     {
-        var gate = new CookieCallGate();
+        var gate = new CookieCallGate(new FakeDistributedLockProvider());
         var factory = new FakeDanmakuClientFactory(gate);
         var source = CreateSource(factory);
 
@@ -163,7 +168,7 @@ public class LiveEventSourceLockTimingTests
         await Task.Delay(100);
 
         // Release the lock — RunRoomAsync proceeds through CreateWithLockAsync → ConnectAsync → lockRelease.Dispose()
-        lockHolder.Dispose();
+        await lockHolder.DisposeAsync();
 
         // Wait for the factory to create the client (CreateWithLockAsync completed after lock acquired)
         var client = await factory.WaitForClientAsync();
@@ -174,7 +179,7 @@ public class LiveEventSourceLockTimingTests
 
         // The lock MUST be released now — another AcquireAsync should complete quickly
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        using var secondLock = await gate.AcquireAsync("test-cookie");
+        await using var secondLock = await gate.AcquireAsync("test-cookie");
         sw.Stop();
 
         Assert.True(sw.ElapsedMilliseconds < 500,
@@ -189,7 +194,7 @@ public class LiveEventSourceLockTimingTests
     [Fact]
     public async Task RunRoomAsync_ConnectAsyncFails_LockReleased()
     {
-        var gate = new CookieCallGate();
+        var gate = new CookieCallGate(new FakeDistributedLockProvider());
         var factory = new FakeDanmakuClientFactory(gate);
 
         // Override factory to return a client that fails ConnectAsync
@@ -204,14 +209,14 @@ public class LiveEventSourceLockTimingTests
         await Task.Delay(100);
 
         // Release lock — RunRoomAsync proceeds, CreateWithLockAsync succeeds, ConnectAsync fails
-        lockHolder.Dispose();
+        await lockHolder.DisposeAsync();
 
         // Wait briefly for the catch block to execute and dispose lockRelease
         await Task.Delay(200);
 
         // The lock MUST be available during the reconnect delay
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        using var secondLock = await gate.AcquireAsync("test-cookie");
+        await using var secondLock = await gate.AcquireAsync("test-cookie");
         sw.Stop();
 
         Assert.True(sw.ElapsedMilliseconds < 500,
@@ -230,12 +235,12 @@ public class LiveEventSourceLockTimingTests
 
         public Task WaitForConnectFailed() => _connectFailed.Task;
 
-        public Task<IDanmakuClient> CreateAsync(string cookie, CancellationToken ct = default)
+        public Task<IDanmakuClient> CreateAsync(string cookieId, string cookie, CancellationToken ct = default)
             => Task.FromResult<IDanmakuClient>(new FakeDanmakuClient { ConnectShouldFail = true });
 
-        public async Task<(IDanmakuClient Client, IDisposable Release)> CreateWithLockAsync(string cookie, CancellationToken ct = default)
+        public async Task<(IDanmakuClient Client, IDistributedLockHandle Release)> CreateWithLockAsync(string cookieId, string cookie, CancellationToken ct = default)
         {
-            var releaser = await _gate.AcquireAsync(cookie, ct);
+            var releaser = await _gate.AcquireAsync(cookieId, ct);
             var client = new FakeDanmakuClient { ConnectShouldFail = true };
             // Signal when ConnectAsync is called (it will throw)
             _ = Task.Run(async () =>

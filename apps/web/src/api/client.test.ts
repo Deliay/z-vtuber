@@ -15,6 +15,11 @@ import {
   listNotificationBindings,
   createNotificationBinding,
   deleteNotificationBinding,
+  listCookieAccounts,
+  createCookieAccount,
+  getCookieAccount,
+  deleteCookieAccount,
+  listAvailableCookies,
 } from './client'
 
 const mockFetch = vi.fn()
@@ -503,6 +508,151 @@ describe('API Client', () => {
       await expect(deleteNotificationBinding('999')).rejects.toThrow(
         'API request failed',
       )
+    })
+  })
+
+  describe('Cookie Service', () => {
+    describe('listCookieAccounts', () => {
+      it('should fetch cookie account list via /cookie/accounts', async () => {
+        const mockData = {
+          items: [
+            { accountId: 'acc-1', status: 'active', mid: 123, uname: 'user1' },
+          ],
+        }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockData),
+        })
+
+        const result = await listCookieAccounts()
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/accounts'),
+          expect.objectContaining({}),
+        )
+        expect(result).toEqual(mockData.items)
+      })
+
+      it('should return empty array when items is undefined', async () => {
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({}),
+        })
+
+        const result = await listCookieAccounts()
+        expect(result).toEqual([])
+      })
+    })
+
+    describe('createCookieAccount', () => {
+      it('should POST to /cookie/accounts', async () => {
+        const mockResponse = {
+          accountId: 'acc-1',
+          status: 'pending_login',
+          qrCodeImage: 'base64data',
+          expiresAt: '2024-01-01T00:05:00Z',
+        }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          status: 202,
+          json: () => Promise.resolve(mockResponse),
+        })
+
+        const result = await createCookieAccount()
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/accounts'),
+          expect.objectContaining({ method: 'POST' }),
+        )
+        expect(result.accountId).toBe('acc-1')
+        expect(result.status).toBe('pending_login')
+      })
+
+      it('should throw error on 429 response', async () => {
+        mockFetch.mockResolvedValue({
+          ok: false,
+          status: 429,
+          statusText: 'Too Many Requests',
+          text: () => Promise.resolve('Too many pending login sessions'),
+        })
+
+        const err = await createCookieAccount().catch(e => e)
+        expect(err.status).toBe(429)
+      })
+    })
+
+    describe('getCookieAccount', () => {
+      it('should GET /cookie/accounts/{accountId}', async () => {
+        const mockResponse = {
+          accountId: 'acc-1',
+          status: 'active',
+          mid: 123,
+          uname: 'user1',
+        }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockResponse),
+        })
+
+        const result = await getCookieAccount('acc-1')
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/accounts/acc-1'),
+          expect.objectContaining({}),
+        )
+        expect(result.status).toBe('active')
+      })
+
+      it('should throw error on 404 response', async () => {
+        mockFetch.mockResolvedValue({
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          text: () => Promise.resolve('Account not found'),
+        })
+
+        await expect(getCookieAccount('nonexistent')).rejects.toThrow(
+          'API request failed',
+        )
+      })
+    })
+
+    describe('deleteCookieAccount', () => {
+      it('should DELETE /cookie/accounts/{accountId}', async () => {
+        mockFetch.mockResolvedValue({
+          ok: true,
+          status: 204,
+        })
+
+        await deleteCookieAccount('acc-1')
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/accounts/acc-1'),
+          expect.objectContaining({ method: 'DELETE' }),
+        )
+      })
+    })
+
+    describe('listAvailableCookies', () => {
+      it('should fetch available cookies via /cookie/available', async () => {
+        const mockData = {
+          items: [
+            { cookieId: 'c1', status: 'active' },
+          ],
+        }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockData),
+        })
+
+        const result = await listAvailableCookies()
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/available'),
+          expect.objectContaining({}),
+        )
+        expect(result).toEqual(mockData.items)
+      })
     })
   })
 })

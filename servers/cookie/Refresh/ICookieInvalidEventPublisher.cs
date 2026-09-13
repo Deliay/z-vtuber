@@ -1,4 +1,4 @@
-namespace Z.Vtuber.Crawler.Services;
+namespace Z.Vtuber.Cookie.Refresh;
 
 public interface ICookieInvalidEventPublisher
 {

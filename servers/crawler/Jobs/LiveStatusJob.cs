@@ -10,7 +10,7 @@ namespace Z.Vtuber.Crawler.Jobs;
 public sealed class LiveStatusJob : PeriodicJobBase
 {
     private readonly IBiliApiClient _bili;
-    private readonly ICookiePoolService _cookiePool;
+    private readonly ICookieServiceClient _cookieServiceClient;
     private readonly ISubscriptionService _subscription;
     private readonly IAccountInfoCrawler _accountInfoCrawler;
     private readonly AccountBasicInfoRepository _accountRepository;
@@ -23,7 +23,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
 
     public LiveStatusJob(
         IBiliApiClient bili,
-        ICookiePoolService cookiePool,
+        ICookieServiceClient cookieServiceClient,
         ISubscriptionService subscription,
         IAccountInfoCrawler accountInfoCrawler,
         AccountBasicInfoRepository accountRepository,
@@ -35,7 +35,7 @@ public sealed class LiveStatusJob : PeriodicJobBase
         ILogger<LiveStatusJob> logger) : base(logger)
     {
         _bili = bili;
-        _cookiePool = cookiePool;
+        _cookieServiceClient = cookieServiceClient;
         _subscription = subscription;
         _accountInfoCrawler = accountInfoCrawler;
         _accountRepository = accountRepository;
@@ -89,24 +89,16 @@ public sealed class LiveStatusJob : PeriodicJobBase
 
     private async Task CrawlLockedAsync(long roomId, CancellationToken ct)
     {
-        var gate = _locks.GetLock($"live:{roomId}");
-        await gate.WaitAsync(ct);
-        try
-        {
-            await CrawlAsync(roomId, ct);
-        }
-        finally
-        {
-            gate.Release();
-        }
+        await using var gate = await _locks.AcquireAsync($"live:{roomId}", ct);
+        await CrawlAsync(roomId, ct);
     }
 
     private async Task CrawlAsync(long roomId, CancellationToken ct)
     {
         try
         {
-            var cookie = await _cookiePool.NextAsync(ct);
-            var roomInfo = await _bili.GetLiveRoomInfoAsync(cookie.Cookie, roomId, ct);
+            var checkout = await _cookieServiceClient.CheckoutAsync(ct);
+            var roomInfo = await _bili.GetLiveRoomInfoAsync(checkout.CookieId, checkout.Cookie, roomId, ct);
 
             var title = roomInfo.Title ?? string.Empty;
             var liveStatus = roomInfo.LiveStatus == 1;

@@ -8,11 +8,11 @@ using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class LiveStatusJobTests(MongoDbFixture fixture) : IAsyncLifetime
+public class LiveStatusJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -48,18 +48,18 @@ public class LiveStatusJobTests(MongoDbFixture fixture) : IAsyncLifetime
             bili,
             new AccountBasicInfoRepository(fixture.Database),
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             NullLogger<AccountInfoCrawler>.Instance);
 
         return new LiveStatusJob(
             bili,
-            new FakeCookiePoolService(),
+            new FakeCookieServiceClient(),
             new SubscriptionService(fixture.Database),
             accountInfoCrawler,
             new AccountBasicInfoRepository(fixture.Database),
             new LiveStatusRepository(fixture.Database),
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             new LiveSessionTracker(),
             new BilibiliCrawlerOptions(),
             NullLogger<LiveStatusJob>.Instance);

@@ -3,8 +3,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class SpaceTimelineRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
+public class SpaceTimelineRepositoryTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     private SpaceTimelineRepository CreateRepository() => new(fixture.Database);
 

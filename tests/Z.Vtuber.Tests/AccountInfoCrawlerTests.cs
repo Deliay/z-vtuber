@@ -5,11 +5,11 @@ using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class AccountInfoCrawlerTests(MongoDbFixture fixture) : IAsyncLifetime
+public class AccountInfoCrawlerTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -66,7 +66,7 @@ public class AccountInfoCrawlerTests(MongoDbFixture fixture) : IAsyncLifetime
             bili,
             new AccountBasicInfoRepository(fixture.Database),
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             NullLogger<AccountInfoCrawler>.Instance);
 
         await crawler.CrawlAsync(Mid);
@@ -90,7 +90,7 @@ public class AccountInfoCrawlerTests(MongoDbFixture fixture) : IAsyncLifetime
             bili,
             new AccountBasicInfoRepository(fixture.Database),
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             NullLogger<AccountInfoCrawler>.Instance);
 
         await crawler.CrawlAsync(Mid);

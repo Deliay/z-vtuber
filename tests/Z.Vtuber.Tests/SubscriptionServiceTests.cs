@@ -5,8 +5,7 @@ using Z.Vtuber.Common.Services;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class SubscriptionServiceTests(MongoDbFixture fixture) : IAsyncLifetime
+public class SubscriptionServiceTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     private SubscriptionService CreateService() => new(fixture.Database);
 

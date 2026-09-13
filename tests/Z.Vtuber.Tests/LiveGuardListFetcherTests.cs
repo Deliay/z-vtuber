@@ -47,7 +47,7 @@ public class LiveGuardListFetcherTests
         var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, page) => pageData[page] };
         var fetcher = new CountingFetcher(bili, GuardOptions());
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal(3, result.Count);
@@ -73,7 +73,7 @@ public class LiveGuardListFetcherTests
         };
         var fetcher = new CountingFetcher(bili, GuardOptions());
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal(3, result.Count);
@@ -104,7 +104,7 @@ public class LiveGuardListFetcherTests
         };
         var fetcher = new CountingFetcher(bili, GuardOptions());
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal(2, result.Count);
@@ -130,7 +130,7 @@ public class LiveGuardListFetcherTests
         };
         var fetcher = new CountingFetcher(bili, GuardOptions());
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal(2, result.Count);
@@ -154,7 +154,7 @@ public class LiveGuardListFetcherTests
         };
         var fetcher = new CountingFetcher(bili, GuardOptions());
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal(2, result.Count);
@@ -184,7 +184,7 @@ public class LiveGuardListFetcherTests
         };
         var fetcher = new CountingFetcher(bili, GuardOptions());
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal(3, result.Count);
@@ -198,7 +198,7 @@ public class LiveGuardListFetcherTests
         var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => new GuardInfo { Info = new GuardInfo.PageInfo { Count = 0, Current = 1, PageCount = 1 }, List = [] } };
         var fetcher = new CountingFetcher(bili, GuardOptions());
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Empty(result);
@@ -210,7 +210,7 @@ public class LiveGuardListFetcherTests
         var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new CrawlBackoffActiveException("backoff", TimeSpan.FromMinutes(1)) };
         var fetcher = new CountingFetcher(bili, GuardOptions());
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.Null(result);
     }
@@ -221,7 +221,7 @@ public class LiveGuardListFetcherTests
         var bili = new FakeBiliApiClient { RoomGuardListProvider = (_, _) => throw new Exception("boom") };
         var fetcher = new CountingFetcher(bili, GuardOptions());
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.Null(result);
     }
@@ -242,7 +242,7 @@ public class LiveGuardListFetcherTests
         };
         var fetcher = new CountingFetcher(bili, options);
 
-        var result = await fetcher.FetchAllAsync(Cookie, Mid, RoomId, CancellationToken.None);
+        var result = await fetcher.FetchAllAsync(Cookie, Cookie, Mid, RoomId, CancellationToken.None);
 
         Assert.Equal(2, pagesRequested);
         Assert.NotNull(result);
