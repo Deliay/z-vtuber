@@ -199,7 +199,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
                 Id = MongoDB.Bson.ObjectId.GenerateNewId(),
                 RoomId = 123456,
                 Type = "danmaku",
-                Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Message {{i}}",[403496,"Zero_Ash"]]}"""),
+                Payload = MongoDB.Bson.BsonDocument.Parse($"{{\"info\":[\"18\",\"Message {i}\",[403496,\"Zero_Ash\"]]}}"),
                 OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc).AddMinutes(i),
             })
             .ToList();

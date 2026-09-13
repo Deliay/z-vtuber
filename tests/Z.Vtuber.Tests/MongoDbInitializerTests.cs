@@ -489,7 +489,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
                 Id = MongoDB.Bson.ObjectId.GenerateNewId(),
                 RoomId = 123456,
                 Type = "danmaku",
-                Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Message {{i}}","123456"]}"""),
+                Payload = MongoDB.Bson.BsonDocument.Parse($"{{\"info\":[\"18\",\"Message {i}\",\"123456\"]}}"),
                 OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc).AddMinutes(i),
             })
             .ToList();
