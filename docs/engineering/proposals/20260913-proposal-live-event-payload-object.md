@@ -25,7 +25,7 @@
 
 ### 1.3 范围
 
-- **内**：`LiveEventRecord` 实体与容错序列化、`LiveEventSource` 写入适配、迁移（含双服务启动注册）、api `ToEventDto` 适配、单测/集成测试；
+- **内**：`LiveEventRecord` 实体与容错序列化、`LiveEventSource` 写入适配、迁移（仅 crawler 启动注册，原子锁防并发）、api `ToEventDto` 适配、单测/集成测试；
 - **外**：Redis `live-event:{roomId}` 频道消息（`LiveEvent` record 保持 string Payload，纯线上消息无持久化问题）；`Mikibot.Crawler` NuGet 包；web 端与 OpenAPI 契约（无需变更）；文本索引/Price 等派生数据（抽取语义不变，无需重建）；按 Payload 子字段建索引等后续查询能力（后续需求）。
 
 ## 2. 技术架构
@@ -148,10 +148,10 @@ sequenceDiagram
 - 解析失败（理论上仅异常报文）：记 warning（含 Type/RoomId/OccurredAt），以 `{ "raw": 原字符串 }` 包装落库，不阻断采集循环；
 - `gift_v2` 现状 Payload 为 `{"data": {...}, "raw": "<json string>"}`：外层转对象，`raw` 字符串原样保留（PRD 3.5 已明确）。
 
-#### 实现点 3: 迁移（common + 双服务注册）
+#### 实现点 3: 迁移（common + 仅 crawler 注册）
 
-- `MongoDbInitializer.BackfillLiveEventPayloadObjectAsync`：按 4.2 实现；
-- api/crawler `Program.cs` 启动序列中紧随既有 backfill 注册调用；
+- `MongoDbInitializer.BackfillLiveEventPayloadObjectAsync`：按 4.2 实现，含原子锁防并发；
+- 仅 crawler `Program.cs` 启动序列中紧随既有 backfill 注册调用；api 不注册——数据写入与迁移职责统一归 crawler，api 只读；
 - 日志：每批进度（处理数/跳过数）与完成统计。
 
 #### 实现点 4: api 读取适配
@@ -169,7 +169,7 @@ sequenceDiagram
 ### 6.1 决策列表
 
 1. **`BsonDocument` 而非强类型 POCO**：各事件类型 Payload 结构异构（danmaku 的 `info[]` 数组、gift 的 `data.*`、gift_v2 的 `{data,raw}`、super_chat 的 `data.user_info.*`），且由上游 B 站报文决定、会漂移；强类型建模成本高且脆弱。`BsonDocument` 满足「存对象、可查询」的目标，类型化访问留给消费方按需进行。
-2. **容错序列化器而非「先迁移后切换」**：api 与 crawler 双服务均跑迁移，部署窗口内必然存在「新代码读旧数据」；成员级容错序列化器消除顺序依赖，迁移完成后也无害（文档路径直通）。
+2. **容错序列化器而非「先迁移后切换」**：仅 crawler 跑迁移，但 api 与 crawler 滚动更新期间仍存在「新代码读旧数据」窗口；成员级容错序列化器消除顺序依赖，迁移完成后也无害（文档路径直通）。
 3. **Redis 消息与抽取器保持 string 语义**：Redis 频道是线上消息而非持久化，改格式会波及所有订阅方且收益为零；抽取器签名不变使改动面最小、派生数据无需重建。
 4. **迁移复用 `MongoDbInitializer` 幂等 backfill 模式**：与 `BackfillGiftPriceAsync` 等四个既有迁移同构（标记位 + `_id` 游标 + 批量 `$set`），双服务启动注册、并发安全已被验证；不引入手工脚本。
 5. **无法解析的脏数据跳过并保留**：历史脏数据强行包装写回会掩盖数据问题；跳过 + 计数日志让运维可审计，且不阻塞迁移完成。

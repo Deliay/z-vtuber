@@ -22,7 +22,7 @@ type: Permanent
 - **做**：
   - `LiveEventRecord.Payload`：`string` → `BsonDocument`，挂 `StringTolerantBsonDocumentSerializer` 容错反序列化（过渡期读旧 string 数据不报错）。
   - 新增 `LiveEventPayloadParser`（common）：string → `BsonDocument` 统一解析与降级策略，crawler 落库点与迁移共用。
-  - `MongoDbInitializer` 新增幂等迁移 `BackfillLiveEventPayloadObjectAsync`（标记 key `live_event_payload_object_backfill_v1`），注册到 api 与 crawler 启动序列。
+  - `MongoDbInitializer` 新增幂等迁移 `BackfillLiveEventPayloadObjectAsync`（标记 key `live_event_payload_object_backfill_v1`，原子锁防并发），注册到仅 crawler 启动序列。
   - `LiveEventSource` 落库点：Payload 解析为 `BsonDocument`，失败降级 `{ "raw": 原字符串 }` + 日志，不阻断采集。
   - `BilibiliLiveController.ToEventDto(LiveEventRecord)`：`BsonDocument` → `JsonNode` 适配，响应结构不变；`ToEventDto(LiveEvent)`（SSE）保持 string 路径不变。
   - 既有 backfill（GiftPrice/TextIndex/Sender）对 `record.Payload` 的 string 消费适配（编译修复，抽取语义不变）。
@@ -36,7 +36,7 @@ type: Permanent
 - 读取路径 `BilibiliLiveController.ToEventDto(LiveEventRecord)`（`servers/api/Controllers/BilibiliLiveController.cs:257-264`）：`payload = BilibiliUserController.ParseRaw(record.Payload)`；`ParseRaw(string?)`（`servers/api/Controllers/BilibiliUserController.cs:55-56`）为共享 helper，`ToEventDto(LiveEvent)`（:266-273，SSE）与其他 Controller 仍消费 string 重载，**保留不动**。
 - 既有 backfill 对 `record.Payload` 的 string 消费点（实体改型后编译受影响，需适配）：`MongoDbInitializer.cs:403`（GiftPrice）、`:482`（TextIndex）、`:588`（Sender）。
 - 迁移范本 `BackfillGiftPriceAsync`（`servers/common/Persistence/MongoDbInitializer.cs:358-425`）：Meta 标记（`zvtuber_meta`）+ 分批 500 + BulkWrite + `MarkMigrationAppliedAsync`（:640）。
-- 启动注册：api（`servers/api/Program.cs:62-66`）与 crawler（`servers/crawler/Program.cs:125-129`）启动序列中依次调用 `EnsureIndexesAsync` 与各 backfill，新迁移在 `BackfillLiveEventSenderAsync` 之后追加。
+- 启动注册：api（`servers/api/Program.cs:62-66`）与 crawler（`servers/crawler/Program.cs:125-129`）启动序列中依次调用 `EnsureIndexesAsync` 与各 backfill；新增迁移仅在 crawler 注册（`BackfillLiveEventSenderAsync` 之后追加），api 不注册——数据写入与迁移职责统一归 crawler，api 只读。
 - 测试：`tests/Z.Vtuber.Tests` 已有 `MongoDbFixture`（Testcontainers）、`MongoDbInitializerTests`、`LiveEventRepositoryTests`、`BilibiliLiveControllerTests`、`LiveEventSenderBackfillTests` 等；消费 `LiveEventRecord.Payload` 的既有测试（构造 string Payload 的用例）随实体改型适配。
 
 ## 2. 分支与提交流程
@@ -66,12 +66,12 @@ flowchart LR
 | 1.3 | `LiveEventRecord.Payload`：`string` → `BsonDocument`（默认 `new()`），属性挂 `[BsonSerializer(typeof(StringTolerantBsonDocumentSerializer))]`；其余字段不动 | `servers/common/Persistence/Entities/LiveEventRecord.cs` | 随 Phase 2 集成测试覆盖容错读取 |
 | 1.4 | 既有 backfill 编译适配：`BackfillGiftPriceAsync`/`BackfillLiveEventTextIndexAsync`/`BackfillLiveEventSenderAsync` 中 `record.Payload` 的 string 消费改为从 `BsonDocument` 还原 string（`ToJson()` 或等价转换；`{raw}` 包装文档取 `raw` 值）后传入抽取器，抽取语义与产出不变 | `servers/common/Persistence/MongoDbInitializer.cs` | 既有 `MongoDbInitializerTests`/`LiveEventSenderBackfillTests` 原样通过（回归锁定语义不变） |
 
-### Phase 2: 幂等历史迁移（common + 双服务注册，TDD）
+### Phase 2: 幂等历史迁移（common + 仅 crawler 注册，TDD）
 
 | # | 任务 | 关键文件 | 测试重点 |
 |---|------|---------|---------|
 | 2.1 | 新增 `BackfillLiveEventPayloadObjectAsync`：标记 key `live_event_payload_object_backfill_v1`，存在即跳过；过滤 `Payload` BSON 类型为 String；`_id` 游标分页（`Id > lastId`，SortBy Id，Limit 500，投影 Id/Payload）；每批经 `LiveEventPayloadParser.ToBsonDocument` 解析，成功生成 `UpdateOneModel $set Payload=文档`，解析失败的脏数据跳过并计数（warning 日志含记录 Id）；`BulkWriteAsync` 逐批提交；扫完后 `MarkMigrationAppliedAsync` upsert 标记；记录每批进度与完成统计日志 | `servers/common/Persistence/MongoDbInitializer.cs` | 新建 `LiveEventPayloadBackfillTests`（Testcontainers）：预置 string Payload 记录 → 执行后 BSON 类型变 Document 且内容等价、标记位写入；重复执行幂等；含脏数据时跳过并计数、标记仍可完成；模拟双实例并发执行无错误 |
-| 2.2 | 双服务注册：api（`servers/api/Program.cs`）与 crawler（`servers/crawler/Program.cs`）启动序列在 `BackfillLiveEventSenderAsync` 之后追加 `await initializer.BackfillLiveEventPayloadObjectAsync();` | `servers/api/Program.cs`、`servers/crawler/Program.cs` | 编排验证（Phase 5）覆盖启动执行 |
+| 2.2 | 仅 crawler 注册：crawler（`servers/crawler/Program.cs`）启动序列在 `BackfillLiveEventSenderAsync` 之后追加 `await initializer.BackfillLiveEventPayloadObjectAsync();`。api 不注册迁移执行——数据写入与迁移职责统一归 crawler，api 只读。 | `servers/crawler/Program.cs` | 编排验证（Phase 5）覆盖启动执行 |
 
 ### Phase 3: crawler 写入适配（TDD）
 
@@ -122,7 +122,7 @@ flowchart LR
 | 脏数据处理 | 历史无法解析的 Payload 强行包装会掩盖数据问题 | 迁移跳过 + 计数 + warning 日志（含记录 Id），不阻塞标记完成；运维可审计 |
 | `BsonDocument.ToJson()` 输出差异 | 数字/日期等类型的 JSON 表示可能与原 string 解析结果有细微差异（如 `_id` 包装、`$numberLong`） | 使用宽松模式（`JsonWriterSettings`/`ToJson` 默认 relaxed 输出），Controller 测试用响应快照锁定与改造前一致；发现差异实现期在转换单点处理 |
 | 迁移期间写入放大 | 每条记录一次 `$set` | 批量 500 + `_id` 游标，无长时间锁；与既有 backfill 同构，模式已验证 |
-| 部署顺序 | api 与 crawler 均跑迁移，存在新代码读旧数据窗口 | 容错序列化器消除顺序依赖（提案决策 6.1.2） |
+| 部署顺序 | 仅 crawler 跑迁移，api 滚动更新期间读旧 string 数据 | 容错序列化器消除顺序依赖（提案决策 6.1.2） |
 
 ## 7. 相关文档
 
