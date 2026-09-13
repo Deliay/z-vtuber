@@ -11,7 +11,7 @@ namespace Z.Vtuber.Crawler.Crawlers;
 
 public interface IBilibiliAccountProvider
 {
-    Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default);
+    Task<IServiceProvider> GetProviderAsync(string cookieId, string cookie, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -23,8 +23,7 @@ public interface IBilibiliAccountProvider
 /// </summary>
 public class BilibiliAccountProvider(
     BilibiliCrawlerOptions options,
-    ICookiePoolService cookiePool,
-    ICookieInvalidEventPublisher eventPublisher,
+    ICookieServiceClient cookieServiceClient,
     CookieCallGate gate,
     ILogger<BilibiliAccountProvider> logger) : IBilibiliAccountProvider
 {
@@ -33,17 +32,17 @@ public class BilibiliAccountProvider(
     /// <summary>
     /// Public entry point: acquires cookie lock, then delegates to the lock-free internal core.
     /// </summary>
-    public async Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default)
+    public async Task<IServiceProvider> GetProviderAsync(string cookieId, string cookie, CancellationToken ct = default)
     {
-        using var _ = await gate.AcquireAsync(cookie, ct);
-        return await GetProviderInternalAsync(cookie, ct);
+        await using var _ = await gate.AcquireAsync(cookieId, ct);
+        return await GetProviderInternalAsync(cookieId, cookie, isRetry: false, ct);
     }
 
     /// <summary>
     /// Lock-free internal core. Caller MUST hold the cookie lock via <see cref="CookieCallGate"/>.
     /// Used by both <see cref="GetProviderAsync"/> and <see cref="Live.DanmakuClientFactory"/>.
     /// </summary>
-    internal async Task<IServiceProvider> GetProviderInternalAsync(string cookie, CancellationToken ct = default)
+    internal async Task<IServiceProvider> GetProviderInternalAsync(string cookieId, string cookie, bool isRetry = false, CancellationToken ct = default)
     {
         // Fast path: if a cached entry exists and has completed, return immediately.
         if (_providers.TryGetValue(cookie, out var existing) && existing.IsValueCreated)
@@ -72,29 +71,39 @@ public class BilibiliAccountProvider(
         {
             _providers.TryRemove(new KeyValuePair<string, Lazy<Task<IServiceProvider>>>(cookie, lazy));
 
-            // 恰好一次发布：MarkOfflineAsync 原子条件更新（Active→Offline），仅首次迁移返回 true
-            var wasOffline = await cookiePool.MarkOfflineAsync(cookie, ct);
-            if (wasOffline)
+            // Only report invalid on first attempt; retry path should not re-enter report-invalid
+            if (isRetry)
             {
-                try
-                {
-                    var record = await cookiePool.FindByCookieAsync(cookie, ct);
-                    if (record is not null)
-                    {
-                        await eventPublisher.PublishAsync(record.Id.ToString(), "account_provider_offline", ct);
-                    }
-                    else
-                    {
-                        logger.LogWarning("Cookie record not found for cookie string; skipping event publish.");
-                    }
-                }
-                catch (Exception publishEx)
-                {
-                    logger.LogWarning(publishEx, "Failed to publish cookie invalid event for cookie; continuing.");
-                }
+                throw;
             }
 
-            throw;
+            // Report invalid to cookie service and use the response to decide next action
+            try
+            {
+                var reportResult = await cookieServiceClient.ReportInvalidAsync(cookieId, ct);
+                if (reportResult.Status == ReportInvalidStatus.Refreshed && !string.IsNullOrEmpty(reportResult.Cookie))
+                {
+                    // Use new cookie from response to rebuild provider (one retry only, no report-invalid)
+                    return await GetProviderInternalAsync(reportResult.CookieId!, reportResult.Cookie!, isRetry: true, ct);
+                }
+
+                // Session invalid, not found, timeout, or Refreshed with null cookie — give up
+                throw new CookieSessionInvalidException();
+            }
+            catch (NoAvailableCookieException)
+            {
+                logger.LogWarning("No available cookie for retry after build failure.");
+                throw;
+            }
+            catch (CookieSessionInvalidException)
+            {
+                throw;
+            }
+            catch (Exception reportEx)
+            {
+                logger.LogWarning(reportEx, "Failed to report invalid cookie or retry build; continuing.");
+                throw;
+            }
         }
     }
 
@@ -117,4 +126,10 @@ public class BilibiliAccountProvider(
         await account.InitializeAsync(CancellationToken.None);
         return provider;
     }
+}
+
+public sealed class CookieSessionInvalidException : Exception
+{
+    public CookieSessionInvalidException()
+        : base("Cookie session is no longer valid.") { }
 }

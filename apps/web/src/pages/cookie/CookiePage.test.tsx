@@ -1,212 +1,199 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { CookiePage } from './CookiePage'
 import * as client from '../../api/client'
 
 vi.mock('../../api/client')
 
-const mockListCookies = vi.mocked(client.listBackstageCookies)
-const mockAddCookie = vi.mocked(client.addCookie)
+const mockListAccounts = vi.mocked(client.listCookieAccounts)
+const mockCreateAccount = vi.mocked(client.createCookieAccount)
+const mockGetAccount = vi.mocked(client.getCookieAccount)
+const mockDeleteAccount = vi.mocked(client.deleteCookieAccount)
 
 describe('CookiePage', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    mockListCookies.mockResolvedValue([])
+    mockListAccounts.mockResolvedValue([])
   })
 
   it('should render cookie page title', async () => {
-    render(<CookiePage />)
+    await act(async () => {
+      render(<CookiePage />)
+    })
 
     expect(screen.getByText('Cookie 管理')).toBeInTheDocument()
-    expect(screen.getByText('录入 Cookie')).toBeInTheDocument()
+    expect(screen.getByText('新增帐号')).toBeInTheDocument()
   })
 
-  it('should load and display cookies', async () => {
-    mockListCookies.mockResolvedValue([
+  it('should load and display accounts', async () => {
+    mockListAccounts.mockResolvedValue([
       {
-        id: 'cookie-1',
+        accountId: 'acc-1',
+        mid: 12345,
+        uname: '用户A',
         status: 'active',
-        lastCheckedAt: '2024-01-01T00:00:00Z',
-        lastUsedAt: '2024-01-01T00:00:00Z',
+        cookieStatus: 'active',
+        lastRefreshAt: '2024-01-01T00:00:00Z',
+        lastLoginAt: '2024-01-01T00:00:00Z',
       },
       {
-        id: 'cookie-2',
-        status: 'offline',
-        lastCheckedAt: null,
-        lastUsedAt: null,
+        accountId: 'acc-2',
+        mid: 67890,
+        uname: null,
+        status: 'expired',
+        cookieStatus: 'expired',
+        lastRefreshAt: null,
+        lastLoginAt: null,
       },
     ])
 
-    render(<CookiePage />)
+    await act(async () => {
+      render(<CookiePage />)
+    })
 
     await waitFor(() => {
-      expect(screen.getByText('cookie-1')).toBeInTheDocument()
-      expect(screen.getByText('cookie-2')).toBeInTheDocument()
-      expect(screen.getByText('可用')).toBeInTheDocument()
-      expect(screen.getByText('离线')).toBeInTheDocument()
+      expect(screen.getByText(/用户A/)).toBeInTheDocument()
+      expect(screen.getByText(/67890/)).toBeInTheDocument()
     })
   })
 
-  it('should show empty state when no cookies', async () => {
-    render(<CookiePage />)
-
-    await waitFor(() => {
-      expect(screen.getByText('暂无 Cookie')).toBeInTheDocument()
+  it('should show empty state when no accounts', async () => {
+    await act(async () => {
+      render(<CookiePage />)
     })
-  })
-
-  it('should render account nickname and placeholder regardless of status', async () => {
-    mockListCookies.mockResolvedValue([
-      {
-        id: 'cookie-1',
-        status: 'active',
-        lastCheckedAt: null,
-        lastUsedAt: null,
-        account: { name: '某帐号' },
-      },
-      {
-        id: 'cookie-2',
-        status: 'offline',
-        lastCheckedAt: null,
-        lastUsedAt: null,
-        account: null,
-      },
-    ])
-
-    render(<CookiePage />)
 
     await waitFor(() => {
-      expect(screen.getByText('某帐号')).toBeInTheDocument()
-      expect(screen.getByText('暂无资料')).toBeInTheDocument()
-      expect(screen.getByText('可用')).toBeInTheDocument()
-      expect(screen.getByText('离线')).toBeInTheDocument()
+      expect(screen.getByText(/暂无帐号/)).toBeInTheDocument()
     })
   })
 
   it('should show error when loading fails', async () => {
-    mockListCookies.mockRejectedValue(new Error('Network error'))
+    mockListAccounts.mockRejectedValue(new Error('Network error'))
 
-    render(<CookiePage />)
+    await act(async () => {
+      render(<CookiePage />)
+    })
 
     await waitFor(() => {
       expect(screen.getByText('服务不可用')).toBeInTheDocument()
     })
   })
 
-  it('should validate empty cookie input', async () => {
-    render(<CookiePage />)
+  it('should open create modal and start polling on click', async () => {
+    const futureDate = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    mockCreateAccount.mockResolvedValue({
+      accountId: 'new-acc',
+      qrCodeImage: 'fake-base64-qr',
+      expiresAt: futureDate,
+    })
+    mockGetAccount.mockResolvedValue({
+      accountId: 'new-acc',
+      status: 'pending_login',
+    })
 
-    const submitButton = screen.getByText('录入 Cookie')
-    fireEvent.click(submitButton)
+    await act(async () => {
+      render(<CookiePage />)
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('新增帐号'))
+    })
 
     await waitFor(() => {
-      expect(screen.getByText('请输入 Cookie')).toBeInTheDocument()
+      expect(screen.getByText('扫码登录')).toBeInTheDocument()
+    })
+
+    expect(mockCreateAccount).toHaveBeenCalled()
+  })
+
+  it('should show error on create 429', async () => {
+    const error = new Error('Too Many Requests')
+    ;(error as any).status = 429
+    mockCreateAccount.mockRejectedValue(error)
+
+    await act(async () => {
+      render(<CookiePage />)
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('新增帐号'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('并发登录已达上限，请稍后再试')).toBeInTheDocument()
     })
   })
 
-  it('should validate whitespace-only cookie input', async () => {
-    render(<CookiePage />)
+  it('should show generic error on create failure', async () => {
+    mockCreateAccount.mockRejectedValue(new Error('Network error'))
 
-    const textarea = screen.getByPlaceholderText('粘贴 Cookie 内容')
-    fireEvent.change(textarea, { target: { value: '   ' } })
+    await act(async () => {
+      render(<CookiePage />)
+    })
 
-    const submitButton = screen.getByText('录入 Cookie')
-    fireEvent.click(submitButton)
+    await act(async () => {
+      fireEvent.click(screen.getByText('新增帐号'))
+    })
 
     await waitFor(() => {
-      expect(screen.getByText('请输入 Cookie')).toBeInTheDocument()
+      expect(screen.getByText('创建失败，请重试')).toBeInTheDocument()
     })
   })
 
-  it('should add cookie successfully and refresh list', async () => {
-    mockAddCookie.mockResolvedValue({
-      id: 'new-cookie',
-      status: 'active',
-      lastCheckedAt: null,
-      lastUsedAt: null,
-    })
-    mockListCookies
-      .mockResolvedValueOnce([])
+  it('should delete account and refresh list', async () => {
+    mockListAccounts
       .mockResolvedValueOnce([
         {
-          id: 'new-cookie',
+          accountId: 'acc-1',
+          mid: 12345,
+          uname: '用户A',
           status: 'active',
-          lastCheckedAt: null,
-          lastUsedAt: null,
+          cookieStatus: 'active',
+          lastRefreshAt: null,
+          lastLoginAt: null,
         },
       ])
+      .mockResolvedValueOnce([])
 
-    render(<CookiePage />)
+    mockDeleteAccount.mockResolvedValue(undefined)
 
-    await waitFor(() => {
-      expect(screen.getByText('暂无 Cookie')).toBeInTheDocument()
+    await act(async () => {
+      render(<CookiePage />)
     })
 
-    const textarea = screen.getByPlaceholderText('粘贴 Cookie 内容')
-    fireEvent.change(textarea, { target: { value: 'test-cookie-value' } })
-
-    const submitButton = screen.getByText('录入 Cookie')
-    fireEvent.click(submitButton)
-
     await waitFor(() => {
-      expect(mockAddCookie).toHaveBeenCalledWith({ cookie: 'test-cookie-value' })
-      expect(screen.getByText('new-cookie')).toBeInTheDocument()
-      expect(screen.getByText('录入成功')).toBeInTheDocument()
+      expect(screen.getByText(/用户A/)).toBeInTheDocument()
     })
-  })
 
-  it('should show server error on 400 response', async () => {
-    const error = new Error('API request failed')
-    ;(error as any).status = 400
-    ;(error as any).serverMessage = 'Cookie 为空'
-    mockAddCookie.mockRejectedValue(error)
-
-    render(<CookiePage />)
-
-    const textarea = screen.getByPlaceholderText('粘贴 Cookie 内容')
-    fireEvent.change(textarea, { target: { value: '' } })
-
-    const submitButton = screen.getByText('录入 Cookie')
-    fireEvent.click(submitButton)
+    await act(async () => {
+      fireEvent.click(screen.getByText('删除'))
+    })
 
     await waitFor(() => {
-      expect(screen.getByText('请输入 Cookie')).toBeInTheDocument()
+      expect(mockDeleteAccount).toHaveBeenCalledWith('acc-1')
+      expect(screen.getByText(/暂无帐号/)).toBeInTheDocument()
     })
   })
 
-  it('should truncate long cookie ids', async () => {
-    const longId = 'a'.repeat(40)
-    mockListCookies.mockResolvedValue([
+  it('should display status labels correctly', async () => {
+    mockListAccounts.mockResolvedValue([
       {
-        id: longId,
+        accountId: 'acc-1',
+        mid: 12345,
+        uname: '用户A',
         status: 'active',
-        lastCheckedAt: null,
-        lastUsedAt: null,
+        cookieStatus: 'active',
+        lastRefreshAt: null,
+        lastLoginAt: null,
       },
     ])
 
-    render(<CookiePage />)
-
-    await waitFor(() => {
-      expect(screen.getByText('aaaaaaaaaa...aaaaaaaaaa')).toBeInTheDocument()
+    await act(async () => {
+      render(<CookiePage />)
     })
-  })
-
-  it('should display dash for null dates', async () => {
-    mockListCookies.mockResolvedValue([
-      {
-        id: 'cookie-1',
-        status: 'active',
-        lastCheckedAt: null,
-        lastUsedAt: null,
-      },
-    ])
-
-    render(<CookiePage />)
 
     await waitFor(() => {
-      const dashes = screen.getAllByText('-')
-      expect(dashes.length).toBe(2)
+      expect(screen.getByText('活跃')).toBeInTheDocument()
     })
   })
 })

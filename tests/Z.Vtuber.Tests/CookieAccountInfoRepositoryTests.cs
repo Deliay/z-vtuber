@@ -4,8 +4,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class CookieAccountInfoRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
+public class CookieAccountInfoRepositoryTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 

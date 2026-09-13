@@ -3,13 +3,14 @@ using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
+using Z.Vtuber.Crawler.Services;
 
 namespace Z.Vtuber.Crawler.Jobs;
 
 public sealed class SpaceTimelineJob : PeriodicJobBase
 {
     private readonly IBiliApiClient _bili;
-    private readonly ICookiePoolService _cookiePool;
+    private readonly ICookieServiceClient _cookieServiceClient;
     private readonly ISubscriptionService _subscription;
     private readonly SpaceTimelineRepository _repository;
     private readonly CrawlLockProvider _locks;
@@ -18,7 +19,7 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
 
     public SpaceTimelineJob(
         IBiliApiClient bili,
-        ICookiePoolService cookiePool,
+        ICookieServiceClient cookieServiceClient,
         ISubscriptionService subscription,
         SpaceTimelineRepository repository,
         CrawlLockProvider locks,
@@ -26,7 +27,7 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
         ILogger<SpaceTimelineJob> logger) : base(logger)
     {
         _bili = bili;
-        _cookiePool = cookiePool;
+        _cookieServiceClient = cookieServiceClient;
         _subscription = subscription;
         _repository = repository;
         _locks = locks;
@@ -56,24 +57,19 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
 
     private async Task CrawlLockedAsync(long mid, CancellationToken ct)
     {
-        var gate = _locks.GetLock($"space:{mid}");
-        await gate.WaitAsync(ct);
-        try
-        {
-            await CrawlAsync(mid, ct);
-        }
-        finally
-        {
-            gate.Release();
-        }
+        await using var gate = await _locks.AcquireAsync($"space:{mid}", ct);
+        await CrawlAsync(mid, ct);
     }
 
     private async Task CrawlAsync(long mid, CancellationToken ct)
     {
+        string cookieId;
         string cookie;
         try
         {
-            cookie = (await _cookiePool.NextAsync(ct)).Cookie;
+            var checkout = await _cookieServiceClient.CheckoutAsync(ct);
+            cookieId = checkout.CookieId;
+            cookie = checkout.Cookie;
         }
         catch (NoAvailableCookieException)
         {
@@ -89,7 +85,7 @@ public sealed class SpaceTimelineJob : PeriodicJobBase
             SpaceDynamicsPage page;
             try
             {
-                page = await _bili.GetSpaceDynamicsAsync(cookie, mid, offset, ct);
+                page = await _bili.GetSpaceDynamicsAsync(cookieId, cookie, mid, offset, ct);
             }
             catch (CrawlBackoffActiveException ex)
             {

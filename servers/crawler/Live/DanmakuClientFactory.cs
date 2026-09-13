@@ -3,14 +3,15 @@ using Mikibot.Crawler.Http.Bilibili;
 using Mikibot.Crawler.WebsocketCrawler.Client;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Crawler.Live;
 
 public class DanmakuClientFactory(IBilibiliAccountProvider accountProvider, CookieCallGate gate) : IDanmakuClientFactory
 {
-    public async Task<IDanmakuClient> CreateAsync(string cookie, CancellationToken ct = default)
+    public async Task<IDanmakuClient> CreateAsync(string cookieId, string cookie, CancellationToken ct = default)
     {
-        var provider = await accountProvider.GetProviderAsync(cookie, ct);
+        var provider = await accountProvider.GetProviderAsync(cookieId, cookie, ct);
         return BuildClient(provider);
     }
 
@@ -19,21 +20,21 @@ public class DanmakuClientFactory(IBilibiliAccountProvider accountProvider, Cook
     /// and returns the client together with a release handle that MUST be disposed
     /// by the caller after the websocket connection is established.
     /// </summary>
-    public async Task<(IDanmakuClient Client, IDisposable Release)> CreateWithLockAsync(string cookie, CancellationToken ct = default)
+    public async Task<(IDanmakuClient Client, IDistributedLockHandle Release)> CreateWithLockAsync(string cookieId, string cookie, CancellationToken ct = default)
     {
-        var releaser = await gate.AcquireAsync(cookie, ct);
+        var releaser = await gate.AcquireAsync(cookieId, ct);
         try
         {
             // Cast to BilibiliAccountProvider to access the lock-free internal core.
             // The lock is already held by the caller (LiveEventSource).
             var provider = (BilibiliAccountProvider)accountProvider;
-            var sp = await provider.GetProviderInternalAsync(cookie, ct);
+            var sp = await provider.GetProviderInternalAsync(cookieId, cookie, isRetry: false, ct);
             var client = BuildClient(sp);
             return (client, releaser);
         }
         catch
         {
-            releaser.Dispose();
+            await releaser.DisposeAsync();
             throw;
         }
     }

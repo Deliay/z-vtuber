@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "codegen": "openapi-typescript ../../contracts/bilibili-crawler.openapi.yaml -o src/api/schema.d.ts && openapi-typescript ../../contracts/notifier.openapi.yaml -o src/api/schema-notify.d.ts && openapi-typescript ../../contracts/weibo-crawler.openapi.yaml -o src/api/schema-weibo.d.ts"
+    "codegen": "openapi-typescript ../../contracts/bilibili-crawler.openapi.yaml -o src/api/schema.d.ts && openapi-typescript ../../contracts/notifier.openapi.yaml -o src/api/schema-notify.d.ts && openapi-typescript ../../contracts/weibo-crawler.openapi.yaml -o src/api/schema-weibo.d.ts && openapi-typescript ../../contracts/cookie.openapi.yaml -o src/api/schema-cookie.d.ts"
   },
   "dependencies": {
     "react": "^19.2.8",

@@ -33,7 +33,7 @@ public sealed class BrowserishBiliApiClientTests
 
     private sealed class MockBilibiliAccountProvider : IBilibiliAccountProvider
     {
-        public async Task<IServiceProvider> GetProviderAsync(string cookie, CancellationToken ct = default)
+        public async Task<IServiceProvider> GetProviderAsync(string cookieId, string cookie, CancellationToken ct = default)
         {
             var services = new ServiceCollection();
             
@@ -95,7 +95,7 @@ public sealed class BrowserishBiliApiClientTests
         var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
 
         // Act
-        var result = await client.GetLiveRoomInfoAsync(TestCookie, TestRoomId);
+        var result = await client.GetLiveRoomInfoAsync("cookie-id", TestCookie, TestRoomId);
 
         // Assert
         Assert.Equal(TestRoomId, result.RoomId);
@@ -140,7 +140,7 @@ public sealed class BrowserishBiliApiClientTests
         var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
 
         // Act
-        var result = await client.GetNavInfoV2Async(TestCookie);
+        var result = await client.GetNavInfoV2Async("cookie-id", TestCookie);
 
         // Assert
         Assert.Equal(12345, result.Mid);
@@ -191,7 +191,7 @@ public sealed class BrowserishBiliApiClientTests
         var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
 
         // Act
-        var result = await client.GetSpaceDynamicsAsync(TestCookie, TestMid, "test-offset");
+        var result = await client.GetSpaceDynamicsAsync("cookie-id", TestCookie, TestMid, "test-offset");
 
         // Assert
         Assert.True(result.HasMore);
@@ -251,8 +251,8 @@ public sealed class BrowserishBiliApiClientTests
         var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
 
         // Act
-        await client.GetLiveRoomInfoAsync(TestCookie, 1);
-        await client.GetLiveRoomInfoAsync(TestCookie, 2);
+        await client.GetLiveRoomInfoAsync("cookie-id", TestCookie, 1);
+        await client.GetLiveRoomInfoAsync("cookie-id", TestCookie, 2);
 
         // Assert
         Assert.Equal(1, warmupCount);
@@ -309,7 +309,7 @@ public sealed class BrowserishBiliApiClientTests
         var client = new BrowserishBiliApiClient(handler, _options, CreateMockAccountProvider());
 
         // Act
-        var result = await client.GetRoomGuardListAsync(TestCookie, TestRoomId, TestMid);
+        var result = await client.GetRoomGuardListAsync("cookie-id", TestCookie, TestRoomId, TestMid);
 
         // Assert
         Assert.Equal(100, result.Info.Count);
@@ -351,7 +351,7 @@ public sealed class BrowserishBiliApiClientTests
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.GetRoomGuardListAsync(TestCookie, TestRoomId, TestMid));
+            () => client.GetRoomGuardListAsync("cookie-id", TestCookie, TestRoomId, TestMid));
         Assert.Contains("-412", ex.Message);
     }
 
@@ -392,8 +392,8 @@ public sealed class BrowserishBiliApiClientTests
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         // Act
-        await client.GetLiveRoomInfoAsync(TestCookie, 1);
-        await client.GetLiveRoomInfoAsync(TestCookie, 2);
+        await client.GetLiveRoomInfoAsync("cookie-id", TestCookie, 1);
+        await client.GetLiveRoomInfoAsync("cookie-id", TestCookie, 2);
 
         // Assert
         stopwatch.Stop();

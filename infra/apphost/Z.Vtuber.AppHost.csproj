@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\servers\api\Z.Vtuber.csproj" />
+    <ProjectReference Include="..\..\servers\cookie\Z.Vtuber.Cookie.csproj" />
     <ProjectReference Include="..\..\servers\crawler\Z.Vtuber.Crawler.csproj" />
     <ProjectReference Include="..\..\servers\notifier\Z.Vtuber.Notifier.csproj" />
   </ItemGroup>

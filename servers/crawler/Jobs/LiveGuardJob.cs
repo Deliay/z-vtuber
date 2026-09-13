@@ -13,7 +13,7 @@ public class LiveGuardJob : PeriodicJobBase
     private const int BeijingOffsetHours = 8;
 
     private readonly ISubscriptionService _subscription;
-    private readonly ICookiePoolService _cookiePool;
+    private readonly ICookieServiceClient _cookieServiceClient;
     private readonly AccountBasicInfoRepository _accountRepository;
     private readonly LiveGuardRepository _guardRepository;
     private readonly IAccountInfoCrawler _accountInfoCrawler;
@@ -25,7 +25,7 @@ public class LiveGuardJob : PeriodicJobBase
 
     public LiveGuardJob(
         ISubscriptionService subscription,
-        ICookiePoolService cookiePool,
+        ICookieServiceClient cookieServiceClient,
         AccountBasicInfoRepository accountRepository,
         LiveGuardRepository guardRepository,
         IAccountInfoCrawler accountInfoCrawler,
@@ -36,7 +36,7 @@ public class LiveGuardJob : PeriodicJobBase
         LiveGuardListFetcher fetcher) : base(logger)
     {
         _subscription = subscription;
-        _cookiePool = cookiePool;
+        _cookieServiceClient = cookieServiceClient;
         _accountRepository = accountRepository;
         _guardRepository = guardRepository;
         _accountInfoCrawler = accountInfoCrawler;
@@ -119,24 +119,19 @@ public class LiveGuardJob : PeriodicJobBase
 
     private async Task CrawlLockedAsync(long mid, string date, CancellationToken ct)
     {
-        var gate = _locks.GetLock($"guard:{mid}");
-        await gate.WaitAsync(ct);
-        try
-        {
-            await CrawlAsync(mid, date, ct);
-        }
-        finally
-        {
-            gate.Release();
-        }
+        await using var gate = await _locks.AcquireAsync($"guard:{mid}", ct);
+        await CrawlAsync(mid, date, ct);
     }
 
     private async Task CrawlAsync(long mid, string date, CancellationToken ct)
     {
+        string cookieId;
         string cookie;
         try
         {
-            cookie = (await _cookiePool.NextAsync(ct)).Cookie;
+            var checkout = await _cookieServiceClient.CheckoutAsync(ct);
+            cookieId = checkout.CookieId;
+            cookie = checkout.Cookie;
         }
         catch (NoAvailableCookieException)
         {
@@ -156,7 +151,7 @@ public class LiveGuardJob : PeriodicJobBase
             }
         }
 
-        var entries = await _fetcher.FetchAllAsync(cookie, mid, roomId.Value, ct);
+        var entries = await _fetcher.FetchAllAsync(cookieId, cookie, mid, roomId.Value, ct);
         if (entries is null)
         {
             return;

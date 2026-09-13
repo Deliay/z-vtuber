@@ -19,12 +19,12 @@ public class LiveGuardListFetcher
         _logger = logger;
     }
 
-    internal virtual Task<List<LiveGuardEntry>?> FetchAllAsync(string cookie, long mid, long roomId, CancellationToken ct)
+    internal virtual Task<List<LiveGuardEntry>?> FetchAllAsync(string cookieId, string cookie, long mid, long roomId, CancellationToken ct)
     {
-        return FetchAllPagesAsync(cookie, mid, roomId, ct);
+        return FetchAllPagesAsync(cookieId, cookie, mid, roomId, ct);
     }
 
-    private async Task<List<LiveGuardEntry>?> FetchAllPagesAsync(string cookie, long mid, long roomId, CancellationToken ct)
+    private async Task<List<LiveGuardEntry>?> FetchAllPagesAsync(string cookieId, string cookie, long mid, long roomId, CancellationToken ct)
     {
         var merged = new Dictionary<long, LiveGuardEntry>();
         var page = 1;
@@ -34,7 +34,7 @@ public class LiveGuardListFetcher
             GuardInfo info;
             try
             {
-                info = await _bili.GetRoomGuardListAsync(cookie, roomId, mid, page, ct);
+                info = await _bili.GetRoomGuardListAsync(cookieId, cookie, roomId, mid, page, ct);
             }
             catch (CrawlBackoffActiveException ex)
             {

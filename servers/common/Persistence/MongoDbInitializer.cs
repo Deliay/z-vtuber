@@ -6,6 +6,7 @@ namespace Z.Vtuber.Common.Persistence;
 public sealed class MongoCollectionNames
 {
     public const string Cookies = "bilibili_cookies";
+    public const string CookieSessions = "bilibili_cookie_sessions";
     public const string Subscriptions = "bilibili_subscriptions";
     public const string AccountBasicInfo = "bilibili_account_basic_info";
     public const string LiveStatus = "bilibili_live_status";
@@ -28,6 +29,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
     public async Task EnsureIndexesAsync(CancellationToken ct = default)
     {
         await EnsureCookiesIndexesAsync(ct);
+        await EnsureCookieSessionIndexesAsync(ct);
         await EnsureSubscriptionsIndexesAsync(ct);
         await EnsureAccountBasicInfoIndexesAsync(ct);
         await EnsureLiveStatusIndexesAsync(ct);
@@ -62,13 +64,32 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         logger.LogInformation("Ensured (Mid, Type) composite unique index on subscriptions.");
     }
 
-    private Task EnsureCookiesIndexesAsync(CancellationToken ct)
+    private async Task EnsureCookiesIndexesAsync(CancellationToken ct)
     {
         var collection = database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
         var keys = Builders<CookieRecord>.IndexKeys
             .Ascending(c => c.Status)
             .Ascending(c => c.LastUsedAt);
-        return collection.Indexes.CreateOneAsync(new CreateIndexModel<CookieRecord>(keys), cancellationToken: ct);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<CookieRecord>(keys), cancellationToken: ct);
+
+        var accountIdKeys = Builders<CookieRecord>.IndexKeys.Ascending(c => c.AccountId);
+        await collection.Indexes.CreateOneAsync(
+            new CreateIndexModel<CookieRecord>(accountIdKeys, new CreateIndexOptions { Name = "AccountId_1" }),
+            cancellationToken: ct);
+    }
+
+    private async Task EnsureCookieSessionIndexesAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<CookieSessionRecord>(MongoCollectionNames.CookieSessions);
+        var statusKeys = Builders<CookieSessionRecord>.IndexKeys.Ascending(s => s.Status);
+        await collection.Indexes.CreateOneAsync(
+            new CreateIndexModel<CookieSessionRecord>(statusKeys, new CreateIndexOptions { Name = "Status_1" }),
+            cancellationToken: ct);
+
+        var cookieIdKeys = Builders<CookieSessionRecord>.IndexKeys.Ascending(s => s.CookieId);
+        await collection.Indexes.CreateOneAsync(
+            new CreateIndexModel<CookieSessionRecord>(cookieIdKeys, new CreateIndexOptions { Name = "CookieId_1" }),
+            cancellationToken: ct);
     }
 
     private async Task EnsureSubscriptionsIndexesAsync(CancellationToken ct)

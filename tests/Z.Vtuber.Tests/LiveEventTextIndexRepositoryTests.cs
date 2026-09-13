@@ -3,8 +3,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class LiveEventTextIndexRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
+public class LiveEventTextIndexRepositoryTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 

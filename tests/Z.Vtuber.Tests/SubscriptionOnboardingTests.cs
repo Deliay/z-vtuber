@@ -5,11 +5,11 @@ using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class SubscriptionOnboardingTests(MongoDbFixture fixture) : IAsyncLifetime
+public class SubscriptionOnboardingTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -25,7 +25,7 @@ public class SubscriptionOnboardingTests(MongoDbFixture fixture) : IAsyncLifetim
         var bili = new FakeBiliApiClient { AccountInfoProvider = AccountInfoFor };
         var accountRepository = new AccountBasicInfoRepository(fixture.Database);
         var liveSessionRepository = new LiveSessionRepository(fixture.Database);
-        var crawler = new AccountInfoCrawler(bili, accountRepository, liveSessionRepository, new CrawlLockProvider(), NullLogger<AccountInfoCrawler>.Instance);
+        var crawler = new AccountInfoCrawler(bili, accountRepository, liveSessionRepository, new CrawlLockProvider(new FakeDistributedLockProvider()), NullLogger<AccountInfoCrawler>.Instance);
 
         Task? crawlTask = null;
         subscription.Subscribed += (mid, type) => crawlTask = crawler.CrawlAsync(mid);

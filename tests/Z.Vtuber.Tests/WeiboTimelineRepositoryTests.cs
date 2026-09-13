@@ -3,8 +3,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class WeiboTimelineRepositoryTests(MongoDbFixture fixture) : IAsyncLifetime
+public class WeiboTimelineRepositoryTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     private WeiboTimelineRepository CreateRepository() => new(fixture.Database);
 

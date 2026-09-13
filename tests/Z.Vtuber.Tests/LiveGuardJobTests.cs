@@ -9,11 +9,11 @@ using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Common.Locking;
 
 namespace Z.Vtuber.Tests;
 
-[Collection("mongo")]
-public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
+public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -34,15 +34,15 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
 
     private sealed class FakeLiveGuardListFetcher : LiveGuardListFetcher
     {
-        public Func<string, long, long, CancellationToken, Task<List<LiveGuardEntry>?>>? FetchFunc { get; set; }
+        public Func<string, string, long, long, CancellationToken, Task<List<LiveGuardEntry>?>>? FetchFunc { get; set; }
 
         public FakeLiveGuardListFetcher()
             : base(new FakeBiliApiClient(), new BilibiliCrawlerOptions(), NullLogger<LiveGuardListFetcher>.Instance)
         {
         }
 
-        internal override Task<List<LiveGuardEntry>?> FetchAllAsync(string cookie, long mid, long roomId, CancellationToken ct)
-            => FetchFunc?.Invoke(cookie, mid, roomId, ct) ?? Task.FromResult<List<LiveGuardEntry>?>([]);
+        internal override Task<List<LiveGuardEntry>?> FetchAllAsync(string cookieId, string cookie, long mid, long roomId, CancellationToken ct)
+            => FetchFunc?.Invoke(cookieId, cookie, mid, roomId, ct) ?? Task.FromResult<List<LiveGuardEntry>?>([]);
     }
 
     private BilibiliCrawlerOptions GuardOptions() => new()
@@ -81,7 +81,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         DateTime? utcNow = null,
         AccountBasicInfoRepository? accountRepo = null,
         BilibiliCrawlerOptions? options = null,
-        ICookiePoolService? cookiePool = null,
+        ICookieServiceClient? cookieServiceClient = null,
         ISubscriptionService? subscription = null,
         FakeTimeProvider? timeProvider = null)
     {
@@ -90,16 +90,16 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             new FakeBiliApiClient(),
             accountRepo,
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             NullLogger<AccountInfoCrawler>.Instance);
 
         return new LiveGuardJob(
             subscription ?? new SubscriptionService(fixture.Database),
-            cookiePool ?? new FakeCookiePoolService(),
+            cookieServiceClient ?? new FakeCookieServiceClient(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
             accountInfoCrawler,
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             options ?? GuardOptions(),
             timeProvider ?? new FakeTimeProvider(utcNow ?? BeijingDateTime(2026, 8, 31, 23)),
             NullLogger<LiveGuardJob>.Instance,
@@ -125,7 +125,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         await SeedSubscriptionAsync(SubscriptionType.Guard);
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) => throw new Exception("should not be called")
+            FetchFunc = (_, _, _, _, _) => throw new Exception("should not be called")
         };
         var job = CreateJob(fetcher, utcNow: BeijingDateTime(2026, 8, 31, 22));
 
@@ -142,7 +142,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         await SeedAccountAsync(RoomId);
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([
+            FetchFunc = (_, _, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([
                 new LiveGuardEntry { Uid = 1, UserName = "a", GuardLevel = 3, MedalName = "星", MedalLevel = 5 },
             ])
         };
@@ -183,7 +183,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         var fetchCalls = 0;
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) =>
+            FetchFunc = (_, _, _, _, _) =>
             {
                 fetchCalls++;
                 return Task.FromResult<List<LiveGuardEntry>?>([]);
@@ -207,7 +207,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         var fetchCalls = 0;
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) =>
+            FetchFunc = (_, _, _, _, _) =>
             {
                 fetchCalls++;
                 return Task.FromResult<List<LiveGuardEntry>?>([]);
@@ -227,7 +227,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         await SeedAccountAsync(RoomId);
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) => throw new Exception("should not be called")
+            FetchFunc = (_, _, _, _, _) => throw new Exception("should not be called")
         };
         var subscription = new SubscriptionService(fixture.Database);
         var job = CreateJob(fetcher, subscription: subscription);
@@ -247,7 +247,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         var calls = 0;
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) =>
+            FetchFunc = (_, _, _, _, _) =>
             {
                 calls++;
                 return Task.FromResult<List<LiveGuardEntry>?>([
@@ -294,7 +294,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         var fetchCalls = 0;
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) =>
+            FetchFunc = (_, _, _, _, _) =>
             {
                 fetchCalls++;
                 return Task.FromResult<List<LiveGuardEntry>?>([]);
@@ -315,7 +315,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         await SeedAccountAsync(RoomId);
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) => throw new Exception("should not be called")
+            FetchFunc = (_, _, _, _, _) => throw new Exception("should not be called")
         };
         var subscription = new SubscriptionService(fixture.Database);
         // 北京时间 2026-09-01 04:00，过了凌晨补抓窗口、未到当日 23:00
@@ -336,7 +336,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         // 不预置 account，roomId 缺失
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([
+            FetchFunc = (_, _, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([
                 new LiveGuardEntry { Uid = 1 },
             ])
         };
@@ -349,16 +349,16 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             bili,
             accountRepo,
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             NullLogger<AccountInfoCrawler>.Instance);
 
         var job = new LiveGuardJob(
             new SubscriptionService(fixture.Database),
-            new FakeCookiePoolService(),
+            new FakeCookieServiceClient(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
             accountInfoCrawler,
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             GuardOptions(),
             new FakeTimeProvider(BeijingDateTime(2026, 8, 31, 23)),
             NullLogger<LiveGuardJob>.Instance,
@@ -376,7 +376,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         await SeedSubscriptionAsync(SubscriptionType.Guard);
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([])
+            FetchFunc = (_, _, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([])
         };
         var bili = new FakeBiliApiClient
         {
@@ -387,16 +387,16 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
             bili,
             accountRepo,
             new LiveSessionRepository(fixture.Database),
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             NullLogger<AccountInfoCrawler>.Instance);
 
         var job = new LiveGuardJob(
             new SubscriptionService(fixture.Database),
-            new FakeCookiePoolService(),
+            new FakeCookieServiceClient(),
             accountRepo,
             new LiveGuardRepository(fixture.Database),
             accountInfoCrawler,
-            new CrawlLockProvider(),
+            new CrawlLockProvider(new FakeDistributedLockProvider()),
             GuardOptions(),
             new FakeTimeProvider(BeijingDateTime(2026, 8, 31, 23)),
             NullLogger<LiveGuardJob>.Instance,
@@ -415,7 +415,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         await SeedAccountAsync(RoomId);
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>(null)
+            FetchFunc = (_, _, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>(null)
         };
         var job = CreateJob(fetcher);
 
@@ -432,10 +432,10 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         await SeedAccountAsync(RoomId);
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) => throw new Exception("should not be called")
+            FetchFunc = (_, _, _, _, _) => throw new Exception("should not be called")
         };
-        var cookiePool = new NoCookiePoolService();
-        var job = CreateJob(fetcher, cookiePool: cookiePool);
+        var noCookieClient = new NoCookieServiceClient();
+        var job = CreateJob(fetcher, cookieServiceClient: noCookieClient);
 
         await job.RunOnceAsync(CancellationToken.None);
 
@@ -450,7 +450,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         await SeedAccountAsync(RoomId);
         var fetcher = new FakeLiveGuardListFetcher
         {
-            FetchFunc = (_, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([])
+            FetchFunc = (_, _, _, _, _) => Task.FromResult<List<LiveGuardEntry>?>([])
         };
         var job = CreateJob(fetcher);
 
@@ -463,14 +463,11 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IAsyncLifetime
         Assert.Equal(0, stored.GuardCount);
     }
 
-    private sealed class NoCookiePoolService : ICookiePoolService
+    private sealed class NoCookieServiceClient : ICookieServiceClient
     {
-        public Task<CookieRecord> AddAsync(string cookie, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<CookieRecord> NextAsync(CancellationToken ct = default) => throw new NoAvailableCookieException();
-        public Task<bool> MarkOfflineAsync(string cookie, CancellationToken ct = default) => Task.FromResult(true);
-        public Task MarkCooldownAsync(string cookie, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
-        public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<CookieRecord>>([]);
-        public Task<CookieRecord?> FindByCookieAsync(string cookie, CancellationToken ct = default) => Task.FromResult<CookieRecord?>(null);
+        public Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default) => throw new NoAvailableCookieException();
+        public Task<ReportInvalidResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default) => Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.Refreshed, CookieId = cookieId });
+        public Task CooldownAsync(string cookieId, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     private static System.Text.Json.JsonElement JsonDoc(string channelBody)

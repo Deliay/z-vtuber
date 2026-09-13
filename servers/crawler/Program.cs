@@ -1,12 +1,14 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using MongoDB.Driver;
+using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Crawler.Live;
+using Z.Vtuber.Crawler.Locking;
 using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Crawler.Weibo;
 
@@ -48,9 +50,9 @@ builder.Services.AddSingleton<MongoDbInitializer>();
 
 builder.Services.AddBackstageDataAggregation();
 
-builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 builder.Services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
+builder.Services.AddSingleton<IDistributedLockProvider, RedisDistributedLockProvider>();
 
 // 微博链路：独立集合/仓储/订阅服务/访客凭证/客户端，与 B 站隔离
 builder.Services.AddSingleton<WeiboSubscriptionRepository>();
@@ -59,8 +61,14 @@ builder.Services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionServic
 builder.Services.AddSingleton<IWeiboVisitorCookieProvider, WeiboVisitorCookieProvider>();
 builder.Services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
 
-builder.Services.AddSingleton<ICookieNavProbeService, CookieNavProbeService>();
 builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
+
+// Cookie service client for remote cookie management
+builder.Services.AddHttpClient<CookieServiceClient>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["CookieService:BaseUrl"] ?? "http://cookie-service");
+});
+builder.Services.AddSingleton<ICookieServiceClient>(sp => sp.GetRequiredService<CookieServiceClient>());
 
 builder.Services.AddSingleton<CookieCallGate>();
 builder.Services.AddSingleton<IBilibiliAccountProvider, BilibiliAccountProvider>();
@@ -75,8 +83,8 @@ builder.Services.AddSingleton<IBiliApiClient>(sp => new ResilientBiliApiClient(
     sp.GetRequiredService<BiliApiClient>(),
     sp.GetRequiredService<BrowserishBiliApiClient>(),
     sp.GetRequiredService<BilibiliCrawlerOptions>(),
-    sp.GetRequiredService<ICookiePoolService>(),
     sp.GetRequiredService<ICrawlBackoffRegistry>(),
+    sp.GetRequiredService<ICookieServiceClient>(),
     sp.GetRequiredService<ILogger<ResilientBiliApiClient>>()));
 builder.Services.AddSingleton<ICrawlBackoffRegistry, CrawlBackoffRegistry>();
 // 微博链路使用按 WeiboCrawlerOptions 独立配置的退避实例（与 B 站参数隔离）
@@ -92,13 +100,11 @@ builder.Services.AddSingleton<CrawlBackoffRegistry>(sp =>
 });
 builder.Services.AddSingleton<IDanmakuClientFactory, DanmakuClientFactory>();
 builder.Services.AddSingleton<ILiveEventPublisher, RedisLiveEventPublisher>();
-builder.Services.AddSingleton<ICookieInvalidEventPublisher, RedisCookieInvalidEventPublisher>();
 builder.Services.AddSingleton<CrawlLockProvider>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<LiveGuardListFetcher>();
 builder.Services.AddSingleton<LiveGuardTop3BackfillService>();
 
-builder.Services.AddHostedService<CookieProbeJob>();
 builder.Services.AddHostedService<AccountInfoJob>();
 builder.Services.AddHostedService<LiveStatusJob>();
 builder.Services.AddHostedService<SpaceTimelineJob>();
