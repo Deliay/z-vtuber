@@ -868,4 +868,85 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IClassFixture
         Assert.True(heartbeatCount >= 1 && heartbeatCount <= 3,
             $"Expected 1-3 heartbeats after cancel, got {heartbeatCount}");
     }
+
+    [Fact]
+    public async Task GetEventsRange_PayloadStructureSnapshot()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+
+        // Seed events with various payload structures
+        var danmakuPayload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Hello World",[403496,"Zero_Ash",123],[25,"小粉螈","枝堇Sumire"]]}""");
+        var giftPayload = MongoDB.Bson.BsonDocument.Parse("""{"data":{"coin_type":"gold","discount_price":100,"price":100}}""");
+        var superChatPayload = MongoDB.Bson.BsonDocument.Parse("""{"data":{"message":"SC Message","uid":663620883,"user_info":{"uname":"lxl-lxl"}}}""");
+
+        await SeedEvents(repository,
+            new LiveEventRecord { RoomId = 123456, Type = "danmaku", OccurredAt = EventBaseDate.AddHours(1), Payload = danmakuPayload },
+            new LiveEventRecord { RoomId = 123456, Type = "gift", OccurredAt = EventBaseDate.AddHours(2), Payload = giftPayload, Price = 100 },
+            new LiveEventRecord { RoomId = 123456, Type = "super_chat", OccurredAt = EventBaseDate.AddHours(3), Payload = superChatPayload });
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456));
+        var items = json.GetProperty("items").EnumerateArray().ToList();
+
+        Assert.Equal(3, items.Count);
+
+        // Snapshot: danmaku payload structure
+        var danmaku = items.First(i => i.GetProperty("type").GetString() == "danmaku");
+        var danmakuPayloadJson = danmaku.GetProperty("payload");
+        Assert.True(danmakuPayloadJson.TryGetProperty("info", out var info));
+        Assert.Equal(JsonValueKind.Array, info.ValueKind);
+        Assert.Equal("Hello World", info[1].GetString());
+
+        // Snapshot: gift payload structure
+        var gift = items.First(i => i.GetProperty("type").GetString() == "gift");
+        var giftPayloadJson = gift.GetProperty("payload");
+        Assert.True(giftPayloadJson.TryGetProperty("data", out var giftData));
+        Assert.Equal("gold", giftData.GetProperty("coin_type").GetString());
+        Assert.Equal(100, giftData.GetProperty("discount_price").GetInt64());
+
+        // Snapshot: super_chat payload structure
+        var sc = items.First(i => i.GetProperty("type").GetString() == "super_chat");
+        var scPayloadJson = sc.GetProperty("payload");
+        Assert.True(scPayloadJson.TryGetProperty("data", out var scData));
+        Assert.Equal("SC Message", scData.GetProperty("message").GetString());
+        Assert.Equal(663620883, scData.GetProperty("uid").GetInt64());
+        Assert.Equal("lxl-lxl", scData.GetProperty("user_info").GetProperty("uname").GetString());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_TransitionalOldStringData_ReturnsValidPayload()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+
+        // Simulate old data that was read through the tolerant serializer
+        var oldPayload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Old Message"]}""");
+        await SeedEvents(repository,
+            new LiveEventRecord { RoomId = 123456, Type = "danmaku", OccurredAt = EventBaseDate.AddHours(1), Payload = oldPayload });
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456));
+        var items = json.GetProperty("items").EnumerateArray().ToList();
+
+        Assert.Single(items);
+        var payload = items[0].GetProperty("payload");
+        Assert.True(payload.TryGetProperty("info", out var info));
+        Assert.Equal("Old Message", info[1].GetString());
+    }
+
+    [Fact]
+    public async Task GetEventsRange_DegradedPayload_ReturnsRawWrapper()
+    {
+        var repository = new LiveEventRepository(fixture.Database);
+
+        // Simulate degraded data with {raw: ...} wrapper
+        var degradedPayload = MongoDB.Bson.BsonDocument.Parse("""{"raw":"not-valid-json"}""");
+        await SeedEvents(repository,
+            new LiveEventRecord { RoomId = 123456, Type = "danmaku", OccurredAt = EventBaseDate.AddHours(1), Payload = degradedPayload });
+
+        var json = Ok(await CreateController(fixture.Database).GetEventsRange(123456));
+        var items = json.GetProperty("items").EnumerateArray().ToList();
+
+        Assert.Single(items);
+        var payload = items[0].GetProperty("payload");
+        Assert.True(payload.TryGetProperty("raw", out var raw));
+        Assert.Equal("not-valid-json", raw.GetString());
+    }
 }
