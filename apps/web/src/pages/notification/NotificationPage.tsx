@@ -10,6 +10,17 @@ import type { components } from '../../api/schema-notify'
 type NotifyGroup = components['schemas']['NotifyGroup']
 type NotificationSubscription = components['schemas']['NotificationSubscription']
 
+const EVENT_TYPE_OPTIONS = [
+  { value: 'bilibili_cookie_invalid', label: 'bilibili帐号失效通知' },
+  { value: 'weibo_cookie_invalid', label: '微博帐号失效通知' },
+] as const
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  bilibili_cookie_invalid: 'bilibili帐号失效通知',
+  weibo_cookie_invalid: '微博帐号失效通知',
+  cookie_invalid: 'bilibili帐号失效通知',
+}
+
 export function NotificationPage() {
   const [bindings, setBindings] = useState<NotificationSubscription[]>([])
   const [loading, setLoading] = useState(true)
@@ -20,6 +31,7 @@ export function NotificationPage() {
   const [groupsLoading, setGroupsLoading] = useState(false)
   const [groupsError, setGroupsError] = useState<string | null>(null)
   const [selectedGroup, setSelectedGroup] = useState<string>('')
+  const [selectedEventType, setSelectedEventType] = useState<string>('bilibili_cookie_invalid')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -47,6 +59,7 @@ export function NotificationPage() {
     setGroupsLoading(true)
     setGroupsError(null)
     setSelectedGroup('')
+    setSelectedEventType('bilibili_cookie_invalid')
     setSubmitError(null)
 
     try {
@@ -77,7 +90,7 @@ export function NotificationPage() {
     try {
       setSubmitting(true)
       await createNotificationBinding({
-        eventType: 'cookie_invalid',
+        eventType: selectedEventType as 'bilibili_cookie_invalid' | 'weibo_cookie_invalid',
         groupId: group.groupId,
         groupName: group.groupName,
       })
@@ -149,7 +162,7 @@ export function NotificationPage() {
               return (
                 <tr key={binding.id}>
                   <td style={{ padding: '0.5rem' }}>
-                    {binding.eventType === 'cookie_invalid' ? 'Cookie 失效' : binding.eventType}
+                    {EVENT_TYPE_LABELS[binding.eventType ?? ''] ?? binding.eventType}
                   </td>
                   <td style={{ padding: '0.5rem' }}>
                     {binding.groupName ?? binding.groupId}（{binding.groupId}）
@@ -219,12 +232,17 @@ export function NotificationPage() {
                 <label style={{ display: 'block', marginBottom: '0.5rem' }}>
                   通知类型
                 </label>
-                <input
-                  type="text"
-                  value="Cookie 失效"
-                  disabled
+                <select
+                  value={selectedEventType}
+                  onChange={(e) => setSelectedEventType(e.target.value)}
                   style={{ width: '100%', padding: '0.5rem', backgroundColor: '#334155', color: '#e2e8f0', border: '1px solid #475569', borderRadius: '0.25rem' }}
-                />
+                >
+                  {EVENT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div style={{ marginBottom: '1rem' }}>
