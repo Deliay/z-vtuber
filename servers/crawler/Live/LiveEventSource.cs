@@ -184,6 +184,12 @@ public sealed class LiveEventSource(
                         Price = liveEvent.Price ?? GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
                     };
 
+                    if (liveEventRecord.Payload.Contains("raw"))
+                    {
+                        logger.LogWarning("Payload degraded to raw wrapper for {Type} event in room {RoomId} at {OccurredAt}; original payload is not a valid JSON object.",
+                            liveEvent.Type, liveEvent.RoomId, liveEvent.OccurredAt);
+                    }
+
                     await eventRepository.InsertAsync(liveEventRecord, ct);
 
                     // 文本索引写入：弹幕/SC 事件提取文本并写入索引集合

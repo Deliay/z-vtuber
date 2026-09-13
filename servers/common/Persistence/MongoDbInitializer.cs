@@ -744,10 +744,10 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         }
 
         const int batchSize = 500;
-        var collection = database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var rawCollection = database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
 
-        // 过滤 Payload BSON 类型为 String 的记录
-        var typeFilter = Builders<LiveEventRecord>.Filter.Type(r => r.Payload, BsonType.String);
+        // 过滤 Payload 字段为 BSON String 类型的文档（绕过实体序列化器）
+        var typeFilter = Builders<BsonDocument>.Filter.Type("Payload", BsonType.String);
 
         MongoDB.Bson.ObjectId lastId = MongoDB.Bson.ObjectId.Empty;
         long totalProcessed = 0;
@@ -755,15 +755,15 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
         while (true)
         {
-            var idFilter = Builders<LiveEventRecord>.Filter.Gt(e => e.Id, lastId);
-            var combinedFilter = Builders<LiveEventRecord>.Filter.And(typeFilter, idFilter);
+            var idFilter = Builders<BsonDocument>.Filter.Gt("_id", lastId);
+            var combinedFilter = Builders<BsonDocument>.Filter.And(typeFilter, idFilter);
 
-            var batch = await collection.Find(combinedFilter)
-                .Project<LiveEventRecord>(Builders<LiveEventRecord>.Projection
-                    .Include(r => r.Id)
-                    .Include(r => r.Type)
-                    .Include(r => r.Payload))
-                .SortBy(e => e.Id)
+            var batch = await rawCollection.Find(combinedFilter)
+                .Project<BsonDocument>(Builders<BsonDocument>.Projection
+                    .Include("_id")
+                    .Include("Type")
+                    .Include("Payload"))
+                .Sort(Builders<BsonDocument>.Sort.Ascending("_id"))
                 .Limit(batchSize)
                 .ToListAsync(ct);
 
@@ -772,30 +772,41 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
                 break;
             }
 
-            var models = new List<WriteModel<LiveEventRecord>>(batch.Count);
-            foreach (var record in batch)
+            var models = new List<WriteModel<BsonDocument>>(batch.Count);
+            foreach (var doc in batch)
             {
-                try
+                var id = doc["_id"].AsObjectId;
+                var type = doc["Type"].AsString;
+                var payloadBsonValue = doc["Payload"];
+
+                if (payloadBsonValue.BsonType != BsonType.String)
                 {
-                    var bsonDoc = LiveEventPayloadParser.ToBsonDocument(record.Payload.ToJson());
-                    models.Add(new UpdateOneModel<LiveEventRecord>(
-                        Builders<LiveEventRecord>.Filter.Eq(r => r.Id, record.Id),
-                        Builders<LiveEventRecord>.Update.Set(r => r.Payload, bsonDoc)));
+                    skippedCount++;
+                    continue;
                 }
-                catch (Exception ex)
+
+                var rawPayloadString = payloadBsonValue.AsString;
+
+                if (LiveEventPayloadParser.TryToBsonDocument(rawPayloadString, out var bsonDoc))
                 {
-                    logger.LogWarning("Skipping record {Id} due to payload parsing error: {Error}", record.Id, ex.Message);
+                    models.Add(new UpdateOneModel<BsonDocument>(
+                        Builders<BsonDocument>.Filter.Eq("_id", id),
+                        Builders<BsonDocument>.Update.Set("Payload", bsonDoc)));
+                }
+                else
+                {
+                    logger.LogWarning("Skipping dirty record {Id} (Type={Type}): payload is not a valid JSON object, preserving original string.", id, type);
                     skippedCount++;
                 }
             }
 
             if (models.Count > 0)
             {
-                await collection.BulkWriteAsync(models, cancellationToken: ct);
+                await rawCollection.BulkWriteAsync(models, cancellationToken: ct);
                 logger.LogInformation("Backfilled payload object for {Count} records.", models.Count);
             }
 
-            lastId = batch[^1].Id;
+            lastId = batch[^1]["_id"].AsObjectId;
             totalProcessed += batch.Count;
 
             if (batch.Count < batchSize)
@@ -804,7 +815,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             }
         }
 
-        logger.LogInformation("Live event payload object backfill total processed {Total} records, skipped {Skipped}.", totalProcessed, skippedCount);
+        logger.LogInformation("Live event payload object backfill total processed {Total} records, skipped {Skipped} (dirty or non-JSON-object).", totalProcessed, skippedCount);
 
         await MarkMigrationAppliedAsync(LiveEventPayloadObjectBackfillMigrationKey, ct);
         logger.LogInformation("Live event payload object backfill completed and marked as applied.");
