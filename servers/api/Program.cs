@@ -64,6 +64,7 @@ using (var scope = app.Services.CreateScope())
     await initializer.BackfillGiftPriceAsync();
     await initializer.BackfillLiveEventTextIndexAsync();
     await initializer.BackfillLiveEventSenderAsync();
+    await initializer.BackfillLiveEventPayloadObjectAsync();
 }
 
 if (app.Environment.IsDevelopment())

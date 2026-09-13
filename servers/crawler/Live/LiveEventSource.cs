@@ -179,7 +179,7 @@ public sealed class LiveEventSource(
                         RoomId = liveEvent.RoomId,
                         LiveSessionId = liveEvent.LiveSessionId,
                         Type = liveEvent.Type,
-                        Payload = liveEvent.Payload,
+                        Payload = LiveEventPayloadParser.ToBsonDocument(liveEvent.Payload),
                         OccurredAt = liveEvent.OccurredAt,
                         Price = liveEvent.Price ?? GiftPriceExtractor.ExtractGoldSeeds(liveEvent.Type, liveEvent.Payload),
                     };

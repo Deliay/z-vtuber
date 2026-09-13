@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence.Entities;
 
@@ -400,7 +401,8 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             var models = new List<WriteModel<LiveEventRecord>>(batch.Count);
             foreach (var record in batch)
             {
-                var price = Live.GiftPriceExtractor.ExtractGoldSeeds(record.Type, record.Payload);
+                var payloadString = record.Payload.ToJson();
+                var price = Live.GiftPriceExtractor.ExtractGoldSeeds(record.Type, payloadString);
                 models.Add(new UpdateOneModel<LiveEventRecord>(
                     Builders<LiveEventRecord>.Filter.Eq(r => r.Id, record.Id),
                     Builders<LiveEventRecord>.Update.Set(r => r.Price, price)));
@@ -479,7 +481,8 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             var models = new List<WriteModel<LiveEventTextIndexRecord>>(batch.Count);
             foreach (var record in batch)
             {
-                var extraction = Live.LiveEventTextExtractor.Extract(record.Type, record.Payload);
+                var payloadString = record.Payload.ToJson();
+                var extraction = Live.LiveEventTextExtractor.Extract(record.Type, payloadString);
                 if (extraction is null)
                 {
                     continue;
@@ -585,7 +588,8 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             var models = new List<WriteModel<LiveEventTextIndexRecord>>(batch.Count);
             foreach (var record in batch)
             {
-                var extraction = Live.LiveEventTextExtractor.Extract(record.Type, record.Payload);
+                var payloadString = record.Payload.ToJson();
+                var extraction = Live.LiveEventTextExtractor.Extract(record.Type, payloadString);
                 if (extraction is null)
                 {
                     continue;
@@ -724,6 +728,86 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         // 使用 upsert 避免重复键错误（回滚场景 / 双服务并发）
         await MarkMigrationAppliedAsync(SubscriptionTypeSplitMigrationKey, ct);
         logger.LogInformation("Subscription type split migration completed and marked as applied.");
+    }
+
+    public const string LiveEventPayloadObjectBackfillMigrationKey = "live_event_payload_object_backfill_v1";
+
+    public async Task BackfillLiveEventPayloadObjectAsync(CancellationToken ct = default)
+    {
+        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == LiveEventPayloadObjectBackfillMigrationKey)
+            .AnyAsync(ct);
+        if (markerExists)
+        {
+            logger.LogInformation("Live event payload object backfill already applied; skipping.");
+            return;
+        }
+
+        const int batchSize = 500;
+        var collection = database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+
+        // 过滤 Payload BSON 类型为 String 的记录
+        var typeFilter = Builders<LiveEventRecord>.Filter.Type(r => r.Payload, BsonType.String);
+
+        MongoDB.Bson.ObjectId lastId = MongoDB.Bson.ObjectId.Empty;
+        long totalProcessed = 0;
+        long skippedCount = 0;
+
+        while (true)
+        {
+            var idFilter = Builders<LiveEventRecord>.Filter.Gt(e => e.Id, lastId);
+            var combinedFilter = Builders<LiveEventRecord>.Filter.And(typeFilter, idFilter);
+
+            var batch = await collection.Find(combinedFilter)
+                .Project<LiveEventRecord>(Builders<LiveEventRecord>.Projection
+                    .Include(r => r.Id)
+                    .Include(r => r.Type)
+                    .Include(r => r.Payload))
+                .SortBy(e => e.Id)
+                .Limit(batchSize)
+                .ToListAsync(ct);
+
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            var models = new List<WriteModel<LiveEventRecord>>(batch.Count);
+            foreach (var record in batch)
+            {
+                try
+                {
+                    var bsonDoc = LiveEventPayloadParser.ToBsonDocument(record.Payload.ToJson());
+                    models.Add(new UpdateOneModel<LiveEventRecord>(
+                        Builders<LiveEventRecord>.Filter.Eq(r => r.Id, record.Id),
+                        Builders<LiveEventRecord>.Update.Set(r => r.Payload, bsonDoc)));
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning("Skipping record {Id} due to payload parsing error: {Error}", record.Id, ex.Message);
+                    skippedCount++;
+                }
+            }
+
+            if (models.Count > 0)
+            {
+                await collection.BulkWriteAsync(models, cancellationToken: ct);
+                logger.LogInformation("Backfilled payload object for {Count} records.", models.Count);
+            }
+
+            lastId = batch[^1].Id;
+            totalProcessed += batch.Count;
+
+            if (batch.Count < batchSize)
+            {
+                break;
+            }
+        }
+
+        logger.LogInformation("Live event payload object backfill total processed {Total} records, skipped {Skipped}.", totalProcessed, skippedCount);
+
+        await MarkMigrationAppliedAsync(LiveEventPayloadObjectBackfillMigrationKey, ct);
+        logger.LogInformation("Live event payload object backfill completed and marked as applied.");
     }
 
     private async Task EnsureNotificationSubscriptionIndexesAsync(CancellationToken ct)
