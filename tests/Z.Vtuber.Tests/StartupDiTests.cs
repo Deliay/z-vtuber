@@ -83,6 +83,10 @@ public class StartupDiTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixtu
         services.AddSingleton<WeiboTimelineRepository>();
         services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionService>();
         services.AddSingleton<IWeiboVisitorCookieProvider, WeiboVisitorCookieProvider>();
+        services.AddSingleton<ICookieServiceClient, FakeCookieServiceClient>();
+        services.AddSingleton<CookieCallGate>();
+        services.AddSingleton<IWeiboLoginCookieProvider, WeiboLoginCookieProvider>();
+        services.AddSingleton<IWeiboCookieSource, WeiboCookieSource>();
         services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
         services.AddSingleton<ICrawlBackoffRegistry>(new CrawlBackoffRegistry(Options.Create(new BilibiliCrawlerOptions())));
         services.AddSingleton(new CrawlBackoffRegistry(
