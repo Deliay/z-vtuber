@@ -25,6 +25,9 @@ import {
   getWeiboCookieAccount,
   deleteWeiboCookieAccount,
   listAvailableWeiboCookies,
+  checkoutWeiboCookie,
+  reportInvalidWeiboCookie,
+  cooldownWeiboCookie,
 } from './client'
 
 const mockFetch = vi.fn()
@@ -788,6 +791,61 @@ describe('API Client', () => {
           expect.objectContaining({}),
         )
         expect(result).toEqual(mockData.items)
+      })
+    })
+
+    describe('checkoutWeiboCookie', () => {
+      it('should POST /cookie/weibo/checkout', async () => {
+        const mockData = { cookieId: 'c1', accountId: 'a1', cookie: 'SUB=x' }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockData),
+        })
+
+        const result = await checkoutWeiboCookie()
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/checkout'),
+          expect.objectContaining({ method: 'POST' }),
+        )
+        expect(result).toEqual(mockData)
+      })
+    })
+
+    describe('reportInvalidWeiboCookie', () => {
+      it('should POST /cookie/weibo/report-invalid with cookieId', async () => {
+        const mockData = { cookieId: 'c1', cookie: 'SUB=new', refreshed: true }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockData),
+        })
+
+        const result = await reportInvalidWeiboCookie('c1')
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/report-invalid'),
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ cookieId: 'c1' }),
+          }),
+        )
+        expect(result).toEqual(mockData)
+      })
+    })
+
+    describe('cooldownWeiboCookie', () => {
+      it('should POST /cookie/weibo/cooldown with cookieId and duration', async () => {
+        mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+        await cooldownWeiboCookie('c1', 300)
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/cooldown'),
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ cookieId: 'c1', durationSeconds: 300 }),
+          }),
+        )
       })
     })
   })

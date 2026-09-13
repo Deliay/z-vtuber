@@ -17,6 +17,7 @@ public class WeiboCookiePlatformProfileTests
         Assert.Equal("https://m.weibo.cn/api/config", _profile.LoginStateProbeUrl);
         Assert.Null(_profile.LoginStateObservedUrlFragment);
         Assert.Equal("weibo:", _profile.LockKeyPrefix);
+        Assert.Equal(["SUB", "SUBP"], _profile.RequiredCookieNames);
     }
 
     [Theory]

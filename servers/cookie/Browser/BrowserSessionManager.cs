@@ -204,6 +204,18 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
 
         var cookies = await context.CookiesAsync([_profile.CookieDomainUrl]);
         var cookieHeader = string.Join("; ", cookies.Select(c => $"{c.Name}={c.Value}"));
+
+        if (_profile.RequiredCookieNames.Count > 0)
+        {
+            var present = cookies.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var missing = _profile.RequiredCookieNames.Where(n => !present.Contains(n)).ToList();
+            if (missing.Count > 0)
+            {
+                _logger.LogWarning("Extracted {Platform} cookie for account {AccountId} is missing required cookies: {Missing}",
+                    _profile.Platform, accountId, string.Join(", ", missing));
+            }
+        }
+
         return cookieHeader;
     }
 

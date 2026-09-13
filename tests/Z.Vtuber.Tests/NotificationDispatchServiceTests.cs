@@ -151,6 +151,7 @@ public class NotificationDispatchServiceTests(MongoDbFixture fixture) : IClassFi
         Assert.Contains("TestUser", message);
         Assert.Contains("12345", message);
         Assert.Contains("bilibili 帐号失效通知", message);
+        Assert.DoesNotContain("敏感", message);
     }
 
     [Fact]

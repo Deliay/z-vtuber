@@ -48,7 +48,20 @@ public sealed class WeiboCookieSource : IWeiboCookieSource
     {
         if (_options.UseLoginCookie)
         {
-            var login = await _loginCookies.AcquireAsync(ct);
+            WeiboLoginCookieLease? login = null;
+            try
+            {
+                login = await _loginCookies.AcquireAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Weibo login cookie checkout failed; falling back to visitor cookie.");
+            }
+
             if (login is not null)
             {
                 return new WeiboCookieLease(login.Cookie.Cookie, true, login.Cookie.CookieId, login);

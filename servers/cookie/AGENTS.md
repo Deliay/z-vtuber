@@ -37,7 +37,7 @@ graph LR
   - `HealthController`：健康检查（`GET /health`）
 - `Browser/`：Playwright 浏览器 session 管理（Profile 驱动）
   - `IBrowserSessionManager`：浏览器 session 抽象（创建/等待登录态/提取 cookie/删除/刷新）
-  - `BrowserSessionManager`：按 `ICookiePlatformProfile` 驱动；被动观察（bilibili nav）与主动探测（weibo `api/config`，经 `context.APIRequest`）两种登录态信号
+  - `BrowserSessionManager`：按 `ICookiePlatformProfile` 驱动；被动观察（bilibili nav）与主动探测（weibo `api/config`，经 `context.APIRequest`）两种登录态信号；二维码元素等待超时改为告警 + 整页截图兜底（不再抛错，行为变更已在此明示）；提取 cookie 后按 Profile `RequiredCookieNames`（微博 SUB/SUBP）做存在性校验并告警
   - `LoginSessionWorker`：后台 hosted service，遍历 `CookiePlatformRegistry` 处理双平台扫码登录 session 的 cookie 提取与身份回填入库
 - `Refresh/`：Cookie 刷新与失效检测
   - `SessionRefreshJob`：遍历 `CookiePlatformRegistry` 定时刷新双平台活跃 session 的 Cookie

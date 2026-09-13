@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Browser;
 using Z.Vtuber.Cookie.Configuration;
@@ -111,6 +112,7 @@ public class WeiboCookieAccountControllerTests
     {
         var repo = new FakeCookieSessionRepository();
         var pool = new MockCookiePoolService();
+        pool.FindByCookieIdFunc = _ => new CookieRecord { Cookie = "weibo-cookie-value", Status = CookieStatus.Active };
         var publisher = new FakeCookieInvalidEventPublisher();
         var id = ObjectId.GenerateNewId();
         repo.Sessions.Add(new CookieSessionRecord { Id = id, Status = "active", CookieId = "cookie-abc" });
@@ -119,7 +121,7 @@ public class WeiboCookieAccountControllerTests
         var result = await controller.DeleteAccount(id.ToString(), CancellationToken.None);
 
         Assert.IsType<NoContentResult>(result);
-        Assert.Contains("cookie-abc", pool.OfflineCalls);
+        Assert.Contains("weibo-cookie-value", pool.OfflineCalls);
         Assert.Contains(id.ToString(), _browserSessionManager.DeletedSessions);
         Assert.Single(publisher.PublishedEvents);
         Assert.Equal("account_removed", publisher.PublishedEvents[0].Reason);

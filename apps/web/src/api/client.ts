@@ -240,6 +240,31 @@ export async function listAvailableWeiboCookies(): Promise<cookieComponents['sch
   return data.items ?? []
 }
 
+export async function checkoutWeiboCookie(): Promise<cookieComponents['schemas']['CookieCheckout']> {
+  return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/weibo/checkout', {
+    method: 'POST',
+  })
+}
+
+export async function reportInvalidWeiboCookie(
+  cookieId: string,
+): Promise<cookieComponents['schemas']['CookieCheckout']> {
+  return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/weibo/report-invalid', {
+    method: 'POST',
+    body: JSON.stringify({ cookieId }),
+  })
+}
+
+export async function cooldownWeiboCookie(
+  cookieId: string,
+  durationSeconds: number,
+): Promise<void> {
+  return request<void>('/cookie/weibo/cooldown', {
+    method: 'POST',
+    body: JSON.stringify({ cookieId, durationSeconds }),
+  })
+}
+
 export async function checkoutCookie(): Promise<cookieComponents['schemas']['CookieCheckout']> {
   return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/checkout', {
     method: 'POST',

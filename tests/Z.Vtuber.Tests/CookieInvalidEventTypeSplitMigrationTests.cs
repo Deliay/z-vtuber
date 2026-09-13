@@ -70,6 +70,21 @@ public class CookieInvalidEventTypeSplitMigrationTests(MongoDbFixture fixture) :
     }
 
     [Fact]
+    public async Task Migrate_MarkerExistsButLegacyRecordsRemain_StillMigrates()
+    {
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        await meta.InsertOneAsync(new MetaRecord { Key = MongoDbInitializer.CookieInvalidEventTypeSplitMigrationKey });
+        await InsertAsync("cookie_invalid", "1");
+
+        await CreateInitializer().MigrateCookieInvalidEventTypeSplitAsync();
+
+        var remaining = await Collection.Find(r => r.EventType == "cookie_invalid").ToListAsync();
+        Assert.Empty(remaining);
+        var bilibili = await Collection.Find(r => r.EventType == "bilibili_cookie_invalid").ToListAsync();
+        Assert.Single(bilibili);
+    }
+
+    [Fact]
     public async Task Migrate_SetsMarker_AfterCompletion()
     {
         await InsertAsync("cookie_invalid", "1");

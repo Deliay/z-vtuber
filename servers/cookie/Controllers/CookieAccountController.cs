@@ -152,10 +152,14 @@ public class CookieAccountController : ControllerBase
         var session = await _sessionRepository.GetByIdAsync(objectId, ct);
         if (session is not null)
         {
-            // Offline cookie if exists
+            // Offline cookie if exists（session.CookieId 为池记录 ObjectId，需先按 Id 反查再按 cookie 原文下线）
             if (!string.IsNullOrEmpty(session.CookieId))
             {
-                await _cookiePool.MarkOfflineAsync(session.CookieId, ct);
+                var cookieRecord = await _cookiePool.FindByCookieIdAsync(session.CookieId, ct);
+                if (cookieRecord is not null)
+                {
+                    await _cookiePool.MarkOfflineAsync(cookieRecord.Cookie, ct);
+                }
             }
 
             await _browserSessionManager.DeleteSessionAsync(session.Id.ToString(), ct);

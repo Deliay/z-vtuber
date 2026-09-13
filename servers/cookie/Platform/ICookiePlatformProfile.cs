@@ -30,6 +30,9 @@ public interface ICookiePlatformProfile
     /// <summary>分布式锁 key 平台段（bilibili 为空以保持既有锁 key 不变）。</summary>
     string LockKeyPrefix { get; }
 
+    /// <summary>登录 cookie 必须包含的关键 cookie 名（缺失时提取仅告警，不抛错）。</summary>
+    IReadOnlyList<string> RequiredCookieNames { get; }
+
     /// <summary>判断响应体是否表示已登录。</summary>
     bool IsLoggedIn(string responseBody);
 

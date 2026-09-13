@@ -195,6 +195,7 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public List<(string Cookie, TimeSpan Duration)> CooldownCalls { get; } = [];
     public List<string> OfflineCalls { get; } = [];
     public Func<string, CookieRecord?>? FindByCookieFunc { get; set; }
+    public Func<string, CookieRecord?>? FindByCookieIdFunc { get; set; }
     public bool MarkOfflineReturns { get; set; } = true;
 
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
@@ -234,7 +235,7 @@ public sealed class MockCookiePoolService : ICookiePoolService
         => Task.FromResult(FindByCookieFunc?.Invoke(cookie));
 
     public Task<CookieRecord?> FindByCookieIdAsync(string cookieId, CancellationToken ct = default)
-        => Task.FromResult<CookieRecord?>(null);
+        => Task.FromResult(FindByCookieIdFunc?.Invoke(cookieId));
 
     public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default)
         => Task.CompletedTask;

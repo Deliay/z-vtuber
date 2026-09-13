@@ -13,6 +13,7 @@ public sealed class BilibiliCookiePlatformProfile : ICookiePlatformProfile
     public string? LoginStateObservedUrlFragment => "/x/web-interface/nav";
     public string? LoginStateProbeUrl => null;
     public string LockKeyPrefix => string.Empty;
+    public IReadOnlyList<string> RequiredCookieNames => [];
 
     public bool IsLoggedIn(string responseBody)
     {

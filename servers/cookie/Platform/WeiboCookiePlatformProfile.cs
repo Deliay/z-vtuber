@@ -18,6 +18,7 @@ public sealed class WeiboCookiePlatformProfile : ICookiePlatformProfile
     public string? LoginStateObservedUrlFragment => null;
     public string? LoginStateProbeUrl => "https://m.weibo.cn/api/config";
     public string LockKeyPrefix => "weibo:";
+    public IReadOnlyList<string> RequiredCookieNames => ["SUB", "SUBP"];
 
     public bool IsLoggedIn(string responseBody)
     {
