@@ -37,24 +37,12 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
 
         await page.GotoAsync("https://passport.bilibili.com/login");
 
-        try
-        {
-            var qrTab = page.Locator("[class*='login-scan-box'], [class*='qrcode']");
-            if (await qrTab.CountAsync() > 0)
-            {
-                await qrTab.First.ClickAsync();
-            }
-        }
-        catch
-        {
-        }
-
-        await page.WaitForSelectorAsync("img[class*='qr'], canvas[class*='qr'], [class*='login-scan-box'] img", new PageWaitForSelectorOptions
+        await page.WaitForSelectorAsync("[class*='login-scan__qrcode'] img", new PageWaitForSelectorOptions
         {
             Timeout = 10000,
         });
 
-        var qrElement = await page.QuerySelectorAsync("[class*='login-scan-box'], [class*='qrcode']");
+        var qrElement = await page.QuerySelectorAsync("[class*='login-scan__qrcode']");
         string qrCodeBase64;
         if (qrElement != null)
         {

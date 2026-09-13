@@ -76,20 +76,21 @@ public class CookieAccountController : ControllerBase
             return StatusCode(429, new { error = "Too many pending login sessions" });
         }
 
+        var expiresAt = DateTime.UtcNow.AddSeconds(_options.QrCodeExpiresSeconds);
+
+        var session = new CookieSessionRecord
+        {
+            Status = "pending_login",
+            CreatedAt = DateTime.UtcNow,
+            ExpiresAt = expiresAt,
+        };
+
+        await _sessionRepository.InsertAsync(session, ct);
+
+        var accountId = session.Id.ToString();
+
         try
         {
-            var expiresAt = DateTime.UtcNow.AddSeconds(_options.QrCodeExpiresSeconds);
-
-            var session = new CookieSessionRecord
-            {
-                Status = "pending_login",
-                CreatedAt = DateTime.UtcNow,
-                ExpiresAt = expiresAt,
-            };
-
-            await _sessionRepository.InsertAsync(session, ct);
-
-            var accountId = session.Id.ToString();
 
             var result = await _browserSessionManager.CreateLoginSessionAsync(accountId, ct);
 
@@ -108,6 +109,7 @@ public class CookieAccountController : ControllerBase
         }
         catch (Exception ex)
         {
+            await _sessionRepository.DeleteAsync(session.Id, ct);
             _logger.LogError(ex, "Failed to create login session");
             return StatusCode(500, new { error = "Failed to create login session" });
         }
