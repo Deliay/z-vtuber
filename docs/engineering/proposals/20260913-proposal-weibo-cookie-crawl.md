@@ -1,9 +1,11 @@
 # 微博 Cookie 抓取（weibo-cookie-crawl）- 技术提案
 
-- 日期：2026-09-13
+- 日期：2026-09-13（v1.1 修订：2026-09-13，下游联调打回）
 - 状态：待评审
 - feat-branch：`feat/weibo-cookie-crawl`
 - 关联文档：[PRD](../product/draft/20260913-weibo-cookie-crawl-prd.md)
+
+> v1.1 变更：微博登录态数据请求改为经 cookie 服务**代理 XHR 端点**在登录浏览器会话（页面上下文）内发起（见 3.1、实现点 3/3a、决策 10）；crawler 不再直接携带 cookie 头请求 m.weibo.cn（匿名兜底路径除外）。
 
 ## 1. 概述
 
@@ -20,13 +22,13 @@
 ### 1.2 目标
 
 1. Cookie 服务**多平台化**：抽象平台差异为 Profile 策略，新增微博平台——扫码登录（微博二维码）、登录态检测、定时保鲜、阻塞式失效宣告自愈全套能力与 Bilibili 对齐；
-2. crawler 微博链路改用**登录态 cookie**：经 cookie 服务 `checkout` 取用、风控命中走 `report-invalid` 自愈 / `cooldown` 冷却，无可用登录 cookie 时回退匿名访客模式兜底；
+2. crawler 微博链路改用**登录态 cookie**：经 cookie 服务 `checkout` 取用、风控命中走 `report-invalid` 自愈 / `cooldown` 冷却，无可用登录 cookie 时回退匿名访客模式兜底；**登录态数据请求经 cookie 服务代理 XHR 端点在浏览器会话内发起**（携带完整浏览器指纹过风控），crawler 不直连微博登录态接口；
 3. 失效通知按平台拆分：新增 eventType `bilibili_cookie_invalid` / `weibo_cookie_invalid`，存量订阅迁移；
 4. web「Cookie 管理」页「新增帐号」拆分为「新增微博帐号」「新增Bilibili帐号」，列表带平台标识；通知页支持选择两种新类型。
 
 ### 1.3 范围
 
-- **内**：cookie 服务平台抽象与微博 Profile、契约扩展、Mongo 新增微博集合、crawler 微博链路接入与兜底降级、notifier 事件类型扩展与订阅迁移、web 两页面改造、测试；
+- **内**：cookie 服务平台抽象与微博 Profile、契约扩展（含代理 XHR 端点）、Mongo 新增微博集合、crawler 微博链路接入与兜底降级（登录态请求改走代理 XHR）、notifier 事件类型扩展与订阅迁移、web 两页面改造、测试；
 - **外**：Bilibili 链路行为零改动（仅共享代码被抽象，语义不变）；微博 App 二次验证（短信/滑块）等人工事项；代理池、UA 轮换等进阶风控手段（后续迭代）。
 
 ## 2. 技术架构
@@ -37,8 +39,9 @@
 graph LR
     Web[apps/web] -->|/api/cookie/* /api/notify/* 同源代理| CK[servers/cookie]
     Web --> NT[servers/notifier]
-    Crawler[servers/crawler] -->|HTTP weibo checkout / report-invalid / cooldown| CK
-    Crawler -->|登录态 cookie 抓取| WB[m.weibo.cn]
+    Crawler[servers/crawler] -->|HTTP weibo checkout / report-invalid / cooldown / proxy| CK
+    CK -->|浏览器会话内 XHR（登录态请求）| WB[m.weibo.cn]
+    Crawler -->|匿名访客凭证直连（兜底）| WB
     CK --> FF[Headless Firefox<br/>Playwright 持久化上下文 × N<br/>bilibili / weibo]
     FF --> BILI[bilibili.com]
     FF --> WBP[passport.weibo.com / m.weibo.cn]
@@ -68,14 +71,14 @@ graph TD
     subgraph servers/cookie
         direction TB
         P[Platform/<br/>ICookiePlatformProfile<br/>BilibiliCookiePlatformProfile<br/>WeiboCookiePlatformProfile]
-        B[Browser/<br/>BrowserSessionManager] --> P
+        B[Browser/<br/>BrowserSessionManager<br/>+ ProxyRequestAsync] --> P
         R[Refresh/<br/>SessionRefreshJob<br/>InvalidationService] --> P
-        CT[Controllers/<br/>+ /api/cookie/weibo/*]
+        CT[Controllers/<br/>+ /api/cookie/weibo/*<br/>+ /api/cookie/weibo/proxy]
     end
     subgraph servers/crawler
-        W1[Weibo/WeiboApiClient] --> W2[Weibo/WeiboLoginCookieProvider<br/>（主：cookie 服务 checkout）]
+        W1[Weibo/WeiboApiClient<br/>登录态 → 代理 XHR<br/>匿名 → 直连] --> W2[Weibo/WeiboLoginCookieProvider<br/>（主：cookie 服务 checkout）]
         W1 --> W3[Weibo/WeiboVisitorCookieProvider<br/>（兜底：匿名访客）]
-        W2 --> CS[Services/CookieServiceClient]
+        W2 --> CS[Services/CookieServiceClient<br/>+ ProxyWeiboAsync]
     end
     subgraph servers/notifier
         E[Events/CookieInvalidEventSubscriber] --> D[Dispatch/NotificationDispatchService<br/>platform → eventType 映射]
@@ -102,6 +105,21 @@ graph TD
 | `POST /api/cookie/weibo/checkout` | round-robin 取微博 cookie → `200 { cookieId, accountId, cookie }` / `404` |
 | `POST /api/cookie/weibo/report-invalid` | 阻塞式宣告失效：`200` 返回新 cookie（`refreshed: true`）/ `410 { reason }` / `404` / `504` |
 | `POST /api/cookie/weibo/cooldown` | 风控冷却（`cookieId` + `durationSeconds`）→ `204` / `404` |
+| `POST /api/cookie/weibo/proxy` | 代理 XHR：在 cookieId 所属帐号的登录浏览器会话内向微博发起请求 → `200 { status, body }`（回传微博原始状态码与响应体）/ `400` 目标非白名单 / `404` cookieId 不存在或非 active / `410` 关联会话已失效 / `502` 浏览器侧请求失败 / `504` 超时 |
+
+**代理 XHR 端点请求/响应约定**：
+
+```json
+// POST /api/cookie/weibo/proxy
+// request
+{ "cookieId": "<池记录 ObjectId>", "path": "/api/container/getIndex?containerid=..." }
+// response 200
+{ "status": 200, "body": "<微博原始响应文本>" }
+```
+
+- `path` 为目标 API 路径（含 query），**白名单约束**：仅允许 `m.weibo.cn` 的 `/api/*` 路径，其余一律 `400` 拒绝，端点不得成为开放代理；v1 仅支持 `GET`；
+- 请求在 cookieId 所属帐号的登录浏览器会话内发起（页面上下文 XHR），自动携带该会话 cookie 与浏览器指纹；crawler 侧不再自行构造 cookie 头请求微博登录态接口；
+- 微博业务响应（含风控响应如 403/412/跳转）一律以 `200 { status, body }` 原样回传，由 crawler 侧既有风控分类器统一判定；仅代理自身失败（白名单/寻址/会话失效/网络/超时）使用非 200 状态码。
 
 同时 `GET /api/cookie/accounts`（Bilibili 列表）响应项与新增微博列表响应项均携带 `platform` 字段（`bilibili` / `weibo`），供前端列表打平台标签。
 
@@ -127,7 +145,7 @@ graph TD
 
 #### crawler → cookie 调用契约
 
-`CookieServiceClient` 增加微博方法组（`CheckoutWeiboAsync` / `ReportWeiboInvalidAsync` / `CooldownWeiboAsync`），或泛化为 `platform` 参数；404/410/504 语义与 Bilibili 一致。
+`CookieServiceClient` 增加微博方法组（`CheckoutWeiboAsync` / `ReportWeiboInvalidAsync` / `CooldownWeiboAsync` / `ProxyWeiboAsync`），或泛化为 `platform` 参数；404/410/504 语义与 Bilibili 一致。`ProxyWeiboAsync(cookieId, path)` 返回 `{ status, body }`，代理侧 410/502/504 以专用异常/结果类型透出供风控分支区分处置。
 
 ## 4. 数据模型
 
@@ -172,13 +190,14 @@ sequenceDiagram
     Mgr->>DB: session → active（回填 uid/昵称）；cookie upsert（SUB/SUBP，active, AccountId）
 ```
 
-**微博时间线抓取（登录 cookie + 风控自愈）**：
+**微博时间线抓取（登录 cookie 经代理 XHR + 风控自愈）**：
 
 ```mermaid
 sequenceDiagram
     participant Job as WeiboTimelineJob
     participant LP as WeiboLoginCookieProvider
     participant CK as Cookie 服务
+    participant BR as 登录浏览器会话（XHR）
     participant WB as m.weibo.cn
     participant VP as WeiboVisitorCookieProvider（兜底）
 
@@ -187,18 +206,23 @@ sequenceDiagram
     alt 有可用登录 cookie
         CK-->>LP: { cookieId, cookie }
         LP-->>Job: cookie A（CookieCallGate per-cookie 互斥）
-        Job->>WB: getIndex（Cookie: SUB=...; SUBP=...）
-        alt 命中风控（WeiboRiskControlClassifier）
+        Job->>CK: POST /api/cookie/weibo/proxy（cookieId + 目标路径）
+        CK->>BR: 页面上下文内 XHR
+        BR->>WB: getIndex（浏览器指纹 + 登录 cookie）
+        WB-->>BR: 数据 / 风控响应
+        BR-->>CK: status + body
+        CK-->>Job: 200 { status, body }
+        alt 命中风控（WeiboRiskControlClassifier 判定 status/body）
             Job->>CK: report-invalid（阻塞，最多一次）
             alt 200 自愈
-                CK-->>Job: 新 cookie A' → 重试一次
+                CK-->>Job: 新 cookie A' → 经代理重试一次
             else 410 会话失效
                 Job->>Job: 放弃本轮 + 退避（cookie-invalid 事件已发）
             end
         end
     else 404 无可用登录 cookie
         LP-->>Job: 回退 VP 匿名访客凭证（记 warning）
-        Job->>WB: getIndex（匿名 SUB/SUBP）
+        Job->>WB: getIndex（匿名 SUB/SUBP，直连不经代理）
     end
 ```
 
@@ -234,18 +258,29 @@ sequenceDiagram
 - **身份回填**：登录成功后由 `api/config` 响应（含 `uid` 等）回填帐号标识；
 - **保鲜刷新**：复用上下文 `goto m.weibo.cn`（或直接用 `context.Request` 请求 `api/config`），`login==true` 则更新 cookie 与 `LastRefreshAt`、失败计数清零；`login==false`/超时按既有状态机计数——定时路径连续 3 次判失效，即时宣告路径单次即判，失效即 session invalid + cookie offline + 发布 `cookie-invalid`（`platform=weibo`）。
 
-#### 实现点 3: crawler 微博链路接入（WeiboLoginCookieProvider）
+#### 实现点 3: cookie 服务代理 XHR 端点
+
+- 新增 `POST /api/cookie/weibo/proxy`（挂 `WeiboCookieDispatchController` 或独立 `WeiboCookieProxyController`，实现期定夺）：入参 `{ cookieId, path }`，v1 仅支持 `GET`；
+- **白名单校验**：`path` 必须以 `/api/` 开头且不得含 scheme/host/回溯符，目标 host 固定为 `https://m.weibo.cn`——非白名单直接 `400`，端点不得成为开放代理；
+- **寻址**：`cookieId` → `weibo_cookies` 池记录（不存在/非 active → `404`）→ `AccountId` → 微博 session（`Status != active` → `410`，供 crawler 按会话失效处置）；
+- **浏览器会话内发起 XHR**：`BrowserSessionManager` 扩展 `ProxyRequestAsync(sessionId, path, ct)`——取（或按需从 `UserDataDir` 恢复）该帐号的 Playwright 持久化上下文，在页面上下文内执行 `fetch`（`page.EvaluateAsync`，同源相对 URL），回传 `{ status, body }`（body 取原始文本）；等价实现可用 `context.APIRequest`（共享 cookie jar，指纹弱于页内 XHR），取舍实现期定夺，但必须满足「经浏览器会话发起、自动携带登录 cookie」；请求设明确超时（复用 `CookieServiceOptions` 既有超时档或新增项，实现期定夺），浏览器侧网络失败 → `502`、超时 → `504`；
+- **串行约束**：同一帐号上下文的代理请求串行执行（crawler 侧 `CookieCallGate` 已按 cookieId 互斥；cookie 服务侧对同一 session 的代理调用同样串行化，避免页内并发 XHR 相互干扰）；
+- **透传语义**：微博业务响应（含 403/412/跳登录等风控响应）一律 `200 { status, body }` 原样回传，风控判定留在 crawler 侧既有分类器；代理自身失败才用 4xx/5xx；
+- **安全**：端点不接收/不返回 cookie 原文（仅 cookieId 寻址）；日志沿用短哈希惯例，不记录 body 中的敏感字段。
+
+#### 实现点 4: crawler 微博链路接入（WeiboLoginCookieProvider + 代理 XHR）
 
 - 新增 `servers/crawler/Weibo/WeiboLoginCookieProvider.cs`：经 `CookieServiceClient` 调 `/api/cookie/weibo/checkout` 取 cookie；按 cookieId 复用 `CookieCallGate`（`lock:cookie-call:{cookieId}`）做 per-cookie 互斥；`404` 不抛异常而是返回「无可用」信号供上层兜底（区别于 Bilibili 的 `NoAvailableCookieException` 语义，因为微博有匿名兜底）；
-- `WeiboApiClient` 请求构造改为从「有效 cookie 提供方」取 cookie 头：`WeiboLoginCookieProvider` 主、`WeiboVisitorCookieProvider` 兜底（组合封装为实现期定夺，保证 `IWeiboApiClient` 对外接口不变）；
+- `WeiboApiClient` 请求构造改为按 cookie 来源分流：**登录 cookie 路径 → `CookieServiceClient.ProxyWeiboAsync(cookieId, path)` 经 cookie 服务代理 XHR 取数**（不再自行携带 cookie 头直连 m.weibo.cn）；**匿名访客路径 → 维持既有直连 HTTP**（访客凭证无浏览器会话）；主/兜底组合封装保证 `IWeiboApiClient` 对外接口不变；
+- 风控分类输入：登录路径以代理回传的 `{ status, body }` 走既有 `WeiboRiskControlClassifier`（语义与直连一致）；代理侧 `410`（会话失效）直接按会话失效分支处置（退避 + 放弃本轮），`502/504`（代理/浏览器故障）记退避不宣告 cookie 失效；
 - **风控处置**（`WeiboTimelineJob` 捕获 `WeiboRiskControlException` 后分支）：
-  - 当前使用的是登录 cookie → `ReportWeiboInvalidAsync` 阻塞宣告：`200` 拿新 cookie 重试一次（仅一次）；`410/504/404` → 放弃本轮 + `CrawlBackoffRegistry.ReportRiskControl("weibo:{uid}")` 退避；
+  - 当前使用的是登录 cookie → `ReportWeiboInvalidAsync` 阻塞宣告：`200` 拿新 cookie 经代理重试一次（仅一次）；`410/504/404` → 放弃本轮 + `CrawlBackoffRegistry.ReportRiskControl("weibo:{uid}")` 退避；
   - 当前使用的是匿名凭证 → 维持现状（`RenewAsync()` + 退避）；
   - 频率型风控信号（如明显限频响应）可先 `/cooldown` 冷却该 cookie（实现期按 `WeiboRiskControlClassifier` 细分结果接入，v1 不细分则全部走 report-invalid）；
 - **配置**：`WeiboCrawlerOptions` 新增 `UseLoginCookie`（默认 `true`，置 `false` 整体回退匿名模式）、`LoginCookieRetryOnce`（默认 `true`）；抓取间隔/翻页/退避参数不变——接入登录 cookie **不提高请求频率**；
 - `WeiboRiskControlClassifier` 关键词库补充微博登录态失效特征（如 `login.sina.com.cn` 跳转、返回 HTML 而非 JSON），保持「仅 JSON msg 字段判词防误伤」的既有约束。
 
-#### 实现点 4: 事件与 notifier 平台化
+#### 实现点 5: 事件与 notifier 平台化
 
 - common：`CookieInvalidEvent` 增加 `platform` 字段（`[JsonPropertyName("platform")]`，可空，空按 bilibili）；`CookieEventChannels` 频道常量不变；
 - cookie 服务：`RedisCookieInvalidEventPublisher` 按 Profile 填充 `platform`；
@@ -256,14 +291,14 @@ sequenceDiagram
   - 启动迁移：`event_type == "cookie_invalid"` → `bilibili_cookie_invalid`（幂等 updateMany）；
   - `Program.cs` 无需新增 HostedService（订阅泵复用）。
 
-#### 实现点 5: 前端改造
+#### 实现点 6: 前端改造
 
 - `apps/web/src/api/client.ts`：新增微博帐号/cookie 客户端函数（`createWeiboCookieAccount` 等，指向 `/api/cookie/weibo/*`），类型经 openapi-typescript codegen 更新（`schema-cookie.d.ts` / `schema-notify.d.ts`，勿手改）；
 - `CookiePage.tsx`：「新增帐号」拆为「新增微博帐号」「新增Bilibili帐号」两按钮，分别调用对应平台创建接口；二维码弹窗、轮询、过期重试逻辑泛化复用；列表加「平台」列/标签（依赖 3.1 的 `platform` 字段）；
 - `NotificationPage.tsx`：新增绑定弹窗的通知类型下拉展示「bilibili帐号失效通知」/「微博帐号失效通知」（分别对应 `bilibili_cookie_invalid`/`weibo_cookie_invalid`）；绑定列表展示类型中文名；
 - 代理无需改动（`/api/cookie`、`/api/notify` 前缀已在 vite/nginx 配置中）。
 
-#### 实现点 6: 配置项汇总
+#### 实现点 7: 配置项汇总
 
 | 配置 | 默认 | 说明 |
 |---|---|---|
@@ -285,13 +320,16 @@ sequenceDiagram
 7. **匿名访客凭证保留为兜底而非下线**：无可用登录 cookie 时抓取不中断（运维接入帐号前系统即可工作）；主/备切换由 `UseLoginCookie` 配置控制，便于灰度与回退。
 8. **风控命中登录 cookie 默认走 report-invalid 阻塞自愈，重试仅一次**：与 bilibili 链路语义对齐；`cooldown` 预留给频率型风控细分，v1 不强制启用，避免过度设计。
 9. **接入登录 cookie 不提高请求频率**：抓取间隔、翻页上限、退避参数全部沿用，登录态只提升成功率与稳定性，不放大风控面。
+10. **微博登录态数据请求经 cookie 服务代理 XHR（浏览器会话内发起），crawler 不直连**：下游联调证实仅携带 cookie 头的服务端 HTTP 请求过不了微博风控（缺浏览器指纹/同源上下文）；在登录浏览器会话页面内发 XHR 天然携带指纹、cookie 与同源上下文，且复用已常驻的保鲜上下文，零新增基础设施。代价是数据链路依赖浏览器会话可用性——以 `410/502/504` 明确区分「会话失效/浏览器故障/超时」供 crawler 区别处置，匿名直连兜底保留。代理端点以白名单（`m.weibo.cn/api/*`）约束目标，防止成为开放代理。
 
 ### 6.2 依赖与约束
 
 - 微博扫码登录依赖微博网页版二维码入口稳定性；选择器变化时只需调整 `WeiboCookiePlatformProfile`；
 - 微博帐号触发二次验证（短信/滑块/风险验证）时无头浏览器无法自动完成，按二维码超时过期处理，属人工事项；
 - 分布式锁与事件继续复用 `messaging` Redis 实例，锁 key 增加平台段隔离；
-- cookie 原文不出服务边界（checkout 响应除外），日志沿用短哈希惯例。
+- cookie 原文不出服务边界（checkout 响应除外），日志沿用短哈希惯例；
+- 代理 XHR 数据链路与保鲜刷新共享同一浏览器上下文，同一帐号的浏览器侧操作（保鲜/代理/宣告刷新）需串行化，避免并发导航与 XHR 相互干扰；
+- 代理 XHR 端点仅服务内网调用方（crawler），目标白名单约束，不暴露公网。
 
 ## 7. 项目结构
 
@@ -303,8 +341,8 @@ servers/cookie/（变更）
 │   └── WeiboCookiePlatformProfile.cs       # 新增：微博登录/检测/提取
 ├── Controllers/
 │   ├── WeiboCookieAccountController.cs     # 新增：/api/cookie/weibo/accounts*
-│   └── WeiboCookieDispatchController.cs    # 新增：/api/cookie/weibo/{available,checkout,report-invalid,cooldown}
-├── Browser/BrowserSessionManager.cs        # 改：Profile 驱动
+│   └── WeiboCookieDispatchController.cs    # 新增：/api/cookie/weibo/{available,checkout,report-invalid,cooldown,proxy}
+├── Browser/BrowserSessionManager.cs        # 改：Profile 驱动；+ ProxyRequestAsync（页面上下文 XHR）
 ├── Refresh/                                # 改：按平台实例化，锁 key 带平台
 ├── Persistence/                            # 改：+ weibo 集合仓储（泛型复用）
 └── Refresh/RedisCookieInvalidEventPublisher.cs  # 改：platform 字段
@@ -314,11 +352,11 @@ servers/common/（变更）
 
 servers/crawler/（变更）
 ├── Weibo/WeiboLoginCookieProvider.cs       # 新增：cookie 服务 checkout 主凭证
-├── Weibo/WeiboVisitorCookieProvider.cs     # 保留：兜底
-├── Weibo/WeiboApiClient.cs                 # 改：cookie 来源抽象
+├── Weibo/WeiboVisitorCookieProvider.cs     # 保留：兜底（直连）
+├── Weibo/WeiboApiClient.cs                 # 改：登录态走代理 XHR，匿名维持直连
 ├── Weibo/WeiboRiskControlClassifier.cs     # 改：补充登录态失效特征
 ├── Jobs/WeiboTimelineJob.cs                # 改：风控分支（report-invalid 自愈 / 兜底续期）
-├── Services/CookieServiceClient.cs         # 改：+ 微博方法组
+├── Services/CookieServiceClient.cs         # 改：+ 微博方法组（含 ProxyWeiboAsync）
 └── Configuration/WeiboCrawlerOptions.cs    # 改：+ UseLoginCookie 等
 
 servers/notifier/（变更）
@@ -327,7 +365,7 @@ servers/notifier/（变更）
 └── Persistence/                            # 改：启动迁移 cookie_invalid → bilibili_cookie_invalid
 
 contracts/
-├── cookie.openapi.yaml                     # 改：+ /api/cookie/weibo/*，列表项 + platform
+├── cookie.openapi.yaml                     # 改：+ /api/cookie/weibo/*（含 proxy），列表项 + platform
 └── notifier.openapi.yaml                   # 改：eventType enum
 
 apps/web/（变更）
@@ -351,6 +389,8 @@ tests/Z.Vtuber.Tests/（新增/更新对应用例）
   - `WeiboCookiePlatformProfile`：`api/config` `login:true/false` 判定、cookie 提取（SUB/SUBP 拼接）、二维码超时；
   - 平台路由：微博端点走微博集合与微博锁，bilibili 端点行为回归（现有用例保持绿）；
   - `WeiboLoginCookieProvider`：checkout 成功/404 兜底返回、per-cookie 互斥；
+  - 代理 XHR 端点：白名单放行/拒绝、cookieId 寻址 404、会话失效 410、`{ status, body }` 透传（mock 浏览器层）、同一 session 串行约束；
+  - `WeiboApiClient`：登录 cookie 路径走 `ProxyWeiboAsync`（不直连微博）、匿名路径直连、代理 410/502/504 分类处置；
   - `WeiboTimelineJob` 风控分支：登录 cookie 命中 → report-invalid 200 重试一次 / 410 放弃 + 退避；匿名凭证命中 → Renew 维持现状；`UseLoginCookie=false` 纯匿名；
   - notifier：platform（含空值）→ eventType 映射、文案、eventType 校验、存量订阅迁移幂等性；
 - **集成测试**（Testcontainers Mongo + Redis）：微博 session/cookie 仓储、失效事件 payload（platform 字段）端到端、迁移后订阅匹配投递；
@@ -373,7 +413,8 @@ tests/Z.Vtuber.Tests/（新增/更新对应用例）
 
 - [ ] `POST /api/cookie/weibo/accounts` 返回可扫微博二维码；扫码后秒级判定登录成功，cookie 进入微博可用池；
 - [ ] 微博 session 按周期保鲜；人为失效后连续失败触发 cookie 下线 + `cookie-invalid`（`platform=weibo`）事件；
-- [ ] 微博时间线抓取默认携带登录 cookie；风控命中可自愈重试一次或明确放弃并退避；无登录 cookie 时匿名兜底且日志可观测；
+- [ ] 微博时间线抓取的登录态请求经 cookie 服务代理 XHR 端点（浏览器会话内发起）完成；风控命中可自愈重试一次或明确放弃并退避；无登录 cookie 时匿名兜底且日志可观测；
+- [ ] 代理 XHR 端点白名单生效（非 `m.weibo.cn/api/*` 目标明确拒绝），业务响应 `{ status, body }` 原样透传；
 - [ ] bilibili 抓取与 cookie 服务既有端点行为零回归；
 - [ ] 订阅「微博帐号失效通知」的群在微博帐号失效时收到含平台与帐号的通知；bilibili 失效仅投递 bilibili 类型订阅；存量绑定迁移后行为不变；
 - [ ] 「Cookie 管理」页双按钮分别走通扫码流程，列表带平台标识；通知页类型下拉可选两种新类型；
