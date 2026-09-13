@@ -40,7 +40,7 @@ public class NotifyConfigControllerTests(MongoDbFixture fixture) : IClassFixture
         var repo = new NotificationSubscriptionRepository(fixture.Database);
         await repo.InsertAsync(new NotificationSubscriptionRecord
         {
-            EventType = "cookie_invalid",
+            EventType = "bilibili_cookie_invalid",
             GroupId = "123456",
             GroupName = "运维群",
         });
@@ -74,7 +74,7 @@ public class NotifyConfigControllerTests(MongoDbFixture fixture) : IClassFixture
 
         var result = await controller.CreateSubscription(new CreateNotificationSubscriptionRequest
         {
-            EventType = "cookie_invalid",
+            EventType = "bilibili_cookie_invalid",
             GroupId = "not-a-number",
         }, CancellationToken.None);
 
@@ -88,7 +88,7 @@ public class NotifyConfigControllerTests(MongoDbFixture fixture) : IClassFixture
 
         var result = await controller.CreateSubscription(new CreateNotificationSubscriptionRequest
         {
-            EventType = "cookie_invalid",
+            EventType = "bilibili_cookie_invalid",
             GroupId = "123456",
             GroupName = "运维群",
         }, CancellationToken.None);
@@ -96,7 +96,7 @@ public class NotifyConfigControllerTests(MongoDbFixture fixture) : IClassFixture
         var createdResult = Assert.IsType<CreatedAtActionResult>(result);
         var response = createdResult.Value as NotificationSubscriptionResponse;
         Assert.NotNull(response);
-        Assert.Equal("cookie_invalid", response!.EventType);
+        Assert.Equal("bilibili_cookie_invalid", response!.EventType);
         Assert.Equal("123456", response.GroupId);
         Assert.Equal("运维群", response.GroupName);
     }
@@ -108,14 +108,14 @@ public class NotifyConfigControllerTests(MongoDbFixture fixture) : IClassFixture
 
         await controller.CreateSubscription(new CreateNotificationSubscriptionRequest
         {
-            EventType = "cookie_invalid",
+            EventType = "bilibili_cookie_invalid",
             GroupId = "123456",
             GroupName = "运维群",
         }, CancellationToken.None);
 
         var result = await controller.CreateSubscription(new CreateNotificationSubscriptionRequest
         {
-            EventType = "cookie_invalid",
+            EventType = "bilibili_cookie_invalid",
             GroupId = "123456",
             GroupName = "运维群",
         }, CancellationToken.None);
@@ -125,13 +125,45 @@ public class NotifyConfigControllerTests(MongoDbFixture fixture) : IClassFixture
     }
 
     [Fact]
+    public async Task CreateSubscription_WeiboEventType_CreatesRecord()
+    {
+        var controller = CreateController();
+
+        var result = await controller.CreateSubscription(new CreateNotificationSubscriptionRequest
+        {
+            EventType = "weibo_cookie_invalid",
+            GroupId = "123456",
+            GroupName = "微博群",
+        }, CancellationToken.None);
+
+        var createdResult = Assert.IsType<CreatedAtActionResult>(result);
+        var response = createdResult.Value as NotificationSubscriptionResponse;
+        Assert.NotNull(response);
+        Assert.Equal("weibo_cookie_invalid", response!.EventType);
+    }
+
+    [Fact]
+    public async Task CreateSubscription_LegacyCookieInvalid_ReturnsBadRequest()
+    {
+        var controller = CreateController();
+
+        var result = await controller.CreateSubscription(new CreateNotificationSubscriptionRequest
+        {
+            EventType = "cookie_invalid",
+            GroupId = "123456",
+        }, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
     public async Task DeleteSubscription_Existing_Deletes()
     {
         var controller = CreateController();
         var repo = new NotificationSubscriptionRepository(fixture.Database);
         var inserted = await repo.InsertAsync(new NotificationSubscriptionRecord
         {
-            EventType = "cookie_invalid",
+            EventType = "bilibili_cookie_invalid",
             GroupId = "123456",
             GroupName = "运维群",
         });

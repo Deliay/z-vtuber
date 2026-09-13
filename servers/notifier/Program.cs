@@ -53,6 +53,8 @@ using (var scope = app.Services.CreateScope())
 {
     var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
     await initializer.EnsureIndexesAsync();
+    // 存量 cookie_invalid 订阅迁移为 bilibili_cookie_invalid（幂等）
+    await initializer.MigrateCookieInvalidEventTypeSplitAsync();
 }
 
 app.MapHealthChecks("/health");
