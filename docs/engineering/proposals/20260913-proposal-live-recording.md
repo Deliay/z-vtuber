@@ -37,7 +37,7 @@ graph TD
     API -->|代理 recordings / live-stream/audio| REC[servers/recording Z.Vtuber.Recording]
     API --> M[(MongoDB)]
     REC --> M
-    REC -->|recording:lock:{roomId}| R[(Redis)]
+    REC -->|"Redis 锁 recording:lock:roomId"| R[(Redis)]
     REC -->|checkout cookie| COOKIE[servers/cookie]
     REC -->|拉流| BILI[B站直播CDN]
     REC -->|ffmpeg 多输出| FS[(录播存储卷)]
@@ -175,7 +175,7 @@ sequenceDiagram
         alt 未开播
             P->>M: upsert status=not_live
         else 已开播
-            P->>L: SET recording:lock:{roomId} token NX PX 15s
+            P->>L: SET recording:lock:roomId token NX PX 15s
             alt 抢锁失败
                 P->>P: 跳过（他实例在录）
             else 抢锁成功
