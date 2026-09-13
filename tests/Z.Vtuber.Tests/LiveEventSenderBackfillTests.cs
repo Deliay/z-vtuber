@@ -21,7 +21,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18","Hello World",[403496,"Zero_Ash",123],[25,"小粉螈","枝堇Sumire"]]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Hello World",[403496,"Zero_Ash",123],[25,"小粉螈","枝堇Sumire"]]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -48,7 +48,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             Id = eventId,
             RoomId = 123456,
             Type = "super_chat",
-            Payload = """{"data":{"message":"SC Message","uid":663620883,"user_info":{"uname":"lxl-lxl"},"medal_info":{"medal_name":"小粉螈"}}}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"data":{"message":"SC Message","uid":663620883,"user_info":{"uname":"lxl-lxl"},"medal_info":{"medal_name":"小粉螈"}}}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -75,7 +75,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             Id = eventId,
             RoomId = 123456,
             Type = "gift",
-            Payload = """{"data":{"price":100}}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"data":{"price":100}}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -97,7 +97,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18",null,"123456"]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18",null,"123456"]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -119,7 +119,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18","Hello World",[403496,"Zero_Ash"]]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Hello World",[403496,"Zero_Ash"]]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -149,7 +149,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18","Hello World",[403496,"Zero_Ash"]]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Hello World",[403496,"Zero_Ash"]]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -172,7 +172,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18","Hello World"]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Hello World"]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -199,7 +199,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
                 Id = MongoDB.Bson.ObjectId.GenerateNewId(),
                 RoomId = 123456,
                 Type = "danmaku",
-                Payload = $$"""{"info":["18","Message {{i}}",[403496,"Zero_Ash"]]}""",
+                Payload = MongoDB.Bson.BsonDocument.Parse($"{{\"info\":[\"18\",\"Message {i}\",[403496,\"Zero_Ash\"]]}}"),
                 OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc).AddMinutes(i),
             })
             .ToList();
@@ -230,7 +230,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18","Hello World",[403496,"Zero_Ash"]]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Hello World",[403496,"Zero_Ash"]]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
