@@ -16,7 +16,7 @@ public class LiveEventRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
         RoomId = roomId,
         Type = type,
         OccurredAt = occurredAt,
-        Payload = "{}",
+        Payload = MongoDB.Bson.BsonDocument.Parse("{}"),
         Price = price,
     };
 

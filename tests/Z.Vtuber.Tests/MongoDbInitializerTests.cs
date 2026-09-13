@@ -239,7 +239,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
         await collection.InsertOneAsync(new LiveEventRecord
         {
             Type = "gift",
-            Payload = """{"data":{"price":5000,"coin_type":"gold"}}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"data":{"price":5000,"coin_type":"gold"}}"""),
             Price = 5000,
         });
 
@@ -344,7 +344,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18","Hello World","123456"]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Hello World","123456"]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -371,7 +371,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             Id = eventId,
             RoomId = 123456,
             Type = "super_chat",
-            Payload = """{"data":{"message":"SC Message","price":30}}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"data":{"message":"SC Message","price":30}}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -397,7 +397,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             Id = eventId,
             RoomId = 123456,
             Type = "gift",
-            Payload = """{"data":{"price":100}}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"data":{"price":100}}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -419,7 +419,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18",null,"123456"]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18",null,"123456"]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -441,7 +441,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18","Hello World","123456"]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Hello World","123456"]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -467,7 +467,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             Id = eventId,
             RoomId = 123456,
             Type = "danmaku",
-            Payload = """{"info":["18","Hello World","123456"]}""",
+            Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Hello World","123456"]}"""),
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
@@ -489,7 +489,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
                 Id = MongoDB.Bson.ObjectId.GenerateNewId(),
                 RoomId = 123456,
                 Type = "danmaku",
-                Payload = $$"""{"info":["18","Message {{i}}","123456"]}""",
+                Payload = MongoDB.Bson.BsonDocument.Parse("""{"info":["18","Message {{i}}","123456"]}"""),
                 OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc).AddMinutes(i),
             })
             .ToList();

@@ -181,7 +181,7 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IClassFixture
         RoomId = 123456,
         Type = type,
         OccurredAt = occurredAt,
-        Payload = "{}",
+        Payload = MongoDB.Bson.BsonDocument.Parse("{}"),
         Price = price,
     };
 
