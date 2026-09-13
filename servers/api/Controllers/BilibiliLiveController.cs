@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using Z.Vtuber.Common.Live;
 using Z.Vtuber.Live;
 using Z.Vtuber.Common.Persistence;
@@ -260,7 +261,7 @@ public class BilibiliLiveController(
         type = record.Type,
         occurredAt = record.OccurredAt,
         liveSessionId = record.LiveSessionId,
-        payload = BilibiliUserController.ParseRaw(record.Payload),
+        payload = JsonNode.Parse(record.Payload.ToJson()),
     };
 
     private static object ToEventDto(LiveEvent liveEvent) => new

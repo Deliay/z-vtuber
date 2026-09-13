@@ -15,7 +15,8 @@ public sealed class LiveEventRecord
 
     public string Type { get; set; } = string.Empty;
 
-    public string Payload { get; set; } = string.Empty;
+    [BsonSerializer(typeof(StringTolerantBsonDocumentSerializer))]
+    public BsonDocument Payload { get; set; } = new();
 
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime OccurredAt { get; set; }
