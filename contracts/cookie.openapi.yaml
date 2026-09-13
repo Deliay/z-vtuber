@@ -142,6 +142,142 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/cookie/weibo/accounts:
+    get:
+      summary: 列出全部微博帐号 session
+      operationId: listWeiboAccounts
+      responses:
+        "200":
+          description: 帐号 session 列表（不含 cookie 原文）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountList"
+    post:
+      summary: 新增微博帐号（扫码登录）
+      operationId: createWeiboAccount
+      responses:
+        "202":
+          description: 创建成功，返回登录二维码
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingAccount"
+        "429":
+          description: 并发登录 session 上限
+  /api/cookie/weibo/accounts/{accountId}:
+    get:
+      summary: 查询微博帐号 session 状态
+      operationId: getWeiboAccount
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 帐号 session 状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountStatus"
+        "404":
+          description: 帐号不存在
+    delete:
+      summary: 删除微博帐号 session
+      operationId: deleteWeiboAccount
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: 删除成功
+  /api/cookie/weibo/available:
+    get:
+      summary: 可用微博 cookie 列表
+      operationId: listAvailableWeiboCookies
+      responses:
+        "200":
+          description: 可用 cookie 列表（不含 cookie 原文）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieList"
+  /api/cookie/weibo/checkout:
+    post:
+      summary: 取下一个可用微博 cookie（round-robin）
+      operationId: checkoutWeiboCookie
+      responses:
+        "200":
+          description: 成功获取 cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieCheckout"
+        "404":
+          description: 无可用 cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/cookie/weibo/report-invalid:
+    post:
+      summary: 阻塞式宣告失效并尝试即时刷新
+      operationId: reportInvalidWeiboCookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportInvalidRequest"
+      responses:
+        "200":
+          description: 刷新成功，返回新 cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CookieCheckout"
+        "404":
+          description: cookieId 不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: session 失效
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInvalidResponse"
+        "504":
+          description: 超时上限
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/cookie/weibo/cooldown:
+    post:
+      summary: 设置微博 cookie 冷却（风控冷却语义）
+      operationId: setWeiboCookieCooldown
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CooldownRequest"
+      responses:
+        "204":
+          description: 冷却设置成功
+        "404":
+          description: cookieId 不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     AccountList:
@@ -156,6 +292,9 @@ components:
       properties:
         accountId:
           type: string
+        platform:
+          type: string
+          enum: [bilibili, weibo]
         status:
           type: string
           enum: [pending_login, active, expired, invalid]
