@@ -18,10 +18,13 @@ public class CookieDispatchService : ICookieDispatchService
     private readonly IMongoCollection<CookieRecord> _collection;
     private readonly IMongoCollection<CookieSessionRecord> _sessionCollection;
 
-    public CookieDispatchService(IMongoDatabase database)
+    public CookieDispatchService(
+        IMongoDatabase database,
+        string cookiesCollection = MongoCollectionNames.Cookies,
+        string sessionsCollection = MongoCollectionNames.CookieSessions)
     {
-        _collection = database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
-        _sessionCollection = database.GetCollection<CookieSessionRecord>(MongoCollectionNames.CookieSessions);
+        _collection = database.GetCollection<CookieRecord>(cookiesCollection);
+        _sessionCollection = database.GetCollection<CookieSessionRecord>(sessionsCollection);
     }
 
     public async Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default)

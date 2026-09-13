@@ -53,6 +53,7 @@ public class CookieAccountController : ControllerBase
         var items = allSessions.Select(s => new AccountItem
         {
             AccountId = s.Id.ToString(),
+            Platform = "bilibili",
             Status = s.Status,
             Mid = s.Mid,
             Uname = s.Uname,
@@ -178,6 +179,7 @@ public class CookieAccountController : ControllerBase
 public class AccountItem
 {
     public string AccountId { get; set; } = string.Empty;
+    public string Platform { get; set; } = "bilibili";
     public string Status { get; set; } = string.Empty;
     public long? Mid { get; set; }
     public string? Uname { get; set; }

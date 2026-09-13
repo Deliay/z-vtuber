@@ -659,12 +659,12 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
         var markerExists = await meta.Find(r => r.Key == SubscriptionTypeSplitMigrationKey)
             .AnyAsync(ct);
-        
+
         // 即使 marker 存在，也需要检查是否有未迁移的记录（回滚场景）
         var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
         var noTypeFilter = Builders<SubscriptionRecord>.Filter.Not(Builders<SubscriptionRecord>.Filter.Exists(s => s.Type));
         var hasUnmigrated = await collection.Find(noTypeFilter).AnyAsync(ct);
-        
+
         if (markerExists && !hasUnmigrated)
         {
             logger.LogInformation("Subscription type split migration already applied; skipping.");
@@ -945,12 +945,12 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
         var markerExists = await meta.Find(r => r.Key == CookieInvalidEventTypeSplitMigrationKey)
             .AnyAsync(ct);
-        
+
         // 即使 marker 存在，也需要检查是否有未迁移的记录（回滚场景）
         var collection = database.GetCollection<NotificationSubscriptionRecord>(MongoCollectionNames.NotificationSubscriptions);
         var cookieInvalidFilter = Builders<NotificationSubscriptionRecord>.Filter.Eq(n => n.EventType, "cookie_invalid");
         var hasUnmigrated = await collection.Find(cookieInvalidFilter).AnyAsync(ct);
-        
+
         if (markerExists && !hasUnmigrated)
         {
             logger.LogInformation("Cookie invalid event type split migration already applied; skipping.");
@@ -976,7 +976,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             var updateFilter = Builders<NotificationSubscriptionRecord>.Filter.In(n => n.Id, ids);
             var update = Builders<NotificationSubscriptionRecord>.Update.Set(n => n.EventType, "bilibili_cookie_invalid");
             await collection.UpdateManyAsync(updateFilter, update, cancellationToken: ct);
-            
+
             logger.LogInformation("Cookie invalid event type split: processed {Count} records.", batch.Count);
             totalProcessed += batch.Count;
 

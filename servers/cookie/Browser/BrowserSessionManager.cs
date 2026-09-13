@@ -1,22 +1,30 @@
 using System.Collections.Concurrent;
-using System.Threading.Channels;
 using Microsoft.Extensions.Options;
 using Microsoft.Playwright;
 using Z.Vtuber.Cookie.Configuration;
+using Z.Vtuber.Cookie.Platform;
 
 namespace Z.Vtuber.Cookie.Browser;
 
+/// <summary>
+/// 基于 Playwright 的浏览器 session 管理，按 <see cref="ICookiePlatformProfile"/> 驱动登录/登录态检测/cookie 提取。
+/// </summary>
 public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, IBrowserContext> _contexts = new();
-    private readonly ConcurrentDictionary<string, Channel<string>> _navChannels = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<string>> _navResults = new();
+    private readonly ICookiePlatformProfile _profile;
     private readonly IBrowserType _browserType;
     private readonly CookieServiceOptions _options;
     private readonly ILogger<BrowserSessionManager> _logger;
 
-    public BrowserSessionManager(IBrowserType browserType, IOptions<CookieServiceOptions> options, ILogger<BrowserSessionManager> logger)
+    public BrowserSessionManager(
+        ICookiePlatformProfile profile,
+        IBrowserType browserType,
+        IOptions<CookieServiceOptions> options,
+        ILogger<BrowserSessionManager> logger)
     {
+        _profile = profile;
         _browserType = browserType;
         _options = options.Value;
         _logger = logger;
@@ -35,15 +43,29 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
 
         var page = await context.NewPageAsync();
 
-        await page.GotoAsync("https://passport.bilibili.com/login");
+        await page.GotoAsync(_profile.LoginUrl);
 
-        await page.WaitForSelectorAsync("[class*='login-scan__qrcode'] img", new PageWaitForSelectorOptions
-        {
-            Timeout = 10000,
-        });
-
-        var qrElement = await page.QuerySelectorAsync("[class*='login-scan__qrcode']");
         string qrCodeBase64;
+        if (!string.IsNullOrEmpty(_profile.QrCodeSelector))
+        {
+            try
+            {
+                await page.WaitForSelectorAsync(_profile.QrCodeSelector, new PageWaitForSelectorOptions
+                {
+                    Timeout = 10000,
+                });
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("QR selector {Selector} not found for platform {Platform}; falling back to full page screenshot.",
+                    _profile.QrCodeSelector, _profile.Platform);
+            }
+        }
+
+        var qrElement = string.IsNullOrEmpty(_profile.QrCodeSelector)
+            ? null
+            : await page.QuerySelectorAsync(_profile.QrCodeSelector);
+
         if (qrElement != null)
         {
             var screenshot = await qrElement.ScreenshotAsync();
@@ -58,29 +80,36 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
         var navTcs = new TaskCompletionSource<string>();
         _navResults[accountId] = navTcs;
 
-        page.Response += async (_, response) =>
+        if (_profile.LoginStateObservedUrlFragment is { } fragment)
         {
-            if (response.Url.Contains("/x/web-interface/nav"))
+            page.Response += async (_, response) =>
             {
+                if (!response.Url.Contains(fragment, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
                 try
                 {
                     var body = await response.TextAsync();
-                    if (body.Contains("\"isLogin\":true") || body.Contains("\"isLogin\": true"))
+                    if (_profile.IsLoggedIn(body))
                     {
                         navTcs.TrySetResult(body);
                     }
                 }
                 catch
                 {
+                    // 响应读取失败不影响后续登录轮询
                 }
-            }
-        };
+            };
+        }
 
         _contexts[accountId] = context;
 
         var expiresAt = DateTime.UtcNow.AddSeconds(_options.QrCodeExpiresSeconds);
 
-        _logger.LogInformation("Created login session {AccountId}, QR code expires at {ExpiresAt}", accountId, expiresAt);
+        _logger.LogInformation("Created login session {AccountId} for platform {Platform}, QR code expires at {ExpiresAt}",
+            accountId, _profile.Platform, expiresAt);
 
         return new LoginSessionResult
         {
@@ -92,12 +121,62 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
 
     public Task<string?> WaitForNavResponseAsync(string accountId, TimeSpan timeout, CancellationToken ct = default)
     {
+        if (_profile.LoginStateProbeUrl is { } probeUrl)
+        {
+            return ProbeLoginStateAsync(accountId, probeUrl, timeout, ct);
+        }
+
         if (!_navResults.TryGetValue(accountId, out var tcs))
         {
             return Task.FromResult<string?>(null);
         }
 
         return WaitForNavInternalAsync(tcs, timeout, ct);
+    }
+
+    private async Task<string?> ProbeLoginStateAsync(string accountId, string probeUrl, TimeSpan timeout, CancellationToken ct)
+    {
+        if (!_contexts.TryGetValue(accountId, out var context))
+        {
+            return null;
+        }
+
+        var deadline = DateTime.UtcNow + timeout;
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var response = await context.APIRequest.GetAsync(probeUrl);
+                var body = await response.TextAsync();
+                if (_profile.IsLoggedIn(body))
+                {
+                    return body;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Login state probe failed for session {AccountId}", accountId);
+            }
+
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                break;
+            }
+
+            var delay = remaining < TimeSpan.FromSeconds(2) ? remaining : TimeSpan.FromSeconds(2);
+            try
+            {
+                await Task.Delay(delay, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        return null;
     }
 
     private async Task<string?> WaitForNavInternalAsync(TaskCompletionSource<string> tcs, TimeSpan timeout, CancellationToken ct)
@@ -123,7 +202,7 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
             throw new InvalidOperationException($"No browser context for account {accountId}");
         }
 
-        var cookies = await context.CookiesAsync(["https://www.bilibili.com"]);
+        var cookies = await context.CookiesAsync([_profile.CookieDomainUrl]);
         var cookieHeader = string.Join("; ", cookies.Select(c => $"{c.Name}={c.Value}"));
         return cookieHeader;
     }
@@ -144,6 +223,32 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
 
     public async Task RefreshSessionAsync(string accountId, CancellationToken ct = default)
     {
+        if (_profile.LoginStateProbeUrl is { } probeUrl)
+        {
+            if (!_contexts.TryGetValue(accountId, out var probeContext))
+            {
+                throw new InvalidOperationException($"No browser context for account {accountId}");
+            }
+
+            string body;
+            try
+            {
+                var response = await probeContext.APIRequest.GetAsync(probeUrl);
+                body = await response.TextAsync();
+            }
+            catch (Exception ex)
+            {
+                throw new TimeoutException($"Login state check failed for session {accountId}", ex);
+            }
+
+            if (!_profile.IsLoggedIn(body))
+            {
+                throw new InvalidOperationException($"Session {accountId} is not logged in after refresh");
+            }
+
+            return;
+        }
+
         if (!_contexts.TryGetValue(accountId, out var context))
         {
             throw new InvalidOperationException($"No browser context for account {accountId}");
@@ -156,18 +261,20 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
         }
 
         var page = pages[0];
+        var fragment = _profile.LoginStateObservedUrlFragment
+            ?? throw new InvalidOperationException($"Platform {_profile.Platform} has no login-state signal configured");
 
         var navTcs = new TaskCompletionSource<string>();
 
         EventHandler<IResponse> handler = null!;
         handler = async (_, response) =>
         {
-            if (response.Url.Contains("/x/web-interface/nav"))
+            if (response.Url.Contains(fragment, StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
                     var body = await response.TextAsync();
-                    if (body.Contains("\"isLogin\":true") || body.Contains("\"isLogin\": true"))
+                    if (_profile.IsLoggedIn(body))
                     {
                         navTcs.TrySetResult(body);
                     }
@@ -187,7 +294,7 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
 
         try
         {
-            await page.GotoAsync("https://www.bilibili.com", new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle });
+            await page.GotoAsync(_profile.HomeUrl, new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle });
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(_options.RefreshNavTimeoutSeconds));
