@@ -558,9 +558,13 @@ describe('API Client', () => {
     })
 
     it('listRecordings should fetch room recordings', async () => {
+      const files = [
+        { name: 'a.flv', size: 1024, createdAt: '2026-09-01T00:00:00Z' },
+        { name: 'b.flv', size: 2048, createdAt: '2026-09-02T00:00:00Z' },
+      ]
       mockFetch.mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ files: ['a.flv', 'b.flv'] }),
+        json: () => Promise.resolve({ files }),
       })
 
       const result = await listRecordings(456)
@@ -569,7 +573,7 @@ describe('API Client', () => {
         expect.stringContaining('/b/live/456/recordings'),
         expect.anything(),
       )
-      expect(result).toEqual(['a.flv', 'b.flv'])
+      expect(result).toEqual(files)
     })
 
     it('recordingAudioUrl should build proxy url', () => {

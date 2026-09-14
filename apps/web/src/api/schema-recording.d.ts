@@ -116,7 +116,21 @@ export interface components {
             items?: components["schemas"]["RecordingStatus"][];
         };
         RecordingFileList: {
-            files?: string[];
+            files?: components["schemas"]["RecordingFile"][];
+        };
+        RecordingFile: {
+            /** @description 录播文件名（平文件名） */
+            name: string;
+            /**
+             * Format: int64
+             * @description 文件大小（字节）
+             */
+            size: number;
+            /**
+             * Format: date-time
+             * @description 文件创建时间（UTC）
+             */
+            createdAt: string;
         };
     };
     responses: never;
@@ -209,7 +223,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 录播文件名列表（无录播返回空数组） */
+            /** @description 录播文件列表（含大小与创建时间；不含录制中文件；无录播返回空数组） */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -243,12 +257,17 @@ export interface operations {
                     "application/octet-stream": string;
                 };
             };
-            /** @description fileName 非法 */
+            /** @description fileName 非法或文件正在录制中无法下载 */
             400: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @description 错误原因（如 "file is still recording and cannot be downloaded"） */
+                        error: string;
+                    };
+                };
             };
             /** @description 文件不存在 */
             404: {

@@ -317,7 +317,7 @@ export interface paths {
         };
         /**
          * 下载房间录播文件
-         * @description 代理 recording 服务，流式转发录播文件二进制内容；文件不存在返回 404。
+         * @description 代理 recording 服务，流式转发录播文件二进制内容；文件不存在返回 404，文件名非法或文件正在录制中返回 400。
          */
         get: operations["downloadRoomRecording"];
         put?: never;
@@ -535,7 +535,21 @@ export interface components {
             items?: components["schemas"]["RecordingStatusItem"][];
         };
         RecordingFileList: {
-            files?: string[];
+            files?: components["schemas"]["RecordingFile"][];
+        };
+        RecordingFile: {
+            /** @description 录播文件名（平文件名） */
+            name: string;
+            /**
+             * Format: int64
+             * @description 文件大小（字节）
+             */
+            size: number;
+            /**
+             * Format: date-time
+             * @description 文件创建时间（UTC）
+             */
+            createdAt: string;
         };
     };
     responses: never;
@@ -1057,7 +1071,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 录播文件名列表 */
+            /** @description 录播文件列表（含大小与创建时间；不含录制中文件） */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1094,6 +1108,17 @@ export interface operations {
                 };
                 content: {
                     "application/octet-stream": string;
+                };
+            };
+            /** @description fileName 非法或文件正在录制中无法下载 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
                 };
             };
             /** @description 文件不存在 */

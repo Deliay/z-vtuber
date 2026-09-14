@@ -10,6 +10,7 @@ type SubscriptionItem = components['schemas']['SubscriptionItem']
 type BackstageSubscriptionItem = components['schemas']['BackstageSubscriptionItem']
 type BackstageCookieItem = components['schemas']['BackstageCookieItem']
 type RecordingStatusItem = components['schemas']['RecordingStatusItem']
+type RecordingFile = components['schemas']['RecordingFile']
 type SubscribeRequest = components['schemas']['SubscribeRequest']
 type CookieAddRequest = components['schemas']['CookieAddRequest']
 type WeiboSubscriptionItem = weiboComponents['schemas']['WeiboSubscriptionItem']
@@ -123,7 +124,7 @@ export async function listRecordingStatus(): Promise<RecordingStatusItem[]> {
   return data.items ?? []
 }
 
-export async function listRecordings(roomId: number): Promise<string[]> {
+export async function listRecordings(roomId: number): Promise<RecordingFile[]> {
   const data = await request<components['schemas']['RecordingFileList']>(
     `/b/live/${roomId}/recordings`,
   )
