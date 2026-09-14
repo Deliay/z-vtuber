@@ -347,5 +347,6 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IClassF
         public Task<WeiboCookieCheckoutResult> CheckoutWeiboAsync(CancellationToken ct = default) => Task.FromResult(new WeiboCookieCheckoutResult { Available = false });
         public Task<ReportInvalidResult> ReportWeiboInvalidAsync(string cookieId, CancellationToken ct = default) => Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.Refreshed, CookieId = cookieId });
         public Task CooldownWeiboAsync(string cookieId, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<WeiboProxyResult> ProxyWeiboAsync(string cookieId, string path, CancellationToken ct = default) => throw new NotSupportedException();
     }
 }

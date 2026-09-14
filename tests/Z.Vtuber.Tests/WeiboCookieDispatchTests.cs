@@ -10,6 +10,7 @@ using Z.Vtuber.Cookie.Browser;
 using Z.Vtuber.Cookie.Configuration;
 using Z.Vtuber.Cookie.Controllers;
 using Z.Vtuber.Cookie.Persistence;
+using Z.Vtuber.Cookie.Platform;
 using Z.Vtuber.Cookie.Pool;
 
 namespace Z.Vtuber.Tests;
@@ -32,6 +33,12 @@ public class WeiboCookieDispatchTests(MongoDbFixture db) : IClassFixture<MongoDb
     private WeiboCookieDispatchController CreateController(CookieDispatchService dispatch) => new(
         dispatch,
         new FakeInvalidationService(),
+        new FakeCookiePoolService(),
+        new FakeCookieSessionRepository(),
+        new FakeBrowserSessionManager(),
+        new WeiboCookiePlatformProfile(),
+        new FakeDistributedLockProvider(),
+        Options.Create(new CookieServiceOptions()),
         NullLogger<WeiboCookieDispatchController>.Instance);
 
     private async Task<CookieRecord> InsertWeiboCookieAsync(string status = CookieStatus.Active)

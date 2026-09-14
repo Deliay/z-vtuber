@@ -149,6 +149,68 @@ public sealed class CookieServiceClientTests
         Assert.Equal("/api/cookie/cooldown", handler.Requests[0].RequestUri!.AbsolutePath);
     }
 
+    [Fact]
+    public async Task ProxyWeiboAsync_200_ReturnsOkWithStatusAndBody()
+    {
+        var handler = new StubHandler(_ => Json(HttpStatusCode.OK, """{"status":200,"body":"payload"}"""));
+        var client = CreateClient(handler);
+
+        var result = await client.ProxyWeiboAsync("c1", "/api/container/getIndex?containerid=1076031");
+
+        Assert.Equal(WeiboProxyStatus.Ok, result.Status);
+        Assert.Equal(200, result.StatusCode);
+        Assert.Equal("payload", result.Body);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/api/cookie/weibo/proxy", request.RequestUri!.AbsolutePath);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Contains("\"cookieId\":\"c1\"", handler.Bodies[0]);
+        Assert.Contains("\"path\":\"/api/container/getIndex?containerid=1076031\"", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task ProxyWeiboAsync_410_ReturnsSessionInvalid()
+    {
+        var handler = new StubHandler(_ => Json(HttpStatusCode.Gone, "{}"));
+        var client = CreateClient(handler);
+
+        var result = await client.ProxyWeiboAsync("c1", "/api/x");
+
+        Assert.Equal(WeiboProxyStatus.SessionInvalid, result.Status);
+    }
+
+    [Fact]
+    public async Task ProxyWeiboAsync_404_ReturnsNotFound()
+    {
+        var handler = new StubHandler(_ => Json(HttpStatusCode.NotFound, "{}"));
+        var client = CreateClient(handler);
+
+        var result = await client.ProxyWeiboAsync("c1", "/api/x");
+
+        Assert.Equal(WeiboProxyStatus.NotFound, result.Status);
+    }
+
+    [Fact]
+    public async Task ProxyWeiboAsync_502_ReturnsFailed()
+    {
+        var handler = new StubHandler(_ => Json(HttpStatusCode.BadGateway, "{}"));
+        var client = CreateClient(handler);
+
+        var result = await client.ProxyWeiboAsync("c1", "/api/x");
+
+        Assert.Equal(WeiboProxyStatus.Failed, result.Status);
+    }
+
+    [Fact]
+    public async Task ProxyWeiboAsync_504_ReturnsTimeout()
+    {
+        var handler = new StubHandler(_ => Json(HttpStatusCode.GatewayTimeout, "{}"));
+        var client = CreateClient(handler);
+
+        var result = await client.ProxyWeiboAsync("c1", "/api/x");
+
+        Assert.Equal(WeiboProxyStatus.Timeout, result.Status);
+    }
+
     private static HttpResponseMessage Json(HttpStatusCode status, string body) => new(status)
     {
         Content = new StringContent(body, Encoding.UTF8, "application/json"),
