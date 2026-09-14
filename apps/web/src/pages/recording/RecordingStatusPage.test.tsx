@@ -77,7 +77,13 @@ describe('RecordingStatusPage', () => {
     mockListRecordingStatus.mockResolvedValue([
       { mid: 1, roomId: 101, state: 'not_live', streamer: { name: '主播A' } },
     ])
-    mockListRecordings.mockResolvedValue(['[RAW][101][主播A] 2026-09-01-歌回.flv'])
+    mockListRecordings.mockResolvedValue([
+      {
+        name: '[RAW][101][主播A] 2026-09-01-歌回.flv',
+        size: 1288490189,
+        createdAt: '2026-09-01T12:00:00Z',
+      },
+    ])
 
     render(<RecordingStatusPage />)
 
@@ -92,7 +98,12 @@ describe('RecordingStatusPage', () => {
         screen.getByText('[RAW][101][主播A] 2026-09-01-歌回.flv'),
       ).toBeInTheDocument()
     })
+    expect(screen.getByText('1.2 GB')).toBeInTheDocument()
     expect(mockListRecordings).toHaveBeenCalledWith(101)
+    expect(mockDownloadUrl).toHaveBeenCalledWith(
+      101,
+      '[RAW][101][主播A] 2026-09-01-歌回.flv',
+    )
   })
 
   it('should render unknown state for missing state', async () => {

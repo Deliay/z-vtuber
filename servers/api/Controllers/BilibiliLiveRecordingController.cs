@@ -152,6 +152,15 @@ public class BilibiliLiveRecordingController(
                 return NotFound();
             }
 
+            if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            {
+                // 上游 400（文件名非法 / 文件正在录制中）原样透传响应体，避免被归并为 502
+                var json = await response.Content.ReadAsStringAsync(ct);
+                var badRequest = Content(json, "application/json");
+                badRequest.StatusCode = StatusCodes.Status400BadRequest;
+                return badRequest;
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });

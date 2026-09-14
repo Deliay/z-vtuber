@@ -199,6 +199,40 @@ public class BilibiliLiveRecordingControllerTests(MongoDbFixture fixture) : ICla
         Assert.IsType<NotFoundResult>(result);
     }
 
+    [Theory]
+    [InlineData("""{"error":"file is still recording and cannot be downloaded"}""")]
+    [InlineData("""{"error":"invalid fileName"}""")]
+    public async Task DownloadRecording_UpstreamBadRequest_Passthrough(string body)
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            },
+        };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.DownloadRecording(900010, "a.flv", CancellationToken.None);
+
+        var content = Assert.IsType<ContentResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, content.StatusCode);
+        Assert.Equal(body, content.Content);
+        Assert.Equal("application/json", content.ContentType);
+    }
+
+    [Fact]
+    public async Task DownloadRecording_UpstreamServerError_Returns502()
+    {
+        var handler = new StubHandler { Handler = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError) };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.DownloadRecording(900011, "a.flv", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+    }
+
     [Fact]
     public async Task ProxyAudio_NotFound_Passthrough()
     {
