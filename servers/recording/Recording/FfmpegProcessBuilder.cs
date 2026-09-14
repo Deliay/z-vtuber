@@ -53,11 +53,12 @@ public static class FfmpegProcessBuilder
             args.AddRange([
                 "-map", "0:v", "-map", "0:a?",
                 "-c:v", "av1_nvenc",
-                "-rc", "vbr",
                 "-spatial-aq", "1",
                 "-temporal-aq", "1",
                 "-multipass", "fullres",
-                "-b:v", $"{targetBitrateKbps}k",
+                "-maxrate:v", $"{targetBitrateKbps}k",
+                "-minrate:v", $"{targetBitrateKbps * 0.5}k",
+                "-rc", "vbr",
                 "-c:a", "copy",
                 "-f", "flv", av1FilePath,
             ]);
