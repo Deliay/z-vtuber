@@ -75,10 +75,12 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
             return;
         }
 
-        var sinceId = string.Empty;
+
+        var sinceId = "";
         var visitedSinceIds = new HashSet<string>(StringComparer.Ordinal);
         var pageCount = 0;
 
+        _logger.LogInformation("Starting crawl the mblog of uid {}, sinceId={}", uid, sinceId);
         while (true)
         {
                 WeiboTimelinePage page;
@@ -88,6 +90,7 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
                 }
                 catch (WeiboRiskControlException ex)
                 {
+                    _logger.LogError(ex, "Weibo timeline risk controlled for uid {Uid} at sinceId {SinceId}.", uid, sinceId);
                     var retried = await HandleRiskControlAsync(uid, sinceId, ex, backoffKey, ct);
                     if (retried is null)
                     {
@@ -104,6 +107,7 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
 
                 if (page.Items.Count == 0)
                 {
+                    _logger.LogInformation("No mblog returned of uid {}, sinceId={}", uid, sinceId);
                     _backoff.ReportSuccess(backoffKey);
                     return;
                 }
@@ -129,17 +133,21 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
                     });
                 }
 
+                _logger.LogInformation("{} mblog returned, hasMore={}, insert {} to database of uid {}, sinceId={}", 
+                    ids.Count, page.HasMore, toInsert.Count, uid, sinceId);
+
                 if (toInsert.Count > 0)
                 {
                     await _repository.BulkUpsertAsync(toInsert, ct);
+                    return;
                 }
 
                 pageCount++;
 
                 // 本页全部已存在即收敛；或未提示更多；或无游标；或达到页数上限
-                if (existing.Count >= ids.Count
-                    || !page.HasMore
+                if (!page.HasMore
                     || string.IsNullOrEmpty(page.SinceId)
+                    || visitedSinceIds.Contains(page.SinceId)
                     || pageCount >= _options.MaxPagesPerCrawl)
                 {
                     _backoff.ReportSuccess(backoffKey);
@@ -153,8 +161,6 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
                     _backoff.ReportSuccess(backoffKey);
                     return;
                 }
-
-                sinceId = page.SinceId;
             }
     }
 
