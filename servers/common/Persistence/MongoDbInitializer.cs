@@ -21,6 +21,7 @@ public sealed class MongoCollectionNames
     public const string WeiboSubscriptions = "weibo_subscriptions";
     public const string WeiboUserTimeline = "weibo_user_timeline";
     public const string NotificationSubscriptions = "notification_subscriptions";
+    public const string RecordingStatus = "recording_status";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -44,6 +45,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureWeiboSubscriptionIndexesAsync(ct);
         await EnsureWeiboTimelineIndexesAsync(ct);
         await EnsureNotificationSubscriptionIndexesAsync(ct);
+        await EnsureRecordingStatusIndexesAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -905,6 +907,14 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var options = new CreateIndexOptions { Unique = true, Name = "EventType_1_GroupId_1" };
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<NotificationSubscriptionRecord>(keys, options), cancellationToken: ct);
         logger.LogInformation("Ensured (EventType, GroupId) composite unique index on notification_subscriptions.");
+    }
+
+    private Task EnsureRecordingStatusIndexesAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<RecordingStatusRecord>(MongoCollectionNames.RecordingStatus);
+        var keys = Builders<RecordingStatusRecord>.IndexKeys.Ascending(r => r.RoomId);
+        var options = new CreateIndexOptions { Unique = true, Name = "RoomId_1" };
+        return collection.Indexes.CreateOneAsync(new CreateIndexModel<RecordingStatusRecord>(keys, options), cancellationToken: ct);
     }
 }
 

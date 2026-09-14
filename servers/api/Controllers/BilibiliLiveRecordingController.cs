@@ -1,0 +1,185 @@
+using Microsoft.AspNetCore.Mvc;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.Common.Services;
+
+namespace Z.Vtuber.Controllers;
+
+[ApiController]
+[Route("api/b/live")]
+public class BilibiliLiveRecordingController(
+    ISubscriptionService subscriptionService,
+    AccountBasicInfoRepository accountBasicInfo,
+    RecordingStatusRepository recordingStatus,
+    IHttpClientFactory httpClientFactory) : ControllerBase
+{
+    internal const string RecordingClientName = "recording";
+
+    [HttpGet("recording-status")]
+    public async Task<IActionResult> ListRecordingStatus(CancellationToken ct)
+    {
+        var subscriptions = await subscriptionService.GetAllAsync(ct);
+        var recordingSubscriptions = subscriptions
+            .Where(s => s.Type == SubscriptionType.Recording)
+            .ToList();
+
+        var mids = recordingSubscriptions.Select(s => s.Mid).Distinct().ToList();
+        var accountInfos = await accountBasicInfo.GetLatestByMidsAsync(mids, ct);
+
+        var roomIds = accountInfos.Values
+            .Select(i => i.RoomId)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        IReadOnlyList<RecordingStatusRecord> statuses;
+        try
+        {
+            statuses = await recordingStatus.GetByRoomIdsAsync(roomIds, ct);
+        }
+        catch
+        {
+            // recording 状态数据面不可用时退化为 unknown，不阻断页面
+            statuses = [];
+        }
+
+        var statusByRoom = statuses.ToDictionary(s => s.RoomId);
+
+        var items = recordingSubscriptions.Select(s =>
+        {
+            accountInfos.TryGetValue(s.Mid, out var info);
+            var roomId = info is { RoomId: > 0 } ? info.RoomId : (long?)null;
+            RecordingStatusRecord? status = null;
+            if (roomId.HasValue)
+            {
+                statusByRoom.TryGetValue(roomId.Value, out status);
+            }
+
+            return new
+            {
+                mid = s.Mid,
+                roomId,
+                state = status?.State ?? "unknown",
+                hostName = status?.HostName,
+                sessionTitle = status?.SessionTitle,
+                files = status?.Files ?? [],
+                error = status?.Error,
+                updatedAt = status?.UpdatedAt,
+                streamer = info is null ? null : new BackstageStreamerDto(BilibiliBackstageController.ExtractName(info.Data)),
+            };
+        }).ToList();
+
+        return Ok(new { items });
+    }
+
+    [HttpGet("{roomId:long}/recordings")]
+    public async Task<IActionResult> ListRecordings(long roomId, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient(RecordingClientName);
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.GetAsync($"api/{roomId}/recordings", ct);
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return NotFound();
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            return Content(json, "application/json");
+        }
+    }
+
+    [HttpGet("{roomId:long}/recordings/{fileName}")]
+    public async Task<IActionResult> DownloadRecording(long roomId, string fileName, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient(RecordingClientName);
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.GetAsync(
+                $"api/{roomId}/recordings/{Uri.EscapeDataString(fileName)}",
+                HttpCompletionOption.ResponseHeadersRead,
+                ct);
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return NotFound();
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+            }
+
+            Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+            if (response.Content.Headers.ContentDisposition is not null)
+            {
+                Response.Headers.ContentDisposition = response.Content.Headers.ContentDisposition.ToString();
+            }
+            else
+            {
+                Response.Headers.ContentDisposition = $"attachment; filename=\"{fileName}\"";
+            }
+
+            await response.Content.CopyToAsync(Response.Body, ct);
+            return new EmptyResult();
+        }
+    }
+
+    [HttpGet("{roomId:long}/live-stream/audio")]
+    public async Task<IActionResult> ProxyAudio(long roomId, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient(RecordingClientName);
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.GetAsync(
+                $"api/{roomId}/stream/audio",
+                HttpCompletionOption.ResponseHeadersRead,
+                ct);
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return NotFound();
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+            }
+
+            Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "video/x-flv";
+            Response.Headers.CacheControl = "no-store";
+            await response.Content.CopyToAsync(Response.Body, ct);
+            return new EmptyResult();
+        }
+    }
+}

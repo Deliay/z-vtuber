@@ -43,6 +43,21 @@ var notifier = builder.AddProject<Projects.Z_Vtuber_Notifier>("notifier")
     .WithEnvironment("Z_VTUBER_MILKY_ACCESS_TOKEN", builder.AddParameter("milky-access-token", secret: true))
     .WithHttpHealthCheck("/health");
 
+var recording = builder.AddProject<Projects.Z_Vtuber_Recording>("recording")
+    .WithReference(mongo)
+    .WaitFor(mongo)
+    .WithReference(messaging)
+    .WaitFor(messaging)
+    .WithReference(cookie)
+    .WaitFor(cookie)
+    .WithEnvironment("CookieService:BaseUrl", cookie.GetEndpoint("http"))
+    .WithEnvironment("Recording:StorageDir", "/data/recordings")
+    .WithHttpHealthCheck("/health");
+
+api.WithReference(recording)
+    .WaitFor(recording)
+    .WithEnvironment("RecordingService:BaseUrl", recording.GetEndpoint("http"));
+
 var web = builder.AddViteApp("web", "../../apps/web")
     .WithReference(api)
     .WithReference(notifier)

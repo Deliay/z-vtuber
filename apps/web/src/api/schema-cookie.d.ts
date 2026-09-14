@@ -177,11 +177,17 @@ export interface components {
         ReportInvalidRequest: {
             cookieId: string;
         };
+        /**
+         * @description 事件 reason 说明：
+         *     - session_invalid: session 失效（包括 report-invalid 和 refresh_nav_missing）
+         *     - no_session: 无关联 session 的历史 cookie（仅事件流使用，410 响应统一返回 session_invalid）
+         *     - account_removed: 帐号被删除
+         */
         SessionInvalidResponse: {
             cookieId?: string;
             accountId?: string;
             /** @enum {string} */
-            reason?: "session_invalid";
+            reason?: "session_invalid" | "no_session" | "account_removed";
         };
         CooldownRequest: {
             cookieId: string;

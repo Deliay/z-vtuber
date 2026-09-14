@@ -12,5 +12,8 @@ public enum SubscriptionType
     Danmaku = 1,
 
     [BsonRepresentation(BsonType.String)]
-    Guard = 2
+    Guard = 2,
+
+    [BsonRepresentation(BsonType.String)]
+    Recording = 3
 }

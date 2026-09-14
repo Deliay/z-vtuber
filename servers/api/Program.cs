@@ -29,6 +29,7 @@ builder.Services.AddSingleton<SpaceTimelineRepository>();
 builder.Services.AddSingleton<LiveSessionRepository>();
 builder.Services.AddSingleton<LiveEventTextIndexRepository>();
 builder.Services.AddSingleton<LiveGuardRepository>();
+builder.Services.AddSingleton<RecordingStatusRepository>();
 builder.Services.AddSingleton<MongoDbInitializer>();
 
 builder.Services.AddBackstageDataAggregation();
@@ -41,6 +42,11 @@ builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 
 builder.Services.AddSingleton<ILiveEventBus, LiveEventBus>();
+
+builder.Services.AddHttpClient(Z.Vtuber.Controllers.BilibiliLiveRecordingController.RecordingClientName, client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["RecordingService:BaseUrl"] ?? "http://recording");
+});
 
 var app = builder.Build();
 

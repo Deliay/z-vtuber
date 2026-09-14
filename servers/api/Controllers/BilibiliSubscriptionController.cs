@@ -26,19 +26,19 @@ public class BilibiliSubscriptionController(ISubscriptionService subscription) :
 
         if (string.IsNullOrEmpty(request.Type))
         {
-            return BadRequest(new { error = "type is required and must be one of: danmaku, dynamic, guard." });
+            return BadRequest(new { error = "type is required and must be one of: danmaku, dynamic, guard, recording." });
         }
 
         // 拒绝纯数字字符串（契约不允许）
         if (request.Type.All(char.IsDigit))
         {
-            return BadRequest(new { error = "type must be one of: danmaku, dynamic, guard." });
+            return BadRequest(new { error = "type must be one of: danmaku, dynamic, guard, recording." });
         }
 
         if (!Enum.TryParse<SubscriptionType>(request.Type, ignoreCase: true, out var type)
             || !Enum.IsDefined(type))
         {
-            return BadRequest(new { error = "type must be one of: danmaku, dynamic, guard." });
+            return BadRequest(new { error = "type must be one of: danmaku, dynamic, guard, recording." });
         }
 
         await subscription.SubscribeAsync(request.Mid, type, ct);
@@ -50,19 +50,19 @@ public class BilibiliSubscriptionController(ISubscriptionService subscription) :
     {
         if (string.IsNullOrEmpty(type))
         {
-            return BadRequest(new { error = "type is required and must be one of: danmaku, dynamic, guard." });
+            return BadRequest(new { error = "type is required and must be one of: danmaku, dynamic, guard, recording." });
         }
 
         // 拒绝纯数字字符串（契约不允许）
         if (type.All(char.IsDigit))
         {
-            return BadRequest(new { error = "type must be one of: danmaku, dynamic, guard." });
+            return BadRequest(new { error = "type must be one of: danmaku, dynamic, guard, recording." });
         }
 
         if (!Enum.TryParse<SubscriptionType>(type, ignoreCase: true, out var subscriptionType)
             || !Enum.IsDefined(subscriptionType))
         {
-            return BadRequest(new { error = "type must be one of: danmaku, dynamic, guard." });
+            return BadRequest(new { error = "type must be one of: danmaku, dynamic, guard, recording." });
         }
 
         var removed = await subscription.UnsubscribeAsync(mid, subscriptionType, ct);
