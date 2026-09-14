@@ -45,7 +45,8 @@ public sealed class WeiboApiClient : IWeiboApiClient
         {
             url += $"&since_id={Uri.EscapeDataString(sinceId)}";
         }
-
+        url += $"&.rnd={Uri.EscapeDataString(DateTimeOffset.Now.ToString())}";
+        _logger.LogInformation("Requesting url: {}", url);
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.TryAddWithoutValidation("User-Agent", _options.UserAgent);
         request.Headers.TryAddWithoutValidation("Referer", $"https://m.weibo.cn/u/{uid}");
