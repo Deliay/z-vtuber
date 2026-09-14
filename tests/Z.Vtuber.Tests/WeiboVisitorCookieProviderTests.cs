@@ -36,7 +36,7 @@ public sealed class WeiboVisitorCookieProviderTests
     {
         var handler = new RecordingHandler("""visitor_callback({"data":{"sub":"A","subp":"B"}})""");
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        var provider = CreateProvider(handler, time: time);
+        var provider = CreateProvider(handler, options: new WeiboCrawlerOptions { CookieRefreshIntervalMinutes = 30 }, time: time);
 
         await provider.GetOrRefreshAsync();
         time.Advance(TimeSpan.FromMinutes(10));
