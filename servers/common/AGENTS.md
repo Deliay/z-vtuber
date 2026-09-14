@@ -12,10 +12,10 @@
 
 ## 模块结构
 
-- `Persistence/`：MongoDB 集合实体（B 站 9 实体 + Meta；微博 `WeiboSubscriptionRecord`/`WeiboTimelineRecord`；通知 `NotificationSubscriptionRecord`（群维度字段：`GroupId`/`GroupName`））、仓储（含 `CookieAccountInfoRepository`：按 `CookieId` upsert 帐号昵称（新增 `FetchedAt` 字段记录探测时间）、批量查询；`AccountBasicInfoRepository.GetLatestByMidsAsync` 批量取最新主播资料；`LiveGuardRepository.GetOnboardGuardEntriesAsync`：聚合管道查询在舰用户，支持 any/all 统计口径，`RoomId_1_Date_1` 复合索引加速查询，补录方法 `GetDistinctMidsAsync`/`GetSnapshotsByMidAsync`/`BackfillMissingEntriesAsync`；微博 `WeiboSubscriptionRepository`（按 Uid upsert/删除/列举）、`WeiboTimelineRepository`（按 MblogId SetOnInsert 幂等落库 + 按 PubTs 过滤分页）；通知 `NotificationSubscriptionRepository`（按 `EventType`+`GroupId` 复合索引））、`MongoDbInitializer`（幂等索引初始化 + 各类回填 + 订阅类型拆分迁移；含微博 2 集合索引初始化 + 通知 `(EventType, GroupId)` 唯一索引）、`BsonConvert`、`BackstageDataAggregationExtensions`（注册 `ICookieAccountInfoRepository`）
+- `Persistence/`：MongoDB 集合实体（B 站 9 实体 + Meta；微博 `WeiboSubscriptionRecord`/`WeiboTimelineRecord`；通知 `NotificationSubscriptionRecord`（群维度字段：`GroupId`/`GroupName`））、仓储（含 `CookieAccountInfoRepository`：按 `CookieId` upsert 帐号昵称（新增 `FetchedAt` 字段记录探测时间）、批量查询；`AccountBasicInfoRepository.GetLatestByMidsAsync` 批量取最新主播资料；`LiveGuardRepository.GetOnboardGuardEntriesAsync`：聚合管道查询在舰用户，支持 any/all 统计口径，`RoomId_1_Date_1` 复合索引加速查询，补录方法 `GetDistinctMidsAsync`/`GetSnapshotsByMidAsync`/`BackfillMissingEntriesAsync`；微博 `WeiboSubscriptionRepository`（按 Uid upsert/删除/列举）、`WeiboTimelineRepository`（按 MblogId SetOnInsert 幂等落库 + 按 PubTs 过滤分页）；通知 `NotificationSubscriptionRepository`（按 `EventType`+`GroupId` 复合索引）；录播 `RecordingStatusRepository`（`recording_status` 集合，按 `RoomId` 唯一键 upsert / 全量或按 RoomIds 批量读））、`MongoDbInitializer`（幂等索引初始化 + 各类回填 + 订阅类型拆分迁移；含微博 2 集合索引初始化 + 通知 `(EventType, GroupId)` 唯一索引 + 录播 `recording_status.RoomId_1` 唯一索引；含微博 Cookie 集合索引 `EnsureWeiboCookieIndexesAsync`（`weibo_cookies`：`(Status, LastUsedAt)`+`AccountId`；`weibo_cookie_sessions`：`Status`+`CookieId`）与失效事件类型拆分迁移 `MigrateCookieInvalidEventTypeSplitAsync`（marker `cookie_invalid_platform_split_v1`，存量 `cookie_invalid` → `bilibili_cookie_invalid` 幂等））、`BsonConvert`、`BackstageDataAggregationExtensions`（注册 `ICookieAccountInfoRepository`）
 - `Locking/`：`IDistributedLockProvider`（分布式锁抽象）、`IDistributedLockHandle`（锁句柄，`IAsyncDisposable`）
 - `Services/`：`ICookiePoolService`（三态：在线/冷却/离线，round-robin）、`ISubscriptionService`、`ILiveSessionTracker`、`LiveStatusStateMachine`（场次划分）、`PubTsExtractor`、`SpaceTimelinePaging`、`IWeiboSubscriptionService`/`WeiboSubscriptionService`（Uid upsert 幂等 + `Subscribed` 事件，与 B 站订阅隔离）、`ICookieNavProbeService` 契约（含 `CookieProbeOutcome` 枚举：Success/Cooldown/Offline/Backoff）
-- `Live/`：共享事件模型 `LiveEvent`、弹幕文本/价格提取器（`LiveEventTextExtractor`、`GiftPriceExtractor`，供 crawler 归一化与 common 回填共用）、事件频道名约定 `LiveEventChannels`
+- `Live/`：共享事件模型 `LiveEvent`、弹幕文本/价格提取器（`LiveEventTextExtractor`、`GiftPriceExtractor`，供 crawler 归一化与 common 回填共用）、事件频道名约定 `LiveEventChannels`、Cookie 失效事件 `CookieInvalidEvent`（字段含 `Platform`，空/未知按 bilibili 处理）与频道名 `CookieEventChannels`、跨进程订阅事件 `SubscriptionEvent`/`SubscriptionEventChannels`（api 发布、crawler 消费）
 
 ## 归属约定
 
@@ -23,6 +23,7 @@
 - 被双方使用的代码（实体、仓储、共享服务、共享模型、提取器、`ICookieNavProbeService` 契约、`Locking/` 契约）入 common。
 - `ICookieNavProbeService` 契约在 common，具体实现 `CookieNavProbeService`（依赖抓取通道与 Options）在 cookie 服务，避免 common 反向依赖 crawler。
 - `NextAsync`/探测契约已删除：Cookie 池调度（checkout/dispatch）由 cookie 服务通过 HTTP API 提供，crawler 不再直接调用 `ICookiePoolService.NextAsync`。
+- `SubscriptionType` 枚举含 `Dynamic/Danmaku/Guard/Recording`（均 `[BsonRepresentation(BsonType.String)]`）；录播状态实体 `RecordingStatusRecord`/仓储 `RecordingStatusRepository` 入 common（recording 写、api 读）。
 
 ## 裸部署配置
 

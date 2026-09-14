@@ -59,6 +59,8 @@ builder.Services.AddSingleton<WeiboSubscriptionRepository>();
 builder.Services.AddSingleton<WeiboTimelineRepository>();
 builder.Services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionService>();
 builder.Services.AddSingleton<IWeiboVisitorCookieProvider, WeiboVisitorCookieProvider>();
+builder.Services.AddSingleton<IWeiboLoginCookieProvider, WeiboLoginCookieProvider>();
+builder.Services.AddSingleton<IWeiboCookieSource, WeiboCookieSource>();
 builder.Services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
 
 builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();
@@ -111,6 +113,8 @@ builder.Services.AddHostedService<SpaceTimelineJob>();
 builder.Services.AddHostedService<LiveGuardJob>();
 builder.Services.AddHostedService<LiveEventSource>();
 builder.Services.AddHostedService<WeiboTimelineJob>();
+// 远端（api 进程）订阅事件：桥接为进程内 Subscribed，触发 AccountInfoJob 即时抓取
+builder.Services.AddHostedService<SubscriptionEventSubscriber>();
 
 var app = builder.Build();
 

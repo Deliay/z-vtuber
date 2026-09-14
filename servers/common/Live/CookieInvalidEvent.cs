@@ -18,4 +18,7 @@ public sealed record CookieInvalidEvent
 
     [JsonPropertyName("reason")]
     public required string Reason { get; init; }
+
+    [JsonPropertyName("platform")]
+    public string? Platform { get; init; }
 }

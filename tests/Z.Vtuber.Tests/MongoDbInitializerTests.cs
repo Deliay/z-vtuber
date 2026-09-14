@@ -614,6 +614,41 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
         Assert.Single(names, n => n == "Uid_1");
     }
 
+    [Fact]
+    public async Task EnsureIndexes_CreatesWeiboCookieIndexes()
+    {
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+
+        var cookies = fixture.Database.GetCollection<CookieRecord>(MongoCollectionNames.WeiboCookies);
+        var cookieNames = await ListIndexNamesAsync(cookies);
+        Assert.Contains("Status_1_LastUsedAt_1", cookieNames);
+        Assert.Contains("AccountId_1", cookieNames);
+
+        var sessions = fixture.Database.GetCollection<CookieSessionRecord>(MongoCollectionNames.WeiboCookieSessions);
+        var sessionNames = await ListIndexNamesAsync(sessions);
+        Assert.Contains("Status_1", sessionNames);
+        Assert.Contains("CookieId_1", sessionNames);
+    }
+
+    [Fact]
+    public async Task EnsureIndexes_IsIdempotent_ForWeiboCookieCollections()
+    {
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.EnsureIndexesAsync();
+        await initializer.EnsureIndexesAsync();
+
+        var cookies = fixture.Database.GetCollection<CookieRecord>(MongoCollectionNames.WeiboCookies);
+        var cookieNames = await ListIndexNamesAsync(cookies);
+        Assert.Single(cookieNames, n => n == "Status_1_LastUsedAt_1");
+        Assert.Single(cookieNames, n => n == "AccountId_1");
+
+        var sessions = fixture.Database.GetCollection<CookieSessionRecord>(MongoCollectionNames.WeiboCookieSessions);
+        var sessionNames = await ListIndexNamesAsync(sessions);
+        Assert.Single(sessionNames, n => n == "Status_1");
+        Assert.Single(sessionNames, n => n == "CookieId_1");
+    }
+
     private static async Task<List<string>> ListIndexNamesAsync<T>(IMongoCollection<T> collection)
     {
         using var cursor = await collection.Indexes.ListAsync();

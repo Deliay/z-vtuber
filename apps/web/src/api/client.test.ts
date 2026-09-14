@@ -20,6 +20,18 @@ import {
   getCookieAccount,
   deleteCookieAccount,
   listAvailableCookies,
+  listRecordingStatus,
+  listRecordings,
+  recordingAudioUrl,
+  recordingDownloadUrl,
+  listWeiboCookieAccounts,
+  createWeiboCookieAccount,
+  getWeiboCookieAccount,
+  deleteWeiboCookieAccount,
+  listAvailableWeiboCookies,
+  checkoutWeiboCookie,
+  reportInvalidWeiboCookie,
+  cooldownWeiboCookie,
 } from './client'
 
 const mockFetch = vi.fn()
@@ -439,7 +451,7 @@ describe('API Client', () => {
     it('should send POST request with correct body', async () => {
       const mockResponse = {
         id: '1',
-        eventType: 'cookie_invalid',
+        eventType: 'bilibili_cookie_invalid',
         groupId: '123456',
         groupName: '运维群',
         createdAt: '2024-01-01T00:00:00Z',
@@ -451,7 +463,7 @@ describe('API Client', () => {
       })
 
       const result = await createNotificationBinding({
-        eventType: 'cookie_invalid',
+        eventType: 'bilibili_cookie_invalid',
         groupId: '123456',
         groupName: '运维群',
       })
@@ -474,7 +486,7 @@ describe('API Client', () => {
       })
 
       await expect(createNotificationBinding({
-        eventType: 'invalid' as 'cookie_invalid',
+        eventType: 'invalid' as 'bilibili_cookie_invalid',
         groupId: '123456',
       })).rejects.toThrow('API request failed')
     })
@@ -507,6 +519,66 @@ describe('API Client', () => {
 
       await expect(deleteNotificationBinding('999')).rejects.toThrow(
         'API request failed',
+      )
+    })
+  })
+
+  describe('Recording', () => {
+    it('listRecordingStatus should fetch /b/live/recording-status', async () => {
+      const mockData = {
+        items: [
+          {
+            mid: 123,
+            roomId: 456,
+            state: 'recording',
+            hostName: 'host-1',
+            sessionTitle: '晚间歌回',
+            files: ['[RAW][456][某主播] 2026-09-13-晚间歌回.flv'],
+          },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockData),
+      })
+
+      const result = await listRecordingStatus()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/b/live/recording-status'),
+        expect.anything(),
+      )
+      expect(result).toEqual(mockData.items)
+    })
+
+    it('listRecordingStatus should return empty array when items undefined', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+
+      expect(await listRecordingStatus()).toEqual([])
+    })
+
+    it('listRecordings should fetch room recordings', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ files: ['a.flv', 'b.flv'] }),
+      })
+
+      const result = await listRecordings(456)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/b/live/456/recordings'),
+        expect.anything(),
+      )
+      expect(result).toEqual(['a.flv', 'b.flv'])
+    })
+
+    it('recordingAudioUrl should build proxy url', () => {
+      expect(recordingAudioUrl(456)).toContain('/b/live/456/live-stream/audio')
+    })
+
+    it('recordingDownloadUrl should encode file name', () => {
+      expect(recordingDownloadUrl(456, '[RAW] a.flv')).toContain(
+        '/b/live/456/recordings/%5BRAW%5D%20a.flv',
       )
     })
   })
@@ -652,6 +724,192 @@ describe('API Client', () => {
           expect.objectContaining({}),
         )
         expect(result).toEqual(mockData.items)
+      })
+    })
+
+    describe('listWeiboCookieAccounts', () => {
+      it('should fetch weibo account list via /cookie/weibo/accounts', async () => {
+        const mockData = {
+          items: [
+            { accountId: 'w-1', status: 'active', platform: 'weibo', mid: 456, uname: '微博用户' },
+          ],
+        }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockData),
+        })
+
+        const result = await listWeiboCookieAccounts()
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/accounts'),
+          expect.objectContaining({}),
+        )
+        expect(result).toEqual(mockData.items)
+      })
+
+      it('should return empty array when items is undefined', async () => {
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({}),
+        })
+
+        const result = await listWeiboCookieAccounts()
+        expect(result).toEqual([])
+      })
+    })
+
+    describe('createWeiboCookieAccount', () => {
+      it('should POST to /cookie/weibo/accounts', async () => {
+        const mockResponse = {
+          accountId: 'w-1',
+          status: 'pending_login',
+          qrCodeImage: 'base64data',
+          expiresAt: '2024-01-01T00:05:00Z',
+        }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          status: 202,
+          json: () => Promise.resolve(mockResponse),
+        })
+
+        const result = await createWeiboCookieAccount()
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/accounts'),
+          expect.objectContaining({ method: 'POST' }),
+        )
+        expect(result.accountId).toBe('w-1')
+        expect(result.status).toBe('pending_login')
+      })
+    })
+
+    describe('getWeiboCookieAccount', () => {
+      it('should GET /cookie/weibo/accounts/{accountId}', async () => {
+        const mockResponse = {
+          accountId: 'w-1',
+          status: 'active',
+          mid: 456,
+          uname: '微博用户',
+        }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockResponse),
+        })
+
+        const result = await getWeiboCookieAccount('w-1')
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/accounts/w-1'),
+          expect.objectContaining({}),
+        )
+        expect(result.status).toBe('active')
+      })
+
+      it('should throw error on 404 response', async () => {
+        mockFetch.mockResolvedValue({
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          text: () => Promise.resolve('Account not found'),
+        })
+
+        await expect(getWeiboCookieAccount('nonexistent')).rejects.toThrow(
+          'API request failed',
+        )
+      })
+    })
+
+    describe('deleteWeiboCookieAccount', () => {
+      it('should DELETE /cookie/weibo/accounts/{accountId}', async () => {
+        mockFetch.mockResolvedValue({
+          ok: true,
+          status: 204,
+        })
+
+        await deleteWeiboCookieAccount('w-1')
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/accounts/w-1'),
+          expect.objectContaining({ method: 'DELETE' }),
+        )
+      })
+    })
+
+    describe('listAvailableWeiboCookies', () => {
+      it('should fetch available weibo cookies via /cookie/weibo/available', async () => {
+        const mockData = {
+          items: [
+            { cookieId: 'c1', status: 'active' },
+          ],
+        }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockData),
+        })
+
+        const result = await listAvailableWeiboCookies()
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/available'),
+          expect.objectContaining({}),
+        )
+        expect(result).toEqual(mockData.items)
+      })
+    })
+
+    describe('checkoutWeiboCookie', () => {
+      it('should POST /cookie/weibo/checkout', async () => {
+        const mockData = { cookieId: 'c1', accountId: 'a1', cookie: 'SUB=x' }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockData),
+        })
+
+        const result = await checkoutWeiboCookie()
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/checkout'),
+          expect.objectContaining({ method: 'POST' }),
+        )
+        expect(result).toEqual(mockData)
+      })
+    })
+
+    describe('reportInvalidWeiboCookie', () => {
+      it('should POST /cookie/weibo/report-invalid with cookieId', async () => {
+        const mockData = { cookieId: 'c1', cookie: 'SUB=new', refreshed: true }
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(mockData),
+        })
+
+        const result = await reportInvalidWeiboCookie('c1')
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/report-invalid'),
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ cookieId: 'c1' }),
+          }),
+        )
+        expect(result).toEqual(mockData)
+      })
+    })
+
+    describe('cooldownWeiboCookie', () => {
+      it('should POST /cookie/weibo/cooldown with cookieId and duration', async () => {
+        mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+        await cooldownWeiboCookie('c1', 300)
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/cookie/weibo/cooldown'),
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ cookieId: 'c1', durationSeconds: 300 }),
+          }),
+        )
       })
     })
   })

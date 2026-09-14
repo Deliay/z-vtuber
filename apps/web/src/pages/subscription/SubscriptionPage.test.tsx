@@ -470,4 +470,57 @@ describe('SubscriptionPage', () => {
       expect(screen.getByText('暂无订阅')).toBeInTheDocument()
     })
   })
+
+  it('should render recording type label', async () => {
+    mockListSubscriptions.mockResolvedValue([
+      {
+        mid: 321,
+        type: 'recording',
+        subscribedAt: '2024-01-08T00:00:00Z',
+      },
+    ])
+
+    render(<SubscriptionPage />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('录播').length).toBeGreaterThan(0)
+      expect(screen.getByText('321')).toBeInTheDocument()
+    })
+  })
+
+  it('should subscribe with recording type', async () => {
+    mockSubscribe.mockResolvedValue({
+      mid: 654,
+      type: 'recording',
+      subscribedAt: '2024-01-09T00:00:00Z',
+    })
+    mockListSubscriptions
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          mid: 654,
+          type: 'recording',
+          subscribedAt: '2024-01-09T00:00:00Z',
+        },
+      ])
+
+    render(<SubscriptionPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('暂无订阅')).toBeInTheDocument()
+    })
+
+    const typeSelect = screen.getByDisplayValue('请选择类型')
+    fireEvent.change(typeSelect, { target: { value: 'recording' } })
+
+    const midInput = screen.getByPlaceholderText('主播 ID (mid)')
+    fireEvent.change(midInput, { target: { value: '654' } })
+
+    fireEvent.click(screen.getByText('新增订阅'))
+
+    await waitFor(() => {
+      expect(mockSubscribe).toHaveBeenCalledWith({ mid: 654, type: 'recording' })
+      expect(screen.getByText('654')).toBeInTheDocument()
+    })
+  })
 })

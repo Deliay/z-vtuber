@@ -101,6 +101,7 @@ public class LiveEventSourceLockTimingTests
             => Task.CompletedTask;
         public Task<bool> UnsubscribeAsync(long mid, SubscriptionType type, CancellationToken ct = default)
             => Task.FromResult(true);
+        public void RaiseSubscribed(long mid, SubscriptionType type) => Subscribed?.Invoke(mid, type);
     }
 
     private sealed class FakeCookiePool : ICookiePoolService

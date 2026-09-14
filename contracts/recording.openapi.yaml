@@ -1,0 +1,141 @@
+openapi: 3.1.0
+info:
+  title: Recording Service API
+  version: 1.0.0
+  description: B站直播录播服务 API（开播自动录制、录播文件管理与实时音频流）
+servers:
+  - url: /
+paths:
+  /health:
+    get:
+      summary: 健康检查
+      operationId: health
+      responses:
+        "200":
+          description: 服务存活且 MongoDB 可达
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/recording/status:
+    get:
+      summary: 查询全部录制状态
+      operationId: listRecordingStatus
+      responses:
+        "200":
+          description: 当前全部录制状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingStatusList"
+  /api/{roomId}/stream/audio:
+    get:
+      summary: 实时音频流
+      description: 录制中返回 200 并持续输出 flv 封装的音频数据；未在录制返回 404。
+      operationId: streamAudio
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: 实时音频流（flv 封装）
+          content:
+            video/x-flv:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: 该房间当前未在录制
+  /api/{roomId}/recordings:
+    get:
+      summary: 列出房间录播文件
+      operationId: listRecordings
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: 录播文件名列表（无录播返回空数组）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingFileList"
+  /api/{roomId}/recordings/{fileName}:
+    get:
+      summary: 下载录播文件
+      operationId: downloadRecording
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - name: fileName
+          in: path
+          required: true
+          description: 录播文件名（仅允许平文件名，禁止路径分隔符与穿越）
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 录播文件二进制内容
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: 文件不存在
+        "400":
+          description: fileName 非法
+components:
+  parameters:
+    RoomId:
+      name: roomId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    RecordingStatus:
+      type: object
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        state:
+          type: string
+          enum: [not_live, recording, error]
+        hostName:
+          type: string
+          nullable: true
+          description: 执行录制的实例 hostname
+        sessionTitle:
+          type: string
+          nullable: true
+          description: 当前录制场次名称
+        files:
+          type: array
+          items:
+            type: string
+          description: 当前场次产出文件名
+        error:
+          type: string
+          nullable: true
+          description: state=error 时的原因
+        updatedAt:
+          type: string
+          format: date-time
+    RecordingStatusList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingStatus"
+    RecordingFileList:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            type: string

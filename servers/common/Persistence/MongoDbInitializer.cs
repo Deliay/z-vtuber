@@ -20,7 +20,10 @@ public sealed class MongoCollectionNames
     public const string LiveGuards = "bilibili_live_guards";
     public const string WeiboSubscriptions = "weibo_subscriptions";
     public const string WeiboUserTimeline = "weibo_user_timeline";
+    public const string WeiboCookies = "weibo_cookies";
+    public const string WeiboCookieSessions = "weibo_cookie_sessions";
     public const string NotificationSubscriptions = "notification_subscriptions";
+    public const string RecordingStatus = "recording_status";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -43,7 +46,9 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureLiveGuardRoomDateIndexAsync(ct);
         await EnsureWeiboSubscriptionIndexesAsync(ct);
         await EnsureWeiboTimelineIndexesAsync(ct);
+        await EnsureWeiboCookieIndexesAsync(ct);
         await EnsureNotificationSubscriptionIndexesAsync(ct);
+        await EnsureRecordingStatusIndexesAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -649,18 +654,19 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
     }
 
     public const string SubscriptionTypeSplitMigrationKey = "subscription_type_split_v1";
+    public const string CookieInvalidEventTypeSplitMigrationKey = "cookie_invalid_platform_split_v1";
 
     public async Task MigrateSubscriptionTypeSplitAsync(CancellationToken ct = default)
     {
         var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
         var markerExists = await meta.Find(r => r.Key == SubscriptionTypeSplitMigrationKey)
             .AnyAsync(ct);
-        
+
         // 即使 marker 存在，也需要检查是否有未迁移的记录（回滚场景）
         var collection = database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
         var noTypeFilter = Builders<SubscriptionRecord>.Filter.Not(Builders<SubscriptionRecord>.Filter.Exists(s => s.Type));
         var hasUnmigrated = await collection.Find(noTypeFilter).AnyAsync(ct);
-        
+
         if (markerExists && !hasUnmigrated)
         {
             logger.LogInformation("Subscription type split migration already applied; skipping.");
@@ -905,6 +911,96 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var options = new CreateIndexOptions { Unique = true, Name = "EventType_1_GroupId_1" };
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<NotificationSubscriptionRecord>(keys, options), cancellationToken: ct);
         logger.LogInformation("Ensured (EventType, GroupId) composite unique index on notification_subscriptions.");
+    }
+
+    private Task EnsureRecordingStatusIndexesAsync(CancellationToken ct)
+    {
+        var collection = database.GetCollection<RecordingStatusRecord>(MongoCollectionNames.RecordingStatus);
+        var keys = Builders<RecordingStatusRecord>.IndexKeys.Ascending(r => r.RoomId);
+        var options = new CreateIndexOptions { Unique = true, Name = "RoomId_1" };
+        return collection.Indexes.CreateOneAsync(new CreateIndexModel<RecordingStatusRecord>(keys, options), cancellationToken: ct);
+    }
+
+    private async Task EnsureWeiboCookieIndexesAsync(CancellationToken ct)
+    {
+        // weibo_cookies indexes (same structure as bilibili_cookies)
+        var cookiesCollection = database.GetCollection<CookieRecord>(MongoCollectionNames.WeiboCookies);
+        var cookieKeys = Builders<CookieRecord>.IndexKeys
+            .Ascending(c => c.Status)
+            .Ascending(c => c.LastUsedAt);
+        await cookiesCollection.Indexes.CreateOneAsync(new CreateIndexModel<CookieRecord>(cookieKeys), cancellationToken: ct);
+
+        var cookieAccountIdKeys = Builders<CookieRecord>.IndexKeys.Ascending(c => c.AccountId);
+        await cookiesCollection.Indexes.CreateOneAsync(
+            new CreateIndexModel<CookieRecord>(cookieAccountIdKeys, new CreateIndexOptions { Name = "AccountId_1" }),
+            cancellationToken: ct);
+
+        // weibo_cookie_sessions indexes (same structure as bilibili_cookie_sessions)
+        var sessionsCollection = database.GetCollection<CookieSessionRecord>(MongoCollectionNames.WeiboCookieSessions);
+        var sessionStatusKeys = Builders<CookieSessionRecord>.IndexKeys.Ascending(s => s.Status);
+        await sessionsCollection.Indexes.CreateOneAsync(
+            new CreateIndexModel<CookieSessionRecord>(sessionStatusKeys, new CreateIndexOptions { Name = "Status_1" }),
+            cancellationToken: ct);
+
+        var sessionCookieIdKeys = Builders<CookieSessionRecord>.IndexKeys.Ascending(s => s.CookieId);
+        await sessionsCollection.Indexes.CreateOneAsync(
+            new CreateIndexModel<CookieSessionRecord>(sessionCookieIdKeys, new CreateIndexOptions { Name = "CookieId_1" }),
+            cancellationToken: ct);
+
+        logger.LogInformation("Ensured weibo cookie indexes.");
+    }
+
+    public async Task MigrateCookieInvalidEventTypeSplitAsync(CancellationToken ct = default)
+    {
+        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == CookieInvalidEventTypeSplitMigrationKey)
+            .AnyAsync(ct);
+
+        // 即使 marker 存在，也需要检查是否有未迁移的记录（回滚场景）
+        var collection = database.GetCollection<NotificationSubscriptionRecord>(MongoCollectionNames.NotificationSubscriptions);
+        var cookieInvalidFilter = Builders<NotificationSubscriptionRecord>.Filter.Eq(n => n.EventType, "cookie_invalid");
+        var hasUnmigrated = await collection.Find(cookieInvalidFilter).AnyAsync(ct);
+
+        if (markerExists && !hasUnmigrated)
+        {
+            logger.LogInformation("Cookie invalid event type split migration already applied; skipping.");
+            return;
+        }
+
+        // 批量更新 cookie_invalid → bilibili_cookie_invalid
+        const int batchSize = 500;
+        long totalProcessed = 0;
+
+        while (true)
+        {
+            var batch = await collection.Find(cookieInvalidFilter)
+                .Limit(batchSize)
+                .ToListAsync(ct);
+
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            var ids = batch.Select(r => r.Id).ToList();
+            var updateFilter = Builders<NotificationSubscriptionRecord>.Filter.In(n => n.Id, ids);
+            var update = Builders<NotificationSubscriptionRecord>.Update.Set(n => n.EventType, "bilibili_cookie_invalid");
+            await collection.UpdateManyAsync(updateFilter, update, cancellationToken: ct);
+
+            logger.LogInformation("Cookie invalid event type split: processed {Count} records.", batch.Count);
+            totalProcessed += batch.Count;
+
+            if (batch.Count < batchSize)
+            {
+                break;
+            }
+        }
+
+        logger.LogInformation("Cookie invalid event type split migration total processed {Total} records.", totalProcessed);
+
+        // 使用 upsert 避免重复键错误（回滚场景 / 双服务并发）
+        await MarkMigrationAppliedAsync(CookieInvalidEventTypeSplitMigrationKey, ct);
+        logger.LogInformation("Cookie invalid event type split migration completed and marked as applied.");
     }
 }
 

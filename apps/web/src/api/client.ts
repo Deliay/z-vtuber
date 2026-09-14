@@ -9,6 +9,7 @@ type CookieItem = components['schemas']['CookieItem']
 type SubscriptionItem = components['schemas']['SubscriptionItem']
 type BackstageSubscriptionItem = components['schemas']['BackstageSubscriptionItem']
 type BackstageCookieItem = components['schemas']['BackstageCookieItem']
+type RecordingStatusItem = components['schemas']['RecordingStatusItem']
 type SubscribeRequest = components['schemas']['SubscribeRequest']
 type CookieAddRequest = components['schemas']['CookieAddRequest']
 type WeiboSubscriptionItem = weiboComponents['schemas']['WeiboSubscriptionItem']
@@ -115,6 +116,28 @@ export async function listBackstageCookies(): Promise<BackstageCookieItem[]> {
   return data.items ?? []
 }
 
+export async function listRecordingStatus(): Promise<RecordingStatusItem[]> {
+  const data = await request<components['schemas']['RecordingStatusList']>(
+    '/b/live/recording-status',
+  )
+  return data.items ?? []
+}
+
+export async function listRecordings(roomId: number): Promise<string[]> {
+  const data = await request<components['schemas']['RecordingFileList']>(
+    `/b/live/${roomId}/recordings`,
+  )
+  return data.files ?? []
+}
+
+export function recordingAudioUrl(roomId: number): string {
+  return `${BASE_URL}/b/live/${roomId}/live-stream/audio`
+}
+
+export function recordingDownloadUrl(roomId: number, fileName: string): string {
+  return `${BASE_URL}/b/live/${roomId}/recordings/${encodeURIComponent(fileName)}`
+}
+
 export async function listWeiboSubscriptions(): Promise<WeiboSubscriptionItem[]> {
   const data = await request<weiboComponents['schemas']['WeiboSubscriptionList']>(
     '/weibo/subscription',
@@ -206,6 +229,63 @@ export async function listAvailableCookies(): Promise<cookieComponents['schemas'
     '/cookie/available',
   )
   return data.items ?? []
+}
+
+export async function listWeiboCookieAccounts(): Promise<cookieComponents['schemas']['AccountItem'][]> {
+  const data = await request<cookieComponents['schemas']['AccountList']>(
+    '/cookie/weibo/accounts',
+  )
+  return data.items ?? []
+}
+
+export async function createWeiboCookieAccount(): Promise<cookieComponents['schemas']['PendingAccount']> {
+  return request<cookieComponents['schemas']['PendingAccount']>('/cookie/weibo/accounts', {
+    method: 'POST',
+  })
+}
+
+export async function getWeiboCookieAccount(
+  accountId: string,
+): Promise<cookieComponents['schemas']['AccountStatus']> {
+  return request<cookieComponents['schemas']['AccountStatus']>(
+    `/cookie/weibo/accounts/${accountId}`,
+  )
+}
+
+export async function deleteWeiboCookieAccount(accountId: string): Promise<void> {
+  return request<void>(`/cookie/weibo/accounts/${accountId}`, { method: 'DELETE' })
+}
+
+export async function listAvailableWeiboCookies(): Promise<cookieComponents['schemas']['CookieItem'][]> {
+  const data = await request<cookieComponents['schemas']['CookieList']>(
+    '/cookie/weibo/available',
+  )
+  return data.items ?? []
+}
+
+export async function checkoutWeiboCookie(): Promise<cookieComponents['schemas']['CookieCheckout']> {
+  return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/weibo/checkout', {
+    method: 'POST',
+  })
+}
+
+export async function reportInvalidWeiboCookie(
+  cookieId: string,
+): Promise<cookieComponents['schemas']['CookieCheckout']> {
+  return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/weibo/report-invalid', {
+    method: 'POST',
+    body: JSON.stringify({ cookieId }),
+  })
+}
+
+export async function cooldownWeiboCookie(
+  cookieId: string,
+  durationSeconds: number,
+): Promise<void> {
+  return request<void>('/cookie/weibo/cooldown', {
+    method: 'POST',
+    body: JSON.stringify({ cookieId, durationSeconds }),
+  })
 }
 
 export async function checkoutCookie(): Promise<cookieComponents['schemas']['CookieCheckout']> {

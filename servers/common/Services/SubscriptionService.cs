@@ -11,6 +11,11 @@ public interface ISubscriptionService
     Task<IReadOnlyList<SubscriptionRecord>> GetAllAsync(CancellationToken ct = default);
     Task SubscribeAsync(long mid, SubscriptionType type, CancellationToken ct = default);
     Task<bool> UnsubscribeAsync(long mid, SubscriptionType type, CancellationToken ct = default);
+
+    /// <summary>
+    /// 由跨进程订阅事件桥接触发（crawler 侧），用于让本进程内监听 <see cref="Subscribed"/> 的组件响应远端订阅创建。
+    /// </summary>
+    void RaiseSubscribed(long mid, SubscriptionType type);
 }
 
 public sealed class SubscriptionService(IMongoDatabase database) : ISubscriptionService
@@ -19,6 +24,8 @@ public sealed class SubscriptionService(IMongoDatabase database) : ISubscription
         database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
 
     public event Action<long, SubscriptionType>? Subscribed;
+
+    public void RaiseSubscribed(long mid, SubscriptionType type) => Subscribed?.Invoke(mid, type);
 
     public async Task<IReadOnlyList<long>> GetMidsAsync(SubscriptionType type, CancellationToken ct = default)
     {

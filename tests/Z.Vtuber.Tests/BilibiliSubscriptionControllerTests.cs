@@ -69,4 +69,35 @@ public class BilibiliSubscriptionControllerTests(MongoDbFixture fixture) : IClas
 
         Assert.IsType<NotFoundResult>(result);
     }
+
+    [Fact]
+    public async Task Subscribe_Recording_ReturnsOkAndPersists()
+    {
+        var controller = CreateController(fixture.Database);
+
+        var result = await controller.Subscribe(new SubscribeRequest(1150976664, "recording"), CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dto = Assert.IsType<SubscriptionItemDto>(ok.Value);
+        Assert.Equal(SubscriptionType.Recording, dto.Type);
+
+        var service = new SubscriptionService(fixture.Database);
+        Assert.Equal([1150976664L], await service.GetMidsAsync(SubscriptionType.Recording));
+    }
+
+    [Fact]
+    public async Task Unsubscribe_Recording_RemovesRecordingOnly()
+    {
+        var service = new SubscriptionService(fixture.Database);
+        await service.SubscribeAsync(1150976664, SubscriptionType.Recording);
+        await service.SubscribeAsync(1150976664, SubscriptionType.Danmaku);
+
+        var controller = CreateController(fixture.Database);
+
+        var removed = await controller.Unsubscribe(1150976664, "recording", CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(removed);
+        Assert.Empty(await service.GetMidsAsync(SubscriptionType.Recording));
+        Assert.Equal([1150976664L], await service.GetMidsAsync(SubscriptionType.Danmaku));
+    }
 }
