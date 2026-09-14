@@ -8,6 +8,26 @@ import {
 import type { components } from '../../api/schema'
 
 type RecordingStatusItem = components['schemas']['RecordingStatusItem']
+type RecordingFile = components['schemas']['RecordingFile']
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 'B'
+  for (const next of units) {
+    if (value < 1024) {
+      break
+    }
+    value /= 1024
+    unit = next
+  }
+
+  return `${value.toFixed(1)} ${unit}`
+}
 
 const STATE_LABELS: Record<string, string> = {
   not_live: '未开播',
@@ -31,7 +51,7 @@ export function RecordingStatusPage() {
   const [error, setError] = useState<string | null>(null)
 
   const [expandedRoomId, setExpandedRoomId] = useState<number | null>(null)
-  const [recordingsByRoom, setRecordingsByRoom] = useState<Record<number, string[]>>({})
+  const [recordingsByRoom, setRecordingsByRoom] = useState<Record<number, RecordingFile[]>>({})
   const [recordingsLoading, setRecordingsLoading] = useState<number | null>(null)
   const [recordingsError, setRecordingsError] = useState<Record<number, string>>({})
 
@@ -103,8 +123,11 @@ export function RecordingStatusPage() {
     return (
       <ul style={{ margin: 0, paddingLeft: '1rem' }}>
         {files.map((file) => (
-          <li key={file}>
-            <a href={recordingDownloadUrl(roomId, file)}>{file}</a>
+          <li key={file.name}>
+            <a href={recordingDownloadUrl(roomId, file.name)}>{file.name}</a>{' '}
+            <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
+              {formatBytes(file.size)}
+            </span>
           </li>
         ))}
       </ul>
