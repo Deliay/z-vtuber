@@ -28,7 +28,7 @@ public sealed class WeiboApiClientTests
 
         var req = Assert.Single(handler.Requests);
         Assert.Contains("containerid=10760312345", req.RequestUri!.ToString());
-        Assert.Equal("https://m.weibo.cn/", req.Headers.Referrer?.ToString());
+        Assert.Equal("https://m.weibo.cn/u/12345", req.Headers.Referrer?.ToString());
         Assert.Contains("iPhone", req.Headers.UserAgent.ToString());
         Assert.True(req.Headers.TryGetValues("Cookie", out var cookieValues));
         Assert.Equal(["SUB=a; SUBP=b"], cookieValues.ToArray());

@@ -9,6 +9,7 @@ type CookieItem = components['schemas']['CookieItem']
 type SubscriptionItem = components['schemas']['SubscriptionItem']
 type BackstageSubscriptionItem = components['schemas']['BackstageSubscriptionItem']
 type BackstageCookieItem = components['schemas']['BackstageCookieItem']
+type RecordingStatusItem = components['schemas']['RecordingStatusItem']
 type SubscribeRequest = components['schemas']['SubscribeRequest']
 type CookieAddRequest = components['schemas']['CookieAddRequest']
 type WeiboSubscriptionItem = weiboComponents['schemas']['WeiboSubscriptionItem']
@@ -113,6 +114,28 @@ export async function listBackstageCookies(): Promise<BackstageCookieItem[]> {
     '/b/backstage/cookie',
   )
   return data.items ?? []
+}
+
+export async function listRecordingStatus(): Promise<RecordingStatusItem[]> {
+  const data = await request<components['schemas']['RecordingStatusList']>(
+    '/b/live/recording-status',
+  )
+  return data.items ?? []
+}
+
+export async function listRecordings(roomId: number): Promise<string[]> {
+  const data = await request<components['schemas']['RecordingFileList']>(
+    `/b/live/${roomId}/recordings`,
+  )
+  return data.files ?? []
+}
+
+export function recordingAudioUrl(roomId: number): string {
+  return `${BASE_URL}/b/live/${roomId}/live-stream/audio`
+}
+
+export function recordingDownloadUrl(roomId: number, fileName: string): string {
+  return `${BASE_URL}/b/live/${roomId}/recordings/${encodeURIComponent(fileName)}`
 }
 
 export async function listWeiboSubscriptions(): Promise<WeiboSubscriptionItem[]> {

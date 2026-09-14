@@ -20,6 +20,10 @@ import {
   getCookieAccount,
   deleteCookieAccount,
   listAvailableCookies,
+  listRecordingStatus,
+  listRecordings,
+  recordingAudioUrl,
+  recordingDownloadUrl,
   listWeiboCookieAccounts,
   createWeiboCookieAccount,
   getWeiboCookieAccount,
@@ -515,6 +519,66 @@ describe('API Client', () => {
 
       await expect(deleteNotificationBinding('999')).rejects.toThrow(
         'API request failed',
+      )
+    })
+  })
+
+  describe('Recording', () => {
+    it('listRecordingStatus should fetch /b/live/recording-status', async () => {
+      const mockData = {
+        items: [
+          {
+            mid: 123,
+            roomId: 456,
+            state: 'recording',
+            hostName: 'host-1',
+            sessionTitle: '晚间歌回',
+            files: ['[RAW][456][某主播] 2026-09-13-晚间歌回.flv'],
+          },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockData),
+      })
+
+      const result = await listRecordingStatus()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/b/live/recording-status'),
+        expect.anything(),
+      )
+      expect(result).toEqual(mockData.items)
+    })
+
+    it('listRecordingStatus should return empty array when items undefined', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+
+      expect(await listRecordingStatus()).toEqual([])
+    })
+
+    it('listRecordings should fetch room recordings', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ files: ['a.flv', 'b.flv'] }),
+      })
+
+      const result = await listRecordings(456)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/b/live/456/recordings'),
+        expect.anything(),
+      )
+      expect(result).toEqual(['a.flv', 'b.flv'])
+    })
+
+    it('recordingAudioUrl should build proxy url', () => {
+      expect(recordingAudioUrl(456)).toContain('/b/live/456/live-stream/audio')
+    })
+
+    it('recordingDownloadUrl should encode file name', () => {
+      expect(recordingDownloadUrl(456, '[RAW] a.flv')).toContain(
+        '/b/live/456/recordings/%5BRAW%5D%20a.flv',
       )
     })
   })
