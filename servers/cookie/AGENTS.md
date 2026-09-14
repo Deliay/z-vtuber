@@ -26,7 +26,7 @@ graph LR
 
 - `Platform/`：平台差异抽象（登录页/二维码定位/登录态检测信号/cookie 域/锁前缀/身份解析）
   - `ICookiePlatformProfile`：`Platform`/`LoginUrl`/`QrCodeSelector`/`HomeUrl`/`CookieDomainUrl`/`LoginStateObservedUrlFragment`/`LoginStateProbeUrl`/`LockKeyPrefix`/`IsLoggedIn`/`ExtractIdentity`
-  - `BilibiliCookiePlatformProfile`：网页版扫码，登录态以 `/x/web-interface/nav` 的 `isLogin:true` 为准，身份取 `data.mid`/`data.uname`
+  - `BilibiliCookiePlatformProfile`：网页版扫码，登录态以 `/x/web-interface/nav` 的 `data.isLogin:true` 为准，身份取 `data.mid`/`data.uname`
   - `WeiboCookiePlatformProfile`：`passport.weibo.com` 扫码，登录态以 `m.weibo.cn/api/config` 的 `data.login==true` 为准，身份取 `data.uid`/昵称，cookie 域 `m.weibo.cn`
   - `CookiePlatformContext`/`CookiePlatformRegistry`：按平台聚合仓储/池/浏览器/发布器，供后台任务覆盖双平台
 - `Controllers/`：REST API 控制器
