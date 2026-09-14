@@ -14,7 +14,7 @@ interface Row {
   key: string
   platform: Platform
   id: number
-  type?: 'danmaku' | 'dynamic' | 'guard'
+  type?: 'danmaku' | 'dynamic' | 'guard' | 'recording'
   subscribedAt?: string
   name?: string | null
 }
@@ -23,6 +23,7 @@ const TYPE_LABELS: Record<string, string> = {
   danmaku: '弹幕',
   dynamic: '动态',
   guard: '舰长',
+  recording: '录播',
 }
 
 const PLATFORM_LABELS: Record<Platform, string> = {
@@ -38,7 +39,7 @@ export function SubscriptionPage() {
   const [platform, setPlatform] = useState<Platform>('bilibili')
   const [mid, setMid] = useState('')
   const [uid, setUid] = useState('')
-  const [type, setType] = useState<'danmaku' | 'dynamic' | 'guard' | ''>('')
+  const [type, setType] = useState<'danmaku' | 'dynamic' | 'guard' | 'recording' | ''>('')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -57,7 +58,7 @@ export function SubscriptionPage() {
         key: `bilibili-${item.mid}-${item.type}-${item.subscribedAt ?? ''}`,
         platform: 'bilibili' as const,
         id: item.mid!,
-        type: (item.type ?? 'dynamic') as 'danmaku' | 'dynamic' | 'guard',
+        type: (item.type ?? 'dynamic') as 'danmaku' | 'dynamic' | 'guard' | 'recording',
         subscribedAt: item.subscribedAt,
         name: item.streamer?.name,
       }))
@@ -186,7 +187,7 @@ export function SubscriptionPage() {
               <select
                 value={type}
                 onChange={(e) =>
-                  setType(e.target.value as 'danmaku' | 'dynamic' | 'guard' | '')
+                  setType(e.target.value as 'danmaku' | 'dynamic' | 'guard' | 'recording' | '')
                 }
                 style={{ padding: '0.5rem' }}
               >
@@ -194,6 +195,7 @@ export function SubscriptionPage() {
                 <option value="danmaku">弹幕</option>
                 <option value="dynamic">动态</option>
                 <option value="guard">舰长</option>
+                <option value="recording">录播</option>
               </select>
             </>
           ) : (

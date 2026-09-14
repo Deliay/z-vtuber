@@ -27,11 +27,12 @@ public sealed class AccountInfoJob : PeriodicJobBase
 
     internal override async Task RunOnceAsync(CancellationToken ct)
     {
-        // AccountInfoJob 需要处理所有类型的订阅（dynamic、danmaku 和 guard）
+        // AccountInfoJob 需要处理所有类型的订阅（dynamic、danmaku、guard 和 recording）
         var dynamicMids = await _subscription.GetMidsAsync(SubscriptionType.Dynamic, ct);
         var danmakuMids = await _subscription.GetMidsAsync(SubscriptionType.Danmaku, ct);
         var guardMids = await _subscription.GetMidsAsync(SubscriptionType.Guard, ct);
-        var allMids = dynamicMids.Concat(danmakuMids).Concat(guardMids).Distinct().ToList();
+        var recordingMids = await _subscription.GetMidsAsync(SubscriptionType.Recording, ct);
+        var allMids = dynamicMids.Concat(danmakuMids).Concat(guardMids).Concat(recordingMids).Distinct().ToList();
         foreach (var mid in allMids)
         {
             await _accountInfoCrawler.CrawlAsync(mid, ct);

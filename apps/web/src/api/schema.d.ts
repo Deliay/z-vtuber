@@ -268,6 +268,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/b/live/recording-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 聚合查询录播录制状态
+         * @description 读取 bilibili_subscriptions 中 recording 类型订阅，与录制状态（recording_status 集合）内存 join，返回每个订阅主播的录制状态。recording 服务不可达时仍返回订阅列表，状态退化为未知。
+         */
+        get: operations["listRecordingStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/b/live/{roomId}/recordings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询房间录播文件列表
+         * @description 代理 recording 服务，列出指定房间的录播文件名；无录播返回空数组。
+         */
+        get: operations["listRoomRecordings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/b/live/{roomId}/recordings/{fileName}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 下载房间录播文件
+         * @description 代理 recording 服务，流式转发录播文件二进制内容；文件不存在返回 404。
+         */
+        get: operations["downloadRoomRecording"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/b/live/{roomId}/live-stream/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 代理实时音频流
+         * @description 代理 recording 服务的实时音频流，录制中返回 200 并持续输出 flv 封装音频；未在录制返回 404。
+         */
+        get: operations["proxyLiveAudio"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -291,19 +371,19 @@ export interface components {
             /** Format: int64 */
             mid: number;
             /**
-             * @description 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长），必填。
+             * @description 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长 / recording 录播），必填。
              * @enum {string}
              */
-            type: "danmaku" | "dynamic" | "guard";
+            type: "danmaku" | "dynamic" | "guard" | "recording";
         };
         SubscriptionItem: {
             /** Format: int64 */
             mid?: number;
             /**
-             * @description 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长）
+             * @description 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长 / recording 录播）
              * @enum {string}
              */
-            type?: "danmaku" | "dynamic" | "guard";
+            type?: "danmaku" | "dynamic" | "guard" | "recording";
             /** Format: date-time */
             subscribedAt?: string;
         };
@@ -318,7 +398,7 @@ export interface components {
             /** Format: int64 */
             mid?: number;
             /** @enum {string} */
-            type?: "danmaku" | "dynamic" | "guard";
+            type?: "danmaku" | "dynamic" | "guard" | "recording";
             /** Format: date-time */
             subscribedAt?: string;
             streamer?: components["schemas"]["BackstageStreamerRef"];
@@ -432,6 +512,30 @@ export interface components {
         LiveGuardOnboardList: {
             total?: number;
             items?: components["schemas"]["LiveGuardOnboardItem"][];
+        };
+        RecordingStatusItem: {
+            /** Format: int64 */
+            mid?: number;
+            /** Format: int64 */
+            roomId?: number | null;
+            /**
+             * @description 录制状态（unknown 表示 recording 服务不可达或尚无状态记录）
+             * @enum {string}
+             */
+            state?: "not_live" | "recording" | "error" | "unknown";
+            hostName?: string | null;
+            sessionTitle?: string | null;
+            files?: string[];
+            error?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+            streamer?: components["schemas"]["BackstageStreamerRef"];
+        };
+        RecordingStatusList: {
+            items?: components["schemas"]["RecordingStatusItem"][];
+        };
+        RecordingFileList: {
+            files?: string[];
         };
     };
     responses: never;
@@ -556,7 +660,7 @@ export interface operations {
                     "application/json": components["schemas"]["SubscriptionItem"];
                 };
             };
-            /** @description mid 非法或 type 缺失/非法（合法取值：danmaku, dynamic, guard） */
+            /** @description mid 非法或 type 缺失/非法（合法取值：danmaku, dynamic, guard, recording） */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -568,8 +672,8 @@ export interface operations {
     unsubscribe: {
         parameters: {
             query: {
-                /** @description 订阅类型（danmaku / dynamic / guard），缺失或非法返回 400。 */
-                type: "danmaku" | "dynamic" | "guard";
+                /** @description 订阅类型（danmaku / dynamic / guard / recording），缺失或非法返回 400。 */
+                type: "danmaku" | "dynamic" | "guard" | "recording";
             };
             header?: never;
             path: {
@@ -586,7 +690,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description type 缺失或非法（合法取值：danmaku, dynamic, guard） */
+            /** @description type 缺失或非法（合法取值：danmaku, dynamic, guard, recording） */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -919,6 +1023,128 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BackstageCookieList"];
                 };
+            };
+        };
+    };
+    listRecordingStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 录制状态聚合列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingStatusList"];
+                };
+            };
+        };
+    };
+    listRoomRecordings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 录播文件名列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingFileList"];
+                };
+            };
+            /** @description recording 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    downloadRoomRecording: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+                fileName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 录播文件二进制内容 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description 文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description recording 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    proxyLiveAudio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 实时音频流（flv 封装） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/x-flv": string;
+                };
+            };
+            /** @description 该房间当前未在录制 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description recording 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -65,4 +65,18 @@ public class AccountInfoJobTests(MongoDbFixture fixture) : IClassFixture<MongoDb
 
         Assert.Equal(1, crawled.Count(m => m == 42L));
     }
+
+    [Fact]
+    public async Task Run_IncludesRecordingMids_InBasicInfoCrawl()
+    {
+        var subscription = new SubscriptionService(fixture.Database);
+        await subscription.SubscribeAsync(7, SubscriptionType.Recording);
+
+        var crawled = new List<long>();
+        var job = CreateJob(subscription, crawled);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Contains(7L, crawled);
+    }
 }
