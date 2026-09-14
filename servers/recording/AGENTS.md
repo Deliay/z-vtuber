@@ -29,7 +29,7 @@ graph LR
 - `Live/`：`LiveStatusPoller`（HostedService：读 Recording 订阅 → mid 解析 roomId → cookie checkout + room get_info → 未开播上报 not_live / 已开播交 `RecordingSession`；订阅取消则取消进行中的会话；轮询带抖动；无法启动录制（无可用 cookie / 轮询异常）且库中该房间 recording 状态已过 `StaleStatusThresholdSeconds` 未刷新时，上报 error 纠正陈旧残留）、`StreamResolver`（playurl 候选流选取纯函数：排除 hevc，优先 http_stream+flv）、`BiliLiveApiClient`（直连 B 站 room get_info / getRoomPlayInfo，校验 code）、`StreamBitrateProbe`（ffprobe 短时探测码率，缺失回退默认）、`AnchorNameExtractor`（channel JSON 提取 uName）
 - `Recording/`：`RecordingSession`（单场次编排：抢锁 → 选流 → 渲染文件名 → 启动 ffmpeg → stdout 泵喂 Audio Hub → 状态上报 → 退出处理 → 释放锁；监控循环任何异常/失锁/停机都先 kill 并回收进程再处理状态；fencing 失锁不覆盖新持有者状态；优雅停机落 not_live 终态避免残留；error 保留已产出文件名）、`RecordingLock`（`RedisRecordingLockProvider`：per-room 锁 `recording:lock:{roomId}`，TTL 续期、Lua 比对释放、CheckOwnership fencing）、`FfmpegProcessBuilder`（多输出参数纯函数，含 `-y` 覆盖残留文件）、`RecordingProcess`（Process 封装与 stderr 泵）、`RecordingFileName`（文件名模板纯函数，北京时间日期）、`RecordingStatusReporter`（状态 upsert/心跳）、`RecordingStates`
 - `Audio/`：`AudioStreamHub`（每房间广播；无订阅者时仅缓存首包 FLV 头供中途接入重放、其余分片直接丢弃；每订阅者按字节有界队列 DropOldest 等价语义；Subscribe 在锁内校验 Streaming，未录制返回已完成订阅）
-- `Controllers/`：`RecordingController`（`GET /api/recording/status`、`GET /api/{roomId}/recordings[/{fileName}]`、`GET /api/{roomId}/stream/audio`），含文件名路径穿越防护；列表返回文件元信息（name/size/createdAt）并按 `recording_status`（state=recording 且心跳未过期）排除录制中文件，下载录制中文件返回 400
+- `Controllers/`：`RecordingController`（`GET /api/recording/status`、`GET /api/{roomId}/recordings[/{fileName}]`、`GET /api/{roomId}/stream/audio`），含文件名路径穿越防护；列表返回文件元信息（name/size/createdAt）并按 `recording_status`（state=recording 且心跳未过期）排除录制中文件，下载录制中文件返回 400；下载经 `PhysicalFile(enableRangeProcessing: true)` 原生支持 HTTP Range 分段下载（206/Content-Range/Accept-Ranges，越界 416）
 - `Services/`：`CookieServiceClient`（精简版 checkout + report-invalid）
 - `Configuration/`：`RecordingOptions`（节 `Recording`）
 - `Program.cs`：注册 Mongo/Redis/Options/仓储/服务/HostedService/HTTP 客户端，启动幂等索引初始化，`/health` + `MapControllers()`
@@ -46,7 +46,7 @@ graph LR
 | GET | `/health` | 进程存活 + MongoDB 连通性 |
 | GET | `/api/recording/status` | 全部录制状态（state ∈ not_live/recording/error） |
 | GET | `/api/{roomId}/recordings` | 录播文件列表（含大小与创建时间；不含录制中文件；无录播返回空数组） |
-| GET | `/api/{roomId}/recordings/{fileName}` | 下载录播文件（平文件名，防路径穿越；录制中文件返回 400） |
+| GET | `/api/{roomId}/recordings/{fileName}` | 下载录播文件（平文件名，防路径穿越；录制中文件返回 400；支持 Range 分段下载 206/416） |
 | GET | `/api/{roomId}/stream/audio` | 实时音频流（录制中 200 `video/x-flv` chunked，未录制 404） |
 
 对外统一经 api 代理（`/api/b/live/*`），web 不直连本服务。
