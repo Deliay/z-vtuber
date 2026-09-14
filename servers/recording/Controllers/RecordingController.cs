@@ -100,10 +100,10 @@ public sealed class RecordingController(
 
     internal static bool IsSafeFileName(string fileName)
     {
+        // 仅允许平文件名：拒绝空、路径分隔符与任何目录成分（".." 作为普通字符允许，由解析后前缀校验兜底）
         if (string.IsNullOrWhiteSpace(fileName)
             || fileName.Contains('/')
             || fileName.Contains('\\')
-            || fileName.Contains("..", StringComparison.Ordinal)
             || !string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal))
         {
             return false;

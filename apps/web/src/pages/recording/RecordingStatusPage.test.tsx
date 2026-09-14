@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { RecordingStatusPage, RECORDING_REFRESH_INTERVAL } from './RecordingStatusPage'
 import * as client from '../../api/client'
 
 vi.mock('../../api/client')
 
 const mockListRecordingStatus = vi.mocked(client.listRecordingStatus)
+const mockListRecordings = vi.mocked(client.listRecordings)
 const mockAudioUrl = vi.mocked(client.recordingAudioUrl)
 const mockDownloadUrl = vi.mocked(client.recordingDownloadUrl)
 
@@ -13,6 +14,7 @@ describe('RecordingStatusPage', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     mockListRecordingStatus.mockResolvedValue([])
+    mockListRecordings.mockResolvedValue([])
     mockAudioUrl.mockReturnValue('/api/b/live/1/live-stream/audio')
     mockDownloadUrl.mockReturnValue('/api/b/live/1/recordings/a.flv')
   })
@@ -69,6 +71,28 @@ describe('RecordingStatusPage', () => {
       ).toBeInTheDocument()
       expect(screen.getByText('实时音频')).toBeInTheDocument()
     })
+  })
+
+  it('should load and render historical recordings', async () => {
+    mockListRecordingStatus.mockResolvedValue([
+      { mid: 1, roomId: 101, state: 'not_live', streamer: { name: '主播A' } },
+    ])
+    mockListRecordings.mockResolvedValue(['[RAW][101][主播A] 2026-09-01-歌回.flv'])
+
+    render(<RecordingStatusPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('历史录播')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText('历史录播'))
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('[RAW][101][主播A] 2026-09-01-歌回.flv'),
+      ).toBeInTheDocument()
+    })
+    expect(mockListRecordings).toHaveBeenCalledWith(101)
   })
 
   it('should render unknown state for missing state', async () => {

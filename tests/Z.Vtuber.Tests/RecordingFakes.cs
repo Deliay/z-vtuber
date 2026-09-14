@@ -139,11 +139,29 @@ public sealed class FakeRecordingProcess : IRecordingProcess
 public sealed class FakeRecordingSessionRunner : IRecordingSessionRunner
 {
     public List<long> StartedRooms { get; } = [];
-    public Func<long, string?, LiveRoomInfo, string, CancellationToken, Task>? RunFunc { get; set; }
+    public Func<long, string?, LiveRoomInfo, string, string, CancellationToken, Task>? RunFunc { get; set; }
 
-    public Task RunAsync(long roomId, string? anchorName, LiveRoomInfo room, string cookie, CancellationToken ct)
+    public Task RunAsync(
+        long roomId,
+        string? anchorName,
+        LiveRoomInfo room,
+        string cookieId,
+        string cookie,
+        CancellationToken ct)
     {
         StartedRooms.Add(roomId);
-        return RunFunc?.Invoke(roomId, anchorName, room, cookie, ct) ?? Task.CompletedTask;
+        return RunFunc?.Invoke(roomId, anchorName, room, cookieId, cookie, ct) ?? Task.CompletedTask;
+    }
+}
+
+public sealed class FakeStreamBitrateProbe : IStreamBitrateProbe
+{
+    public int? Result { get; set; }
+    public int Calls { get; private set; }
+
+    public Task<int?> ProbeAsync(LiveStreamCandidate stream, string cookie, CancellationToken ct = default)
+    {
+        Calls++;
+        return Task.FromResult(Result);
     }
 }

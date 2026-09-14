@@ -51,7 +51,8 @@ var recording = builder.AddProject<Projects.Z_Vtuber_Recording>("recording")
     .WithReference(cookie)
     .WaitFor(cookie)
     .WithEnvironment("CookieService:BaseUrl", cookie.GetEndpoint("http"))
-    .WithEnvironment("Recording:StorageDir", "/data/recordings")
+    .WithEnvironment("Recording:StorageDir",
+        Path.Combine(Path.GetTempPath(), "z-vtuber-recordings"))
     .WithHttpHealthCheck("/health");
 
 api.WithReference(recording)

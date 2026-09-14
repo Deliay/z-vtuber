@@ -28,8 +28,6 @@ public sealed class RedisRecordingLockProvider(
     RecordingOptions options,
     ILogger<RedisRecordingLockProvider> logger) : IRecordingLockProvider
 {
-    private static readonly TimeSpan WaitTimeout = TimeSpan.Zero;
-
     public static string KeyFor(long roomId) => $"recording:lock:{roomId}";
 
     public async Task<IRecordingLock?> TryAcquireAsync(long roomId, CancellationToken ct = default)
@@ -64,8 +62,9 @@ public sealed class RedisRecordingLockProvider(
         private const string RenewScript =
             "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
 
-        private readonly CancellationTokenSource _cts = new();
-        private int _lost;
+    private readonly CancellationTokenSource _cts = new();
+    private CancellationTokenSource? _renewalCts;
+    private int _lost;
 
         public long RoomId { get; } = roomId;
         public string Token { get; } = token;
@@ -109,6 +108,7 @@ public sealed class RedisRecordingLockProvider(
         public void StartRenewal(CancellationToken ct)
         {
             var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _cts.Token);
+            _renewalCts = linked;
             _ = Task.Run(async () =>
             {
                 var interval = TimeSpan.FromSeconds(options.LockRenewIntervalSeconds);
@@ -138,6 +138,7 @@ public sealed class RedisRecordingLockProvider(
         {
             await _cts.CancelAsync();
             _cts.Dispose();
+            _renewalCts?.Dispose();
         }
     }
 }

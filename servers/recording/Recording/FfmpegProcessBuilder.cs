@@ -30,6 +30,8 @@ public static class FfmpegProcessBuilder
             "-hide_banner",
             "-loglevel",
             "warning",
+            // 输出文件可能残留（断流后同场次重试），强制覆盖避免 ffmpeg 交互式确认导致卡死
+            "-y",
         };
 
         if (RequiresHeaders(stream))

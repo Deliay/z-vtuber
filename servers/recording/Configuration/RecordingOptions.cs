@@ -34,9 +34,12 @@ public sealed class RecordingOptions
     [Range(1, 100000)]
     public int DefaultBitrateKbps { get; set; } = 4000;
 
-    /// <summary>录制中状态心跳刷新间隔（秒）。</summary>
-    [Range(1, 3600)]
-    public int StatusHeartbeatSeconds { get; set; } = 10;
+    /// <summary>playurl 未提供码率时是否用 ffprobe 短时探测，仍不可得回退默认码率。</summary>
+    public bool ProbeBitrate { get; set; } = true;
+
+    /// <summary>ffprobe 可执行文件路径（ProbeBitrate 启用时使用）。</summary>
+    [Required]
+    public string FfprobePath { get; set; } = "ffprobe";
 
     /// <summary>ffmpeg 可执行文件路径。</summary>
     [Required]

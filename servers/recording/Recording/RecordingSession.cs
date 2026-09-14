@@ -1,12 +1,19 @@
 using Z.Vtuber.Recording.Audio;
 using Z.Vtuber.Recording.Configuration;
 using Z.Vtuber.Recording.Live;
+using Z.Vtuber.Recording.Services;
 
 namespace Z.Vtuber.Recording.Recording;
 
 public interface IRecordingSessionRunner
 {
-    Task RunAsync(long roomId, string? anchorName, LiveRoomInfo room, string cookie, CancellationToken ct);
+    Task RunAsync(
+        long roomId,
+        string? anchorName,
+        LiveRoomInfo room,
+        string cookieId,
+        string cookie,
+        CancellationToken ct);
 }
 
 /// <summary>
@@ -16,6 +23,8 @@ public interface IRecordingSessionRunner
 public sealed class RecordingSession(
     IRecordingLockProvider locks,
     IBiliLiveApi bili,
+    IStreamBitrateProbe bitrateProbe,
+    IRecordingCookieClient cookieClient,
     IRecordingProcessFactory processes,
     AudioStreamHub audio,
     RecordingStatusReporter reporter,
@@ -24,7 +33,16 @@ public sealed class RecordingSession(
 {
     private const int AudioChunkSize = 16384;
 
-    public async Task RunAsync(long roomId, string? anchorName, LiveRoomInfo room, string cookie, CancellationToken ct)
+    // 录播按北京时间组织文件名（UTC+8）
+    private static readonly TimeSpan BeijingOffset = TimeSpan.FromHours(8);
+
+    public async Task RunAsync(
+        long roomId,
+        string? anchorName,
+        LiveRoomInfo room,
+        string cookieId,
+        string cookie,
+        CancellationToken ct)
     {
         IRecordingLock? sessionLock = null;
         try
@@ -37,7 +55,7 @@ public sealed class RecordingSession(
             }
 
             sessionLock.StartRenewal(ct);
-            await RunLockedAsync(roomId, anchorName, room, cookie, sessionLock, ct);
+            await RunLockedAsync(roomId, anchorName, room, cookieId, cookie, sessionLock, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -71,6 +89,7 @@ public sealed class RecordingSession(
         long roomId,
         string? anchorName,
         LiveRoomInfo room,
+        string cookieId,
         string cookie,
         IRecordingLock sessionLock,
         CancellationToken ct)
@@ -79,14 +98,22 @@ public sealed class RecordingSession(
         var stream = StreamResolver.Pick(candidates);
         if (stream is null)
         {
-            await reporter.ReportErrorAsync(roomId, "no playable stream", room.Title, ct);
+            // 无可播放流：可能登录 Cookie 失效，上报 invalid 供 cookie 服务自愈
+            await SafeReportInvalidCookieAsync(cookieId, ct);
+            await reporter.ReportErrorAsync(roomId, "no playable stream", room.Title, ct: ct);
             return;
+        }
+
+        var rawBitrateKbps = stream.BitrateKbps;
+        if (rawBitrateKbps is null && options.ProbeBitrate)
+        {
+            rawBitrateKbps = await bitrateProbe.ProbeAsync(stream, cookie, ct);
         }
 
         var directory = Path.Combine(options.StorageDir, roomId.ToString());
         Directory.CreateDirectory(directory);
 
-        var date = DateTime.UtcNow;
+        var date = DateTime.UtcNow.Add(BeijingOffset);
         var rawName = RecordingFileName.Render(
             RecordingFileName.RawEncode, roomId, anchorName, date, room.Title);
         var rawPath = Path.Combine(directory, rawName);
@@ -108,7 +135,7 @@ public sealed class RecordingSession(
             cookie,
             options.Referer,
             options.UserAgent,
-            stream.BitrateKbps,
+            rawBitrateKbps,
             options.DefaultBitrateKbps,
             options.Av1.Enabled,
             options.FfmpegPath);
@@ -121,7 +148,7 @@ public sealed class RecordingSession(
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to start ffmpeg for room {RoomId}.", roomId);
-            await reporter.ReportErrorAsync(roomId, $"ffmpeg start failed: {ex.Message}", room.Title, ct);
+            await reporter.ReportErrorAsync(roomId, $"ffmpeg start failed: {ex.Message}", room.Title, ct: ct);
             return;
         }
 
@@ -132,6 +159,7 @@ public sealed class RecordingSession(
         var pumpTask = PumpAudioAsync(process.StandardOutput, roomId, sessionCts.Token);
         var exitTask = process.WaitForExitAsync(CancellationToken.None);
         var fencingLost = false;
+        Exception? monitorFailure = null;
 
         try
         {
@@ -144,14 +172,26 @@ public sealed class RecordingSession(
                 {
                     fencingLost = true;
                     logger.LogWarning("Recording lock for room {RoomId} lost; killing ffmpeg.", roomId);
-                    process.Kill();
                     break;
                 }
             }
         }
         catch (OperationCanceledException)
         {
-            process.Kill();
+            // 停机
+        }
+        catch (Exception ex)
+        {
+            monitorFailure = ex;
+            logger.LogError(ex, "Recording monitor loop failed for room {RoomId}; killing ffmpeg.", roomId);
+        }
+        finally
+        {
+            // 任何非自然退出（fencing 失锁/停机/监控异常）都必须先终止并回收 ffmpeg，避免锁释放后双写
+            if (!exitTask.IsCompleted)
+            {
+                process.Kill();
+            }
         }
 
         var exitCode = await ResolveExitCodeAsync(exitTask);
@@ -168,9 +208,18 @@ public sealed class RecordingSession(
         audio.MarkStopped(roomId);
         await process.DisposeAsync();
 
+        if (monitorFailure is not null)
+        {
+            // 进程已回收，向上抛由外层记 error
+            throw monitorFailure;
+        }
+
         if (fencingLost || ct.IsCancellationRequested)
         {
-            await SafeReportNotLiveAsync(roomId);
+            // 锁已被新持有者接管 / 停机：不覆盖其状态，交由新实例上报
+            logger.LogInformation(
+                "Recording for room {RoomId} ended without status update (fencingLost={FencingLost}, cancelled={Cancelled}).",
+                roomId, fencingLost, ct.IsCancellationRequested);
         }
         else if (exitCode == 0)
         {
@@ -178,7 +227,7 @@ public sealed class RecordingSession(
         }
         else
         {
-            await reporter.ReportErrorAsync(roomId, $"ffmpeg exited with code {exitCode}", room.Title);
+            await reporter.ReportErrorAsync(roomId, $"ffmpeg exited with code {exitCode}", room.Title, files);
         }
     }
 
@@ -215,27 +264,32 @@ public sealed class RecordingSession(
         }
     }
 
+    private async Task SafeReportInvalidCookieAsync(string cookieId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(cookieId))
+        {
+            return;
+        }
+
+        try
+        {
+            await cookieClient.ReportInvalidAsync(cookieId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to report invalid cookie {CookieId}.", cookieId);
+        }
+    }
+
     private async Task SafeReportErrorAsync(long roomId, string error, string? sessionTitle, CancellationToken ct)
     {
         try
         {
-            await reporter.ReportErrorAsync(roomId, error, sessionTitle, ct);
+            await reporter.ReportErrorAsync(roomId, error, sessionTitle, ct: ct);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to report error status for room {RoomId}.", roomId);
-        }
-    }
-
-    private async Task SafeReportNotLiveAsync(long roomId)
-    {
-        try
-        {
-            await reporter.ReportNotLiveAsync(roomId);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to report not_live status for room {RoomId}.", roomId);
         }
     }
 }

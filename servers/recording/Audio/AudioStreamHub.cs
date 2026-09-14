@@ -1,21 +1,15 @@
 using System.Collections.Concurrent;
-using Z.Vtuber.Recording.Configuration;
 
 namespace Z.Vtuber.Recording.Audio;
 
 /// <summary>
-/// 实时音频 Hub：每房间一个广播域；无订阅者时直接丢弃；每个订阅者有界缓冲（超限丢弃最旧数据），
-/// 慢消费者只影响自身，不阻塞广播与其他订阅者。
+/// 实时音频 Hub：每房间一个广播域；无订阅者时不缓存音频分片（仅缓存首包 FLV 头供中途接入）；
+/// 每个订阅者有界缓冲（超限丢弃最旧数据），慢消费者只影响自身，不阻塞广播与其他订阅者。
 /// </summary>
 public sealed class AudioStreamHub
 {
     private readonly int _bufferBytes;
     private readonly ConcurrentDictionary<long, RoomState> _rooms = new();
-
-    public AudioStreamHub(RecordingOptions options)
-        : this(options.AudioBufferBytes)
-    {
-    }
 
     public AudioStreamHub(int bufferBytes)
     {
@@ -59,6 +53,10 @@ public sealed class AudioStreamHub
         }
     }
 
+    /// <summary>
+    /// 订阅房间音频。若房间未在录制，返回的订阅已完成（读到即结束），避免 IsStreaming 检查与订阅之间的 TOCTOU。
+    /// 录制中且已缓存 FLV 头时先重放头部，保证中途接入可解码。
+    /// </summary>
     public AudioSubscription Subscribe(long roomId)
     {
         var state = _rooms.GetOrAdd(roomId, _ => new RoomState());
@@ -70,9 +68,20 @@ public sealed class AudioStreamHub
                 Unsubscribe(roomId, subscription);
             }
         });
+
         lock (state.Gate)
         {
+            if (!Volatile.Read(ref state.Streaming))
+            {
+                subscription.Complete();
+                return subscription;
+            }
+
             state.Subscribers.Add(subscription);
+            if (state.Header is { Length: > 0 })
+            {
+                subscription.Enqueue(state.Header);
+            }
         }
 
         return subscription;
@@ -93,7 +102,7 @@ public sealed class AudioStreamHub
         subscription.Complete();
     }
 
-    /// <summary>广播一段音频；无订阅者时零缓冲直接丢弃。</summary>
+    /// <summary>广播一段音频；无订阅者时仅缓存首包（FLV 头），其余分片直接丢弃。</summary>
     public void Publish(long roomId, byte[] data)
     {
         if (data.Length == 0 || !_rooms.TryGetValue(roomId, out var state))
@@ -109,6 +118,9 @@ public sealed class AudioStreamHub
         List<AudioSubscription> subscribers;
         lock (state.Gate)
         {
+            // 缓存首包（含 FLV 头），供中途接入的订阅者重放
+            state.Header ??= data;
+
             if (state.Subscribers.Count == 0)
             {
                 return;
@@ -128,6 +140,7 @@ public sealed class AudioStreamHub
         public readonly object Gate = new();
         public readonly List<AudioSubscription> Subscribers = [];
         public bool Streaming;
+        public byte[]? Header;
     }
 }
 
@@ -243,6 +256,11 @@ public sealed class AudioSubscription : IDisposable
     {
         lock (_gate)
         {
+            if (_completed)
+            {
+                return;
+            }
+
             _completed = true;
         }
 
@@ -259,6 +277,7 @@ public sealed class AudioSubscription : IDisposable
         _disposed = true;
         Complete();
         _onDispose();
-        _signal.Dispose();
+        // 不 Dispose _signal：Complete/Enqueue 可能在并发路径 Release，
+        // Dispose 会导致 ObjectDisposedException 使音频泵静默死亡或误报 error。交由 GC 回收。
     }
 }

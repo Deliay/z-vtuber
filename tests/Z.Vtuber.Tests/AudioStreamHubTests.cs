@@ -12,16 +12,36 @@ public class AudioStreamHubTests
     }
 
     [Fact]
-    public void Publish_WithoutSubscribers_DoesNotBuffer()
+    public void LateSubscriber_ReceivesCachedFlvHeader()
     {
         var hub = new AudioStreamHub(1024);
         hub.MarkStreaming(1);
-
-        hub.Publish(1, Chunk(1, 128));
-        hub.Publish(1, Chunk(2, 128));
+        var header = Chunk(9, 16);
+        hub.Publish(1, header);
 
         var subscriber = hub.Subscribe(1);
-        // 先前的广播不应被缓存
+
+        Assert.True(subscriber.TryRead(out var replay));
+        Assert.Equal(header, replay);
+
+        // 后续实时分片继续送达
+        hub.Publish(1, Chunk(1, 8));
+        Assert.True(subscriber.TryRead(out var live));
+        Assert.Equal(1, live[0]);
+    }
+
+    [Fact]
+    public void NonHeaderChunks_AreNotBufferedForLateSubscribers()
+    {
+        var hub = new AudioStreamHub(1024);
+        hub.MarkStreaming(1);
+        hub.Publish(1, Chunk(1, 16));
+        hub.Publish(1, Chunk(2, 16));
+
+        var subscriber = hub.Subscribe(1);
+
+        Assert.True(subscriber.TryRead(out var header));
+        Assert.Equal(1, header[0]);
         Assert.False(subscriber.TryRead(out _));
     }
 

@@ -44,6 +44,7 @@ public sealed class RecordingStatusReporter
         long roomId,
         string error,
         string? sessionTitle = null,
+        IReadOnlyList<string>? files = null,
         CancellationToken ct = default) =>
         _repository.UpsertAsync(new RecordingStatusRecord
         {
@@ -51,7 +52,7 @@ public sealed class RecordingStatusReporter
             State = RecordingStates.Error,
             HostName = HostName,
             SessionTitle = sessionTitle,
-            Files = [],
+            Files = files is null ? [] : [.. files],
             Error = error,
             UpdatedAt = DateTime.UtcNow,
         }, ct);

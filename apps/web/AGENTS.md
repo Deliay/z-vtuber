@@ -33,11 +33,11 @@ src/
 │   ├── cookie/
 │   │   ├── CookiePage.tsx            # Cookie 管理页（扫码登录化：帐号列表 + 新增帐号弹窗 + QR 码轮询）
 │   │   └── CookiePage.test.tsx       # Cookie 管理页测试
-│   └── notification/
-│       ├── NotificationPage.tsx      # 通知管理页（群维度：group_id/group_name）
-│       └── NotificationPage.test.tsx # 通知管理页测试
+│   ├── notification/
+│   │   ├── NotificationPage.tsx      # 通知管理页（群维度：group_id/group_name）
+│   │   └── NotificationPage.test.tsx # 通知管理页测试
 │   └── recording/
-│       ├── RecordingStatusPage.tsx      # 录制状态页（三态 + 实例/场次/文件名 + 轮询刷新 + 下载/实时音频入口）
+│       ├── RecordingStatusPage.tsx      # 录制状态页（三态 + 实例/场次/文件名 + 轮询刷新 + 历史录播列表/下载/实时音频入口）
 │       └── RecordingStatusPage.test.tsx # 录制状态页测试
 ├── test/
 │   └── setup.ts           # 测试配置文件

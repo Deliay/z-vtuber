@@ -32,6 +32,8 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
         new(
             locks,
             bili,
+            new FakeStreamBitrateProbe(),
+            new FakeRecordingCookieClient(),
             processes,
             audio,
             new RecordingStatusReporter(new RecordingStatusRepository(fixture.Database)),
@@ -75,7 +77,7 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
             Options(dir));
 
         var room = new LiveRoomInfo(roomId, "晚间歌回", true);
-        var runTask = session.RunAsync(roomId, "某主播", room, "cookie", CancellationToken.None);
+        var runTask = session.RunAsync(roomId, "某主播", room, "cookie-id", "cookie", CancellationToken.None);
 
         Assert.Equal("recording", await WaitForStateAsync(roomId, "recording"));
 
@@ -111,7 +113,7 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
             new AudioStreamHub(1024),
             Options(dir));
 
-        await session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie", CancellationToken.None);
+        await session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie-id", "cookie", CancellationToken.None);
 
         Assert.Empty(processes.StartedCommands);
         Assert.Null(await Repository.GetByRoomIdAsync(roomId));
@@ -132,7 +134,7 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
             new AudioStreamHub(1024),
             Options(dir));
 
-        var runTask = session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie", CancellationToken.None);
+        var runTask = session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie-id", "cookie", CancellationToken.None);
         await WaitForStateAsync(roomId, "recording");
 
         process.Exit(1);
@@ -158,7 +160,7 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
             new AudioStreamHub(1024),
             Options(dir));
 
-        await session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie", CancellationToken.None);
+        await session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie-id", "cookie", CancellationToken.None);
 
         Assert.Empty(processes.StartedCommands);
         var record = await Repository.GetByRoomIdAsync(roomId);
@@ -186,10 +188,12 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
             Options(dir));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie", cts.Token);
+        await session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie-id", "cookie", cts.Token);
 
         Assert.True(process.Killed);
-        Assert.Equal("not_live", (await Repository.GetByRoomIdAsync(roomId))!.State);
+        // 失锁后不覆盖状态，保留此前的 recording（以新持有者上报为准）
+        Assert.Equal("recording", (await Repository.GetByRoomIdAsync(roomId))!.State);
+        Assert.True(locks.LastHandle!.Released);
     }
 
     [Fact]
@@ -207,7 +211,7 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
         };
         var session = CreateSession(dir, new FakeRecordingLockProvider(), new FakeBiliLiveApi(), processes, new AudioStreamHub(1024), options);
 
-        var runTask = session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie", CancellationToken.None);
+        var runTask = session.RunAsync(roomId, "主播", new LiveRoomInfo(roomId, "title", true), "cookie-id", "cookie", CancellationToken.None);
         await WaitForStateAsync(roomId, "recording");
 
         var record = await Repository.GetByRoomIdAsync(roomId);

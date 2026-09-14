@@ -27,6 +27,11 @@ public sealed class BiliLiveApiClient(HttpClient http, ILogger<BiliLiveApiClient
         using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
 
         var root = doc.RootElement;
+        if (TryGetCode(root, out var code) && code != 0)
+        {
+            throw new InvalidOperationException($"bilibili room get_info returned code {code}");
+        }
+
         if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
         {
             return new LiveRoomInfo(roomId, string.Empty, false);
@@ -55,6 +60,11 @@ public sealed class BiliLiveApiClient(HttpClient http, ILogger<BiliLiveApiClient
         using var doc = await JsonDocument.ParseAsync(responseStream, cancellationToken: ct);
 
         var candidates = new List<LiveStreamCandidate>();
+        if (TryGetCode(doc.RootElement, out var playUrlCode) && playUrlCode != 0)
+        {
+            throw new InvalidOperationException($"bilibili playurl returned code {playUrlCode}");
+        }
+
         if (!doc.RootElement.TryGetProperty("data", out var data)
             || !data.TryGetProperty("playurl_info", out var playurlInfo)
             || playurlInfo.ValueKind != JsonValueKind.Object
@@ -118,5 +128,17 @@ public sealed class BiliLiveApiClient(HttpClient http, ILogger<BiliLiveApiClient
         {
             request.Headers.TryAddWithoutValidation("Cookie", cookie);
         }
+    }
+
+    private static bool TryGetCode(JsonElement root, out int code)
+    {
+        code = -1;
+        if (root.TryGetProperty("code", out var codeElement) && codeElement.ValueKind == JsonValueKind.Number)
+        {
+            code = codeElement.GetInt32();
+            return true;
+        }
+
+        return false;
     }
 }

@@ -43,7 +43,10 @@ public sealed class LiveStatusPoller(
 
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(options.PollIntervalSeconds), stoppingToken);
+                var baseInterval = TimeSpan.FromSeconds(options.PollIntervalSeconds);
+                // 抖动：避免多实例/多房间同刻齐发
+                var jitter = TimeSpan.FromMilliseconds(Random.Shared.Next(0, Math.Max(1, options.PollIntervalSeconds * 500)));
+                await Task.Delay(baseInterval + jitter, stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -51,10 +54,10 @@ public sealed class LiveStatusPoller(
             }
         }
 
+        // 停机：仅取消，Dispose 交由各会话的 finally（避免与会话内 linked CTS 竞态）
         foreach (var cts in _active.Values)
         {
             cts.Cancel();
-            cts.Dispose();
         }
 
         _active.Clear();
@@ -89,8 +92,8 @@ public sealed class LiveStatusPoller(
             if (!subscribedRooms.Contains(pair.Key) && _active.TryRemove(pair.Key, out var cts))
             {
                 logger.LogInformation("Recording subscription removed for room {RoomId}; stopping session.", pair.Key);
+                // 仅取消；Dispose 统一在 RunSessionAsync 的 finally，避免与会话内 linked CTS 竞态
                 cts.Cancel();
-                cts.Dispose();
             }
         }
     }
@@ -116,7 +119,7 @@ public sealed class LiveStatusPoller(
                 return;
             }
 
-            _ = RunSessionAsync(roomId, anchorName, room, checkout.Cookie, sessionCts);
+            _ = RunSessionAsync(roomId, anchorName, room, checkout.CookieId, checkout.Cookie, sessionCts);
         }
         catch (NoAvailableCookieException)
         {
@@ -136,12 +139,13 @@ public sealed class LiveStatusPoller(
         long roomId,
         string? anchorName,
         LiveRoomInfo room,
+        string cookieId,
         string cookie,
         CancellationTokenSource cts)
     {
         try
         {
-            await sessionRunner.RunAsync(roomId, anchorName, room, cookie, cts.Token);
+            await sessionRunner.RunAsync(roomId, anchorName, room, cookieId, cookie, cts.Token);
         }
         catch (OperationCanceledException)
         {

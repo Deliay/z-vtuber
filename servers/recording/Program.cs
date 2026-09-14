@@ -40,6 +40,7 @@ builder.Services.AddHttpClient<IBiliLiveApi, BiliLiveApiClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);
 });
+builder.Services.AddSingleton<IStreamBitrateProbe, FfprobeStreamBitrateProbe>();
 builder.Services.AddHttpClient<IRecordingCookieClient, CookieServiceClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["CookieService:BaseUrl"] ?? "http://cookie-service");

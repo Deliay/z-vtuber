@@ -37,6 +37,10 @@ public class BilibiliLiveRecordingController(
         {
             statuses = await recordingStatus.GetByRoomIdsAsync(roomIds, ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch
         {
             // recording 状态数据面不可用时退化为 unknown，不阻断页面
@@ -85,6 +89,11 @@ public class BilibiliLiveRecordingController(
         {
             return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
         }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 上游超时（非客户端取消）也应返回契约约定的 502
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
 
         using (response)
         {
@@ -117,6 +126,11 @@ public class BilibiliLiveRecordingController(
         }
         catch (HttpRequestException)
         {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 上游超时（非客户端取消）也应返回契约约定的 502
             return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
         }
 
@@ -161,6 +175,11 @@ public class BilibiliLiveRecordingController(
         }
         catch (HttpRequestException)
         {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 上游超时（非客户端取消）也应返回契约约定的 502
             return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
         }
 
