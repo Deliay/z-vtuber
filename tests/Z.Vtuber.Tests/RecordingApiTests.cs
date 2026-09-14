@@ -1,6 +1,11 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Recording.Audio;
@@ -29,6 +34,33 @@ public class RecordingApiTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
     }
 
     private string RoomDir(long roomId) => Path.Combine(_storageDir, roomId.ToString());
+
+    /// <summary>
+    /// 以 MVC 默认的 PhysicalFileResult 执行器落地结果，使框架原生 Range 处理（206/416/Accept-Ranges）得以在测试中生效。
+    /// </summary>
+    private static async Task ExecuteAsync(ControllerBase controller, IActionResult result)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IActionResultExecutor<PhysicalFileResult>, PhysicalFileResultExecutor>();
+        using var provider = services.BuildServiceProvider();
+        controller.HttpContext.RequestServices = provider;
+        controller.HttpContext.Request.Method = HttpMethods.Get;
+        await result.ExecuteResultAsync(new ActionContext(
+            controller.HttpContext,
+            controller.RouteData ?? new RouteData(),
+            new ActionDescriptor()));
+    }
+
+    private static async Task<byte[]> ReadBodyAsync(HttpContext context)
+    {
+        context.Response.Body.Position = 0;
+        using var buffer = new MemoryStream();
+        await context.Response.Body.CopyToAsync(buffer);
+        return buffer.ToArray();
+    }
+
+    private static byte[] Bytes(int count) => Enumerable.Range(0, count).Select(i => (byte)i).ToArray();
 
     private static JsonElement OkJson(IActionResult result) =>
         JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value);
@@ -180,6 +212,100 @@ public class RecordingApiTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
         var result = await controller.DownloadRecording(566, "done.flv", CancellationToken.None);
 
         Assert.IsType<PhysicalFileResult>(result);
+    }
+
+    private async Task<(HttpContext Context, IActionResult Result)> DownloadWithRangeAsync(
+        long roomId, string fileName, int totalBytes, string? range)
+    {
+        Directory.CreateDirectory(RoomDir(roomId));
+        await File.WriteAllBytesAsync(Path.Combine(RoomDir(roomId), fileName), Bytes(totalBytes));
+
+        var controller = CreateController(new AudioStreamHub(1024));
+        controller.HttpContext.Response.Body = new MemoryStream();
+        if (range is not null)
+        {
+            controller.HttpContext.Request.Headers.Range = range;
+        }
+
+        var result = await controller.DownloadRecording(roomId, fileName, CancellationToken.None);
+        await ExecuteAsync(controller, result);
+        return (controller.HttpContext, result);
+    }
+
+    [Fact]
+    public async Task Download_RangePrefix_Returns206PartialContent()
+    {
+        var (context, _) = await DownloadWithRangeAsync(570, "a.flv", 200, "bytes=0-99");
+
+        Assert.Equal(StatusCodes.Status206PartialContent, context.Response.StatusCode);
+        Assert.Equal("bytes 0-99/200", context.Response.Headers.ContentRange.ToString());
+        Assert.Equal("bytes", context.Response.Headers.AcceptRanges.ToString());
+        Assert.Equal(Bytes(200)[..100], await ReadBodyAsync(context));
+    }
+
+    [Fact]
+    public async Task Download_RangeOpenEnded_ReturnsTailToEndOfFile()
+    {
+        var (context, _) = await DownloadWithRangeAsync(571, "a.flv", 200, "bytes=150-");
+
+        Assert.Equal(StatusCodes.Status206PartialContent, context.Response.StatusCode);
+        Assert.Equal("bytes 150-199/200", context.Response.Headers.ContentRange.ToString());
+        Assert.Equal(Bytes(200)[150..], await ReadBodyAsync(context));
+    }
+
+    [Fact]
+    public async Task Download_RangeSuffix_ReturnsLastBytes()
+    {
+        var (context, _) = await DownloadWithRangeAsync(572, "a.flv", 200, "bytes=-50");
+
+        Assert.Equal(StatusCodes.Status206PartialContent, context.Response.StatusCode);
+        Assert.Equal("bytes 150-199/200", context.Response.Headers.ContentRange.ToString());
+        Assert.Equal(Bytes(200)[150..], await ReadBodyAsync(context));
+    }
+
+    [Fact]
+    public async Task Download_RangeBeyondEnd_Returns416()
+    {
+        var (context, _) = await DownloadWithRangeAsync(573, "a.flv", 200, "bytes=200-");
+
+        Assert.Equal(StatusCodes.Status416RangeNotSatisfiable, context.Response.StatusCode);
+        Assert.Equal("bytes */200", context.Response.Headers.ContentRange.ToString());
+    }
+
+    [Fact]
+    public async Task Download_NoRange_Returns200FullFileWithAcceptRanges()
+    {
+        var (context, _) = await DownloadWithRangeAsync(574, "a.flv", 200, null);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("bytes", context.Response.Headers.AcceptRanges.ToString());
+        Assert.Equal(Bytes(200), await ReadBodyAsync(context));
+    }
+
+    [Fact]
+    public async Task Download_UnsafeFileName_WithRange_StillBadRequest()
+    {
+        var controller = CreateController(new AudioStreamHub(1024));
+        controller.HttpContext.Request.Headers.Range = "bytes=0-99";
+
+        var result = await controller.DownloadRecording(575, "../secret.flv", CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Download_RecordingFile_WithRange_StillBadRequest()
+    {
+        Directory.CreateDirectory(RoomDir(576));
+        await File.WriteAllBytesAsync(Path.Combine(RoomDir(576), "active.flv"), Bytes(200));
+        await SeedRecordingAsync(576, TimeSpan.Zero, "active.flv");
+
+        var controller = CreateController(new AudioStreamHub(1024));
+        controller.HttpContext.Request.Headers.Range = "bytes=0-99";
+
+        var result = await controller.DownloadRecording(576, "active.flv", CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
     }
 
     [Fact]
