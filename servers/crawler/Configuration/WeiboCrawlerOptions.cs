@@ -6,7 +6,7 @@ public sealed class WeiboCrawlerOptions
 
     public int TimelineIntervalSeconds { get; set; } = 30;
     public int HttpTimeoutSeconds { get; set; } = 10;
-    public int CookieRefreshIntervalMinutes { get; set; } = 60;
+    public int CookieRefreshIntervalMinutes { get; set; } = 1;
     public int MaxPagesPerCrawl { get; set; } = 5;
     public string UserAgent { get; set; } =
         "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1";
