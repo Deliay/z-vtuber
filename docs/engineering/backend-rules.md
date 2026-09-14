@@ -39,6 +39,17 @@ servers/
     ├── Program.cs               # Worker 宿主 + /health 健康检查
     ├── Dockerfile
     └── Z.Vtuber.Crawler.csproj  # 引用 common + 抓取库 + 消息客户端
+├── cookie/                      # Cookie 管理服务（Z.Vtuber.Cookie，扫码登录/池调度）
+└── recording/                   # 录播服务（Z.Vtuber.Recording）
+    ├── Subscriptions/           # （订阅读取内联于 LiveStatusPoller）
+    ├── Live/                    # 开播轮询/playurl 选流/直播 API 客户端
+    ├── Recording/               # ffmpeg 多输出编排/文件名/分布式锁/状态上报
+    ├── Audio/                   # 实时音频 Hub（有界缓冲丢弃广播）
+    ├── Controllers/             # stream/audio、recordings、recording/status
+    ├── Configuration/           # RecordingOptions
+    ├── Program.cs               # Web 宿主 + /health 健康检查
+    ├── Dockerfile               # aspnet 运行时 + ffmpeg
+    └── Z.Vtuber.Recording.csproj
 ```
 
 > 归属约定：仅被一方使用的代码归该方；被双方使用的代码入 `common`。抓取专用在 `servers/crawler`，对外接口与 SSE 在 `servers/api`。`ICookieNavProbeService` 契约在 common，具体实现（依赖抓取通道）在 crawler。
