@@ -10,6 +10,7 @@ public class CookieServiceOptions
     public int RefreshNavTimeoutSeconds { get; set; } = 30;
     public int MaxConsecutiveRefreshFailures { get; set; } = 3;
     public int ReportInvalidTimeoutSeconds { get; set; } = 60;
+    public int ProxyRequestTimeoutSeconds { get; set; } = 30;
     public int MaxPendingLoginSessions { get; set; } = 3;
     public int RefreshLockTtlSeconds { get; set; } = 90;
     public int LockAcquireWaitMs { get; set; } = 5000;

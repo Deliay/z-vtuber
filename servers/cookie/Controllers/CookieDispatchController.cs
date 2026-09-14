@@ -124,3 +124,15 @@ public class CooldownRequest
     public string CookieId { get; set; } = string.Empty;
     public int DurationSeconds { get; set; }
 }
+
+public class ProxyWeiboRequest
+{
+    public string CookieId { get; set; } = string.Empty;
+    public string Path { get; set; } = string.Empty;
+}
+
+public class ProxyWeiboResponse
+{
+    public int Status { get; set; }
+    public string Body { get; set; } = string.Empty;
+}
