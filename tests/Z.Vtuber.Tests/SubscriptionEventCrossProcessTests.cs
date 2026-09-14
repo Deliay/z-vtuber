@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using StackExchange.Redis;
 using Z.Vtuber.Common.Live;
@@ -23,20 +25,24 @@ public class SubscriptionEventCrossProcessTests(MongoDbFixture mongo, RedisFixtu
 
     public Task DisposeAsync() => Task.CompletedTask;
 
+    private static RedisChannel Channel =>
+        new(SubscriptionEventChannels.Subscribed, RedisChannel.PatternMode.Literal);
+
     private sealed class FuncAccountInfoCrawler(Func<long, CancellationToken, Task> crawl) : IAccountInfoCrawler
     {
         public Task CrawlAsync(long mid, CancellationToken ct = default) => crawl(mid, ct);
     }
 
+    /// <summary>
+    /// 与 api Program 相同的装配方式启动宿主，验证 HostedService 注册会真正实例化 publisher 并挂载事件监听。
+    /// </summary>
     [Fact]
-    public async Task Publisher_PublishesEvent_OnNewSubscription()
+    public async Task HostStartup_ActivatesPublisher_AndPublishesOnNewSubscription()
     {
         var apiSubscription = new SubscriptionService(mongo.Database);
         var received = new TaskCompletionSource<SubscriptionEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var channel = new RedisChannel(SubscriptionEventChannels.Subscribed, RedisChannel.PatternMode.Literal);
-
         var subscriber = redis.Connection.GetSubscriber();
-        await subscriber.SubscribeAsync(channel, (_, value) =>
+        await subscriber.SubscribeAsync(Channel, (_, value) =>
         {
             var evt = JsonSerializer.Deserialize<SubscriptionEvent>(value.ToString());
             if (evt is not null)
@@ -45,10 +51,22 @@ public class SubscriptionEventCrossProcessTests(MongoDbFixture mongo, RedisFixtu
             }
         });
 
+        var host = new HostBuilder()
+            .ConfigureServices(services =>
+            {
+                services.AddLogging();
+                services.AddSingleton<ISubscriptionService>(apiSubscription);
+                services.AddSingleton<IConnectionMultiplexer>(redis.Connection);
+                services.AddSubscriptionEvents();
+            })
+            .Build();
+
         try
         {
-            using var publisher = new SubscriptionEventPublisher(
-                apiSubscription, redis.Connection, NullLogger<SubscriptionEventPublisher>.Instance);
+            // 断言注册为 HostedService（而非惰性单例），保证宿主启动即激活
+            Assert.Contains(host.Services.GetServices<IHostedService>(), s => s is SubscriptionEventPublisher);
+
+            await host.StartAsync();
 
             await apiSubscription.SubscribeAsync(400001, SubscriptionType.Recording);
 
@@ -58,7 +76,9 @@ public class SubscriptionEventCrossProcessTests(MongoDbFixture mongo, RedisFixtu
         }
         finally
         {
-            await subscriber.UnsubscribeAsync(channel);
+            await host.StopAsync();
+            host.Dispose();
+            await subscriber.UnsubscribeAsync(Channel);
         }
     }
 
@@ -105,19 +125,15 @@ public class SubscriptionEventCrossProcessTests(MongoDbFixture mongo, RedisFixtu
 
         try
         {
-            using var publisher = new SubscriptionEventPublisher(
-                apiSubscription, redis.Connection, NullLogger<SubscriptionEventPublisher>.Instance);
-
-            // api 进程创建录播订阅 -> Redis 广播
+            // api 进程创建录播订阅
             await apiSubscription.SubscribeAsync(410001, SubscriptionType.Recording);
 
             // 容忍订阅通道建立延迟：重试发布直到 crawl 触发
-            var channel = new RedisChannel(SubscriptionEventChannels.Subscribed, RedisChannel.PatternMode.Literal);
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
             while (DateTime.UtcNow < deadline && !crawled.Task.IsCompleted)
             {
                 await redis.Connection.GetSubscriber().PublishAsync(
-                    channel,
+                    Channel,
                     JsonSerializer.Serialize(new SubscriptionEvent(410001, SubscriptionType.Recording)));
                 await Task.Delay(200);
             }

@@ -42,7 +42,7 @@ builder.Services.AddSingleton<ICookiePoolService, CookiePoolService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 
 // 订阅事件跨进程广播：api 进程内订阅成功后发布到 Redis，crawler 侧即时抓取主播资料
-builder.Services.AddSingleton<SubscriptionEventPublisher>();
+builder.Services.AddSubscriptionEvents();
 
 builder.Services.AddSingleton<ILiveEventBus, LiveEventBus>();
 
