@@ -278,6 +278,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/cookie/weibo/proxy:
+    post:
+      summary: 在登录浏览器会话内代理发起微博请求（页面上下文 XHR）
+      operationId: proxyWeiboRequest
+      description: |
+        在 cookieId 所属帐号的登录浏览器会话页面上下文内向微博发起 GET 请求，原样回传微博
+        原始状态码与响应体（含风控响应）。白名单约束目标为 m.weibo.cn 的 /api/* 路径，
+        端点不得成为开放代理。v1 仅支持 GET 语义（path 含 query）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyWeiboRequest"
+      responses:
+        "200":
+          description: 微博原始响应透传
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyWeiboResponse"
+        "400":
+          description: 目标非白名单
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: cookieId 不存在或非 active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: 关联会话已失效
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInvalidResponse"
+        "502":
+          description: 浏览器侧请求失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: 超时
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     AccountList:
@@ -303,6 +354,9 @@ components:
           format: int64
         uname:
           type: string
+        cookieId:
+          type: string
+          description: 当前关联的 Cookie 池记录 ID（无关联时为空）
         cookieStatus:
           type: string
         lastRefreshAt:
@@ -417,6 +471,25 @@ components:
         durationSeconds:
           type: integer
           minimum: 1
+    ProxyWeiboRequest:
+      type: object
+      required: [cookieId, path]
+      properties:
+        cookieId:
+          type: string
+          description: 微博 Cookie 池记录 ID
+        path:
+          type: string
+          description: 目标 API 路径（含 query），必须以 /api/ 开头且不含 scheme/host/回溯符
+    ProxyWeiboResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          description: 微博原始 HTTP 状态码
+        body:
+          type: string
+          description: 微博原始响应体文本
     ErrorResponse:
       type: object
       properties:
