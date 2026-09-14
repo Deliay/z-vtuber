@@ -28,6 +28,35 @@ public class RedisCookieInvalidEventPublisherTests(RedisFixture redis)
         var evt = JsonSerializer.Deserialize<CookieInvalidEvent>((string)msg.Message!);
         Assert.Equal(cookieId, evt!.CookieId);
         Assert.Equal("test_reason", evt.Reason);
+        Assert.Equal("bilibili", evt.Platform);
+
+        await subscriber.UnsubscribeAsync(Channel);
+    }
+
+    [Fact]
+    public async Task PublishAsync_WeiboPlatform_UsesSessionIdentityAndPlatform()
+    {
+        var sessionRepo = new FakeCookieSessionRepository();
+        sessionRepo.Sessions.Add(new CookieSessionRecord
+        {
+            Id = ObjectId.GenerateNewId(),
+            CookieId = "weibo-cookie-x",
+            Mid = 998877,
+            Uname = "微博用户",
+        });
+        var publisher = new RedisCookieInvalidEventPublisher(
+            redis.Connection, "weibo", accountInfoRepository: null, sessionRepo, NullLogger<RedisCookieInvalidEventPublisher>.Instance);
+        var subscriber = redis.Connection.GetSubscriber();
+        var queue = await subscriber.SubscribeAsync(Channel);
+
+        await publisher.PublishAsync("weibo-cookie-x", "session_invalid");
+
+        var msg = await queue.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var evt = JsonSerializer.Deserialize<CookieInvalidEvent>((string)msg.Message!);
+        Assert.Equal("weibo-cookie-x", evt!.CookieId);
+        Assert.Equal("weibo", evt.Platform);
+        Assert.Equal(998877L, evt.Mid);
+        Assert.Equal("微博用户", evt.Uname);
 
         await subscriber.UnsubscribeAsync(Channel);
     }

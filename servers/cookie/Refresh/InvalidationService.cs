@@ -3,6 +3,7 @@ using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Browser;
 using Z.Vtuber.Cookie.Configuration;
+using Z.Vtuber.Cookie.Platform;
 using Z.Vtuber.Common.Persistence;
 
 namespace Z.Vtuber.Cookie.Refresh;
@@ -22,6 +23,7 @@ public class InvalidationResultValue
 
 public class InvalidationService : IInvalidationService
 {
+    private readonly ICookiePlatformProfile _profile;
     private readonly ICookieSessionRepository _sessionRepository;
     private readonly ICookiePoolService _cookiePool;
     private readonly IDistributedLockProvider _lockProvider;
@@ -31,6 +33,7 @@ public class InvalidationService : IInvalidationService
     private readonly ILogger<InvalidationService> _logger;
 
     public InvalidationService(
+        ICookiePlatformProfile profile,
         ICookieSessionRepository sessionRepository,
         ICookiePoolService cookiePool,
         IDistributedLockProvider lockProvider,
@@ -39,6 +42,7 @@ public class InvalidationService : IInvalidationService
         IOptions<CookieServiceOptions> options,
         ILogger<InvalidationService> logger)
     {
+        _profile = profile;
         _sessionRepository = sessionRepository;
         _cookiePool = cookiePool;
         _lockProvider = lockProvider;
@@ -46,6 +50,18 @@ public class InvalidationService : IInvalidationService
         _eventPublisher = eventPublisher;
         _options = options.Value;
         _logger = logger;
+    }
+
+    public InvalidationService(
+        ICookieSessionRepository sessionRepository,
+        ICookiePoolService cookiePool,
+        IDistributedLockProvider lockProvider,
+        IBrowserSessionManager browserSessionManager,
+        ICookieInvalidEventPublisher eventPublisher,
+        IOptions<CookieServiceOptions> options,
+        ILogger<InvalidationService> logger)
+        : this(new BilibiliCookiePlatformProfile(), sessionRepository, cookiePool, lockProvider, browserSessionManager, eventPublisher, options, logger)
+    {
     }
 
     public async Task<InvalidationResultValue> ReportInvalidAsync(string cookieId, CancellationToken ct = default)
@@ -71,7 +87,7 @@ public class InvalidationService : IInvalidationService
             return new InvalidationResultValue { Result = InvalidationResult.SessionInvalid, AccountId = cookieRecord.AccountId };
         }
 
-        var lockKey = $"lock:cookie-refresh:{session.Id}";
+        var lockKey = $"lock:cookie-refresh:{_profile.LockKeyPrefix}{session.Id}";
         var lockTtl = TimeSpan.FromSeconds(_options.ReportInvalidTimeoutSeconds);
         var lockWait = TimeSpan.FromMilliseconds(_options.LockAcquireWaitMs);
 

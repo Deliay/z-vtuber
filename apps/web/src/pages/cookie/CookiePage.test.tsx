@@ -5,43 +5,53 @@ import * as client from '../../api/client'
 
 vi.mock('../../api/client')
 
-const mockListAccounts = vi.mocked(client.listCookieAccounts)
-const mockCreateAccount = vi.mocked(client.createCookieAccount)
-const mockGetAccount = vi.mocked(client.getCookieAccount)
-const mockDeleteAccount = vi.mocked(client.deleteCookieAccount)
+const mockListBilibili = vi.mocked(client.listCookieAccounts)
+const mockListWeibo = vi.mocked(client.listWeiboCookieAccounts)
+const mockCreateBilibili = vi.mocked(client.createCookieAccount)
+const mockCreateWeibo = vi.mocked(client.createWeiboCookieAccount)
+const mockGetBilibili = vi.mocked(client.getCookieAccount)
+const mockGetWeibo = vi.mocked(client.getWeiboCookieAccount)
+const mockDeleteBilibili = vi.mocked(client.deleteCookieAccount)
+const mockDeleteWeibo = vi.mocked(client.deleteWeiboCookieAccount)
 
 describe('CookiePage', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    mockListAccounts.mockResolvedValue([])
+    mockListBilibili.mockResolvedValue([])
+    mockListWeibo.mockResolvedValue([])
   })
 
-  it('should render cookie page title', async () => {
+  it('should render cookie page title and both create buttons', async () => {
     await act(async () => {
       render(<CookiePage />)
     })
 
     expect(screen.getByText('Cookie 管理')).toBeInTheDocument()
-    expect(screen.getByText('新增帐号')).toBeInTheDocument()
+    expect(screen.getByText('新增微博帐号')).toBeInTheDocument()
+    expect(screen.getByText('新增Bilibili帐号')).toBeInTheDocument()
   })
 
-  it('should load and display accounts', async () => {
-    mockListAccounts.mockResolvedValue([
+  it('should merge and display bilibili and weibo accounts with platform column', async () => {
+    mockListBilibili.mockResolvedValue([
       {
         accountId: 'acc-1',
         mid: 12345,
         uname: '用户A',
         status: 'active',
         cookieStatus: 'active',
+        platform: 'bilibili',
         lastRefreshAt: '2024-01-01T00:00:00Z',
         lastLoginAt: '2024-01-01T00:00:00Z',
       },
+    ])
+    mockListWeibo.mockResolvedValue([
       {
-        accountId: 'acc-2',
-        mid: 67890,
-        uname: null,
-        status: 'expired',
-        cookieStatus: 'expired',
+        accountId: 'w-1',
+        mid: 999,
+        uname: '微博用户',
+        status: 'active',
+        cookieStatus: 'active',
+        platform: 'weibo',
         lastRefreshAt: null,
         lastLoginAt: null,
       },
@@ -53,8 +63,11 @@ describe('CookiePage', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/用户A/)).toBeInTheDocument()
-      expect(screen.getByText(/67890/)).toBeInTheDocument()
+      expect(screen.getByText(/微博用户/)).toBeInTheDocument()
     })
+
+    expect(screen.getByText('Bilibili')).toBeInTheDocument()
+    expect(screen.getByText('微博')).toBeInTheDocument()
   })
 
   it('should show empty state when no accounts', async () => {
@@ -67,8 +80,9 @@ describe('CookiePage', () => {
     })
   })
 
-  it('should show error when loading fails', async () => {
-    mockListAccounts.mockRejectedValue(new Error('Network error'))
+  it('should show service unavailable when both lists fail', async () => {
+    mockListBilibili.mockRejectedValue(new Error('Network error'))
+    mockListWeibo.mockRejectedValue(new Error('Network error'))
 
     await act(async () => {
       render(<CookiePage />)
@@ -79,15 +93,40 @@ describe('CookiePage', () => {
     })
   })
 
-  it('should open create modal and start polling on click', async () => {
+  it('should still show weibo accounts when bilibili list fails', async () => {
+    mockListBilibili.mockRejectedValue(new Error('Network error'))
+    mockListWeibo.mockResolvedValue([
+      {
+        accountId: 'w-1',
+        mid: 999,
+        uname: '微博用户',
+        status: 'active',
+        cookieStatus: 'active',
+        platform: 'weibo',
+        lastRefreshAt: null,
+        lastLoginAt: null,
+      },
+    ])
+
+    await act(async () => {
+      render(<CookiePage />)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/微博用户/)).toBeInTheDocument()
+    })
+    expect(screen.queryByText('服务不可用')).not.toBeInTheDocument()
+  })
+
+  it('should create weibo account and show weibo modal hint', async () => {
     const futureDate = new Date(Date.now() + 10 * 60 * 1000).toISOString()
-    mockCreateAccount.mockResolvedValue({
-      accountId: 'new-acc',
+    mockCreateWeibo.mockResolvedValue({
+      accountId: 'w-new',
       qrCodeImage: 'fake-base64-qr',
       expiresAt: futureDate,
     })
-    mockGetAccount.mockResolvedValue({
-      accountId: 'new-acc',
+    mockGetWeibo.mockResolvedValue({
+      accountId: 'w-new',
       status: 'pending_login',
     })
 
@@ -96,27 +135,56 @@ describe('CookiePage', () => {
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('新增帐号'))
+      fireEvent.click(screen.getByText('新增微博帐号'))
     })
 
     await waitFor(() => {
-      expect(screen.getByText('扫码登录')).toBeInTheDocument()
+      expect(screen.getByText('请使用微博 App 扫描二维码')).toBeInTheDocument()
     })
 
-    expect(mockCreateAccount).toHaveBeenCalled()
+    expect(mockCreateWeibo).toHaveBeenCalled()
+    expect(mockCreateBilibili).not.toHaveBeenCalled()
   })
 
-  it('should show error on create 429', async () => {
-    const error = new Error('Too Many Requests')
-    ;(error as any).status = 429
-    mockCreateAccount.mockRejectedValue(error)
+  it('should create bilibili account and show bilibili modal hint', async () => {
+    const futureDate = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    mockCreateBilibili.mockResolvedValue({
+      accountId: 'b-new',
+      qrCodeImage: 'fake-base64-qr',
+      expiresAt: futureDate,
+    })
+    mockGetBilibili.mockResolvedValue({
+      accountId: 'b-new',
+      status: 'pending_login',
+    })
 
     await act(async () => {
       render(<CookiePage />)
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('新增帐号'))
+      fireEvent.click(screen.getByText('新增Bilibili帐号'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('请使用 B 站客户端扫描二维码')).toBeInTheDocument()
+    })
+
+    expect(mockCreateBilibili).toHaveBeenCalled()
+    expect(mockCreateWeibo).not.toHaveBeenCalled()
+  })
+
+  it('should show error on create 429', async () => {
+    const error = new Error('Too Many Requests')
+    ;(error as any).status = 429
+    mockCreateWeibo.mockRejectedValue(error)
+
+    await act(async () => {
+      render(<CookiePage />)
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('新增微博帐号'))
     })
 
     await waitFor(() => {
@@ -125,14 +193,14 @@ describe('CookiePage', () => {
   })
 
   it('should show generic error on create failure', async () => {
-    mockCreateAccount.mockRejectedValue(new Error('Network error'))
+    mockCreateWeibo.mockRejectedValue(new Error('Network error'))
 
     await act(async () => {
       render(<CookiePage />)
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('新增帐号'))
+      fireEvent.click(screen.getByText('新增微博帐号'))
     })
 
     await waitFor(() => {
@@ -140,8 +208,8 @@ describe('CookiePage', () => {
     })
   })
 
-  it('should delete account and refresh list', async () => {
-    mockListAccounts
+  it('should delete bilibili account via bilibili delete function', async () => {
+    mockListBilibili
       .mockResolvedValueOnce([
         {
           accountId: 'acc-1',
@@ -149,13 +217,13 @@ describe('CookiePage', () => {
           uname: '用户A',
           status: 'active',
           cookieStatus: 'active',
+          platform: 'bilibili',
           lastRefreshAt: null,
           lastLoginAt: null,
         },
       ])
       .mockResolvedValueOnce([])
-
-    mockDeleteAccount.mockResolvedValue(undefined)
+    mockDeleteBilibili.mockResolvedValue(undefined)
 
     await act(async () => {
       render(<CookiePage />)
@@ -170,19 +238,56 @@ describe('CookiePage', () => {
     })
 
     await waitFor(() => {
-      expect(mockDeleteAccount).toHaveBeenCalledWith('acc-1')
+      expect(mockDeleteBilibili).toHaveBeenCalledWith('acc-1')
+      expect(mockDeleteWeibo).not.toHaveBeenCalled()
       expect(screen.getByText(/暂无帐号/)).toBeInTheDocument()
     })
   })
 
+  it('should delete weibo account via weibo delete function', async () => {
+    mockListWeibo
+      .mockResolvedValueOnce([
+        {
+          accountId: 'w-1',
+          mid: 999,
+          uname: '微博用户',
+          status: 'active',
+          cookieStatus: 'active',
+          platform: 'weibo',
+          lastRefreshAt: null,
+          lastLoginAt: null,
+        },
+      ])
+      .mockResolvedValueOnce([])
+    mockDeleteWeibo.mockResolvedValue(undefined)
+
+    await act(async () => {
+      render(<CookiePage />)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/微博用户/)).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('删除'))
+    })
+
+    await waitFor(() => {
+      expect(mockDeleteWeibo).toHaveBeenCalledWith('w-1')
+      expect(mockDeleteBilibili).not.toHaveBeenCalled()
+    })
+  })
+
   it('should display status labels correctly', async () => {
-    mockListAccounts.mockResolvedValue([
+    mockListBilibili.mockResolvedValue([
       {
         accountId: 'acc-1',
         mid: 12345,
         uname: '用户A',
         status: 'active',
         cookieStatus: 'active',
+        platform: 'bilibili',
         lastRefreshAt: null,
         lastLoginAt: null,
       },

@@ -58,7 +58,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/NotificationSubscription"
         "400":
-          description: eventType 非法（当前仅支持 cookie_invalid）或 groupId 非法（无法解析为 int64）
+          description: eventType 非法（仅支持 bilibili_cookie_invalid 或 weibo_cookie_invalid）或 groupId 非法（无法解析为 int64）
           content:
             application/json:
               schema:
@@ -111,8 +111,8 @@ components:
           description: 订阅 ID
         eventType:
           type: string
-          description: 通知类型（当前仅 cookie_invalid）
-          enum: [cookie_invalid]
+          description: 通知类型（bilibili_cookie_invalid 或 weibo_cookie_invalid）
+          enum: [bilibili_cookie_invalid, weibo_cookie_invalid]
         groupId:
           type: string
           description: 群号（int64 字符串表达）
@@ -137,8 +137,8 @@ components:
       properties:
         eventType:
           type: string
-          description: 通知类型（当前仅支持 cookie_invalid）
-          enum: [cookie_invalid]
+          description: 通知类型（bilibili_cookie_invalid 或 weibo_cookie_invalid）
+          enum: [bilibili_cookie_invalid, weibo_cookie_invalid]
         groupId:
           type: string
           description: 群号（int64 字符串表达）

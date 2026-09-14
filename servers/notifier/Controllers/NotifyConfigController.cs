@@ -63,12 +63,18 @@ public sealed class NotifyConfigController : ControllerBase
         return Ok(new { items });
     }
 
+    private static readonly HashSet<string> AllowedEventTypes =
+    [
+        "bilibili_cookie_invalid",
+        "weibo_cookie_invalid",
+    ];
+
     [HttpPost("subscriptions")]
     public async Task<IActionResult> CreateSubscription([FromBody] CreateNotificationSubscriptionRequest request, CancellationToken ct)
     {
-        if (request.EventType != "cookie_invalid")
+        if (!AllowedEventTypes.Contains(request.EventType))
         {
-            return BadRequest(new { message = "eventType 非法，当前仅支持 cookie_invalid" });
+            return BadRequest(new { message = "eventType 非法，当前仅支持 bilibili_cookie_invalid 或 weibo_cookie_invalid" });
         }
 
         // 校验 groupId 可解析为 int64
