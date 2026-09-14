@@ -8,10 +8,12 @@ type: Permanent
 **功能名称**: 微博 Cookie 抓取——登录态请求经 Cookie 服务代理 XHR（剩余增量）
 **关联 PRD**: `docs/product/draft/20260913-weibo-cookie-crawl-prd.md`（v1.2）
 **关联技术提案**: `docs/engineering/proposals/20260913-proposal-weibo-cookie-crawl.md`（v1.2）
-**Plan 版本**: v1.0
-**创建日期**: 2026-09-14
+**Plan 版本**: v2.0
+**创建日期**: 2026-09-13（v2.0 修订：2026-09-14）
 **作者**: Workflow Agent（代起草）
 **feat-branch**: `feat/weibo-cookie-crawl`（需求总分支，已推送 origin；需求总 PR：<https://github.com/Deliay/z-vtuber/pull/96>）
+
+> v2.0 变更（2026-09-14）：按 PRD/提案 v1.2 全面重写。v1.x 覆盖的多平台化全量范围已随 v1.0 实现上线（原需求总分支 `prd/weibo-cookie-crawl`，PR #88 已合并），本 Plan 范围收敛为**唯一剩余增量：cookie 服务代理 XHR 端点 + crawler 登录态请求改走代理 + 浏览器上下文按需恢复 + apphost 会话目录持久卷**。旧版全文见 git 历史。
 
 ## 1. 概述
 
