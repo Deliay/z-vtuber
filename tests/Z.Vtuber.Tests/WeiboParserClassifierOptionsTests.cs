@@ -11,13 +11,13 @@ public sealed class WeiboCrawlerOptionsTests
     {
         var options = new WeiboCrawlerOptions();
 
-        Assert.Equal(60, options.TimelineIntervalSeconds);
+        Assert.Equal(10, options.TimelineIntervalSeconds);
         Assert.Equal(10, options.HttpTimeoutSeconds);
         Assert.Equal(60, options.CookieRefreshIntervalMinutes);
         Assert.Equal(5, options.MaxPagesPerCrawl);
         Assert.Equal(30, options.BackoffBaseSeconds);
         Assert.Equal(15, options.BackoffMaxMinutes);
-        Assert.Equal(30, options.CooldownMinutes);
+        Assert.Equal(10, options.CooldownMinutes);
         Assert.Equal(5, options.RiskControlCooldownThreshold);
         Assert.Contains("iPhone", options.UserAgent);
     }

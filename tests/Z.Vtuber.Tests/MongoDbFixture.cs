@@ -45,6 +45,7 @@ public sealed class MongoDbFixture : IAsyncLifetime
             MongoCollectionNames.WeiboSubscriptions,
             MongoCollectionNames.WeiboUserTimeline,
             MongoCollectionNames.NotificationSubscriptions,
+            MongoCollectionNames.RecordingStatus,
         };
 
         foreach (var name in names)
