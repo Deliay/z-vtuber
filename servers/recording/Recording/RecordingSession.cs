@@ -214,12 +214,17 @@ public sealed class RecordingSession(
             throw monitorFailure;
         }
 
-        if (fencingLost || ct.IsCancellationRequested)
+        if (fencingLost)
         {
-            // 锁已被新持有者接管 / 停机：不覆盖其状态，交由新实例上报
+            // 锁已被新持有者接管：不覆盖其状态，交由新实例上报
             logger.LogInformation(
-                "Recording for room {RoomId} ended without status update (fencingLost={FencingLost}, cancelled={Cancelled}).",
-                roomId, fencingLost, ct.IsCancellationRequested);
+                "Recording for room {RoomId} ended without status update (lock lost to another holder).",
+                roomId);
+        }
+        else if (ct.IsCancellationRequested)
+        {
+            // 优雅停机：落终态，避免重启期间残留 recording 状态（新实例接管后会重新上报 recording）
+            await reporter.ReportNotLiveAsync(roomId);
         }
         else if (exitCode == 0)
         {

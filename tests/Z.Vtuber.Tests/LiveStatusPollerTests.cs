@@ -5,6 +5,7 @@ using Z.Vtuber.Common.Services;
 using Z.Vtuber.Recording.Configuration;
 using Z.Vtuber.Recording.Live;
 using Z.Vtuber.Recording.Recording;
+using Z.Vtuber.Recording.Services;
 
 namespace Z.Vtuber.Tests;
 
@@ -17,15 +18,18 @@ public class LiveStatusPollerTests(MongoDbFixture fixture) : IClassFixture<Mongo
     private LiveStatusPoller CreatePoller(
         ISubscriptionService subscription,
         FakeBiliLiveApi bili,
-        FakeRecordingSessionRunner runner) =>
+        FakeRecordingSessionRunner runner,
+        IRecordingCookieClient? cookieClient = null,
+        RecordingOptions? options = null) =>
         new(
             subscription,
             new AccountBasicInfoRepository(fixture.Database),
             bili,
-            new FakeRecordingCookieClient(),
+            cookieClient ?? new FakeRecordingCookieClient(),
             runner,
             new RecordingStatusReporter(new RecordingStatusRepository(fixture.Database)),
-            new RecordingOptions { PollIntervalSeconds = 1 },
+            new RecordingStatusRepository(fixture.Database),
+            options ?? new RecordingOptions { PollIntervalSeconds = 1 },
             NullLogger<LiveStatusPoller>.Instance);
 
     private async Task SeedAccountAsync(long mid, long roomId)
@@ -113,5 +117,64 @@ public class LiveStatusPollerTests(MongoDbFixture fixture) : IClassFixture<Mongo
 
         var completed = await Task.WhenAny(cancelled.Task, Task.Delay(TimeSpan.FromSeconds(3)));
         Assert.Same(cancelled.Task, completed);
+    }
+
+    [Fact]
+    public async Task StaleRecording_WithNoAvailableCookie_IsCorrectedToError()
+    {
+        var subscription = new SubscriptionService(fixture.Database);
+        await subscription.SubscribeAsync(5, SubscriptionType.Recording);
+        await SeedAccountAsync(5, 800005);
+
+        var repository = new RecordingStatusRepository(fixture.Database);
+        await repository.UpsertAsync(new RecordingStatusRecord
+        {
+            RoomId = 800005,
+            State = "recording",
+            HostName = "old-host",
+            SessionTitle = "旧场次",
+            Files = ["[RAW][800005][主播5] 2026-09-13-旧场次.flv"],
+            UpdatedAt = DateTime.UtcNow - TimeSpan.FromMinutes(10),
+        });
+
+        var cookieClient = new FakeRecordingCookieClient
+        {
+            CheckoutFunc = _ => throw new NoAvailableCookieException(),
+        };
+        var poller = CreatePoller(subscription, new FakeBiliLiveApi(), new FakeRecordingSessionRunner(), cookieClient);
+
+        await poller.RunOnceAsync(CancellationToken.None);
+
+        var status = await repository.GetByRoomIdAsync(800005);
+        Assert.Equal("error", status!.State);
+        Assert.Contains("cookie", status.Error);
+    }
+
+    [Fact]
+    public async Task FreshRecording_WithNoAvailableCookie_IsNotCorrected()
+    {
+        var subscription = new SubscriptionService(fixture.Database);
+        await subscription.SubscribeAsync(6, SubscriptionType.Recording);
+        await SeedAccountAsync(6, 800006);
+
+        var repository = new RecordingStatusRepository(fixture.Database);
+        await repository.UpsertAsync(new RecordingStatusRecord
+        {
+            RoomId = 800006,
+            State = "recording",
+            HostName = "active-host",
+            UpdatedAt = DateTime.UtcNow,
+        });
+
+        var cookieClient = new FakeRecordingCookieClient
+        {
+            CheckoutFunc = _ => throw new NoAvailableCookieException(),
+        };
+        var poller = CreatePoller(subscription, new FakeBiliLiveApi(), new FakeRecordingSessionRunner(), cookieClient);
+
+        await poller.RunOnceAsync(CancellationToken.None);
+
+        // 心跳仍在阈值内：可能他实例正在录制，不得覆盖
+        Assert.Equal("recording", (await repository.GetByRoomIdAsync(800006))!.State);
     }
 }

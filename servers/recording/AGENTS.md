@@ -26,8 +26,8 @@ graph LR
 
 独立录播服务：消费「录播（recording）」类型订阅，开播自动录制、下播自动结束，产出 RAW + AV1 双文件与实时音频流。
 
-- `Live/`：`LiveStatusPoller`（HostedService：读 Recording 订阅 → mid 解析 roomId → cookie checkout + room get_info → 未开播上报 not_live / 已开播交 `RecordingSession`；订阅取消则取消进行中的会话；轮询带抖动）、`StreamResolver`（playurl 候选流选取纯函数：排除 hevc，优先 http_stream+flv）、`BiliLiveApiClient`（直连 B 站 room get_info / getRoomPlayInfo，校验 code）、`StreamBitrateProbe`（ffprobe 短时探测码率，缺失回退默认）、`AnchorNameExtractor`（channel JSON 提取 uName）
-- `Recording/`：`RecordingSession`（单场次编排：抢锁 → 选流 → 渲染文件名 → 启动 ffmpeg → stdout 泵喂 Audio Hub → 状态上报 → 退出处理 → 释放锁；监控循环任何异常/失锁/停机都先 kill 并回收进程再处理状态；失锁不覆盖新持有者状态；error 保留已产出文件名）、`RecordingLock`（`RedisRecordingLockProvider`：per-room 锁 `recording:lock:{roomId}`，TTL 续期、Lua 比对释放、CheckOwnership fencing）、`FfmpegProcessBuilder`（多输出参数纯函数，含 `-y` 覆盖残留文件）、`RecordingProcess`（Process 封装与 stderr 泵）、`RecordingFileName`（文件名模板纯函数，北京时间日期）、`RecordingStatusReporter`（状态 upsert/心跳）、`RecordingStates`
+- `Live/`：`LiveStatusPoller`（HostedService：读 Recording 订阅 → mid 解析 roomId → cookie checkout + room get_info → 未开播上报 not_live / 已开播交 `RecordingSession`；订阅取消则取消进行中的会话；轮询带抖动；无法启动录制（无可用 cookie / 轮询异常）且库中该房间 recording 状态已过 `StaleStatusThresholdSeconds` 未刷新时，上报 error 纠正陈旧残留）、`StreamResolver`（playurl 候选流选取纯函数：排除 hevc，优先 http_stream+flv）、`BiliLiveApiClient`（直连 B 站 room get_info / getRoomPlayInfo，校验 code）、`StreamBitrateProbe`（ffprobe 短时探测码率，缺失回退默认）、`AnchorNameExtractor`（channel JSON 提取 uName）
+- `Recording/`：`RecordingSession`（单场次编排：抢锁 → 选流 → 渲染文件名 → 启动 ffmpeg → stdout 泵喂 Audio Hub → 状态上报 → 退出处理 → 释放锁；监控循环任何异常/失锁/停机都先 kill 并回收进程再处理状态；fencing 失锁不覆盖新持有者状态；优雅停机落 not_live 终态避免残留；error 保留已产出文件名）、`RecordingLock`（`RedisRecordingLockProvider`：per-room 锁 `recording:lock:{roomId}`，TTL 续期、Lua 比对释放、CheckOwnership fencing）、`FfmpegProcessBuilder`（多输出参数纯函数，含 `-y` 覆盖残留文件）、`RecordingProcess`（Process 封装与 stderr 泵）、`RecordingFileName`（文件名模板纯函数，北京时间日期）、`RecordingStatusReporter`（状态 upsert/心跳）、`RecordingStates`
 - `Audio/`：`AudioStreamHub`（每房间广播；无订阅者时仅缓存首包 FLV 头供中途接入重放、其余分片直接丢弃；每订阅者按字节有界队列 DropOldest 等价语义；Subscribe 在锁内校验 Streaming，未录制返回已完成订阅）
 - `Controllers/`：`RecordingController`（`GET /api/recording/status`、`GET /api/{roomId}/recordings[/{fileName}]`、`GET /api/{roomId}/stream/audio`），含文件名路径穿越防护
 - `Services/`：`CookieServiceClient`（精简版 checkout + report-invalid）
@@ -56,7 +56,7 @@ graph LR
 - `ConnectionStrings:mongo`：MongoDB 连接串
 - `ConnectionStrings:messaging`：Redis 连接串
 - `CookieService:BaseUrl`：cookie 服务地址
-- `Recording` 节（`ValidateOnStart`）：`StorageDir`（默认 `/data/recordings`）、`PollIntervalSeconds`(30)、`LockTtlSeconds`(15)、`LockRenewIntervalSeconds`(5)、`FencingIntervalMilliseconds`(2000)、`AudioBufferBytes`(262144)、`DefaultBitrateKbps`(4000)、`ProbeBitrate`(true)、`FfprobePath`(ffprobe)、`FfmpegPath`(ffmpeg)、`Referer`、`UserAgent`、`Av1:Enabled`(true)
+- `Recording` 节（`ValidateOnStart`）：`StorageDir`（默认 `/data/recordings`）、`PollIntervalSeconds`(30)、`LockTtlSeconds`(15)、`LockRenewIntervalSeconds`(5)、`FencingIntervalMilliseconds`(2000)、`StaleStatusThresholdSeconds`(180)、`AudioBufferBytes`(262144)、`DefaultBitrateKbps`(4000)、`ProbeBitrate`(true)、`FfprobePath`(ffprobe)、`FfmpegPath`(ffmpeg)、`Referer`、`UserAgent`、`Av1:Enabled`(true)
 - 健康检查端口：默认 8080（本地 launchSettings 8083）
 
 ## 部署要点

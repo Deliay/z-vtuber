@@ -26,6 +26,10 @@ public sealed class RecordingOptions
     [Range(50, 60000)]
     public int FencingIntervalMilliseconds { get; set; } = 2000;
 
+    /// <summary>判定 recording 状态过期的阈值（秒）：超过该时长未被心跳刷新则视为陈旧，可用于纠正残留状态。</summary>
+    [Range(1, 86400)]
+    public int StaleStatusThresholdSeconds { get; set; } = 180;
+
     /// <summary>每个音频订阅者的缓冲上限（字节）。</summary>
     [Range(1024, 64 * 1024 * 1024)]
     public int AudioBufferBytes { get; set; } = 262144;

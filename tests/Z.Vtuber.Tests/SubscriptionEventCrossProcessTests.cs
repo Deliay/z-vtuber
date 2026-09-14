@@ -120,6 +120,7 @@ public class SubscriptionEventCrossProcessTests(MongoDbFixture mongo, RedisFixtu
             new FakeRecordingCookieClient(),
             runner,
             new RecordingStatusReporter(new RecordingStatusRepository(mongo.Database)),
+            new RecordingStatusRepository(mongo.Database),
             new RecordingOptions { PollIntervalSeconds = 1 },
             NullLogger<LiveStatusPoller>.Instance);
 

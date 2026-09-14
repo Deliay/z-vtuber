@@ -15,6 +15,9 @@ public class BilibiliLiveRecordingController(
 {
     internal const string RecordingClientName = "recording";
 
+    /// <summary>recording 状态过期阈值：recording 且 UpdatedAt 超过该时长未刷新则退化为 unknown，避免陈旧残留误导页面。</summary>
+    internal static readonly TimeSpan StaleRecordingThreshold = TimeSpan.FromMinutes(3);
+
     [HttpGet("recording-status")]
     public async Task<IActionResult> ListRecordingStatus(CancellationToken ct)
     {
@@ -59,11 +62,19 @@ public class BilibiliLiveRecordingController(
                 statusByRoom.TryGetValue(roomId.Value, out status);
             }
 
+            var state = status?.State ?? "unknown";
+            if (status is { State: "recording" }
+                && DateTime.UtcNow - status.UpdatedAt > StaleRecordingThreshold)
+            {
+                // 心跳停止（实例崩溃/重启且未能纠正）：读侧退化为未知，不呈现虚假的「录制中」
+                state = "unknown";
+            }
+
             return new
             {
                 mid = s.Mid,
                 roomId,
-                state = status?.State ?? "unknown",
+                state,
                 hostName = status?.HostName,
                 sessionTitle = status?.SessionTitle,
                 files = status?.Files ?? [],

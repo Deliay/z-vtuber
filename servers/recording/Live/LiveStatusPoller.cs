@@ -19,6 +19,7 @@ public sealed class LiveStatusPoller(
     IRecordingCookieClient cookieClient,
     IRecordingSessionRunner sessionRunner,
     RecordingStatusReporter reporter,
+    RecordingStatusRepository statusRepository,
     RecordingOptions options,
     ILogger<LiveStatusPoller> logger) : BackgroundService
 {
@@ -124,6 +125,8 @@ public sealed class LiveStatusPoller(
         catch (NoAvailableCookieException)
         {
             logger.LogWarning("Recording poll skipped for room {RoomId}: no active cookie.", roomId);
+            // 无法启动录制时必须纠正陈旧 recording 状态，避免重启 + cookie 失效导致永久残留
+            await CorrectStaleRecordingStatusAsync(roomId, "no available cookie", ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -132,6 +135,36 @@ public sealed class LiveStatusPoller(
         catch (Exception ex)
         {
             logger.LogError(ex, "Recording poll failed for room {RoomId}.", roomId);
+            await CorrectStaleRecordingStatusAsync(roomId, "recording poll failed", ct);
+        }
+    }
+
+    /// <summary>
+    /// 无法启动/继续录制时纠正陈旧状态：库中该房间为 recording 且 UpdatedAt 已超过阈值（无活跃录制在刷新心跳），
+    /// 上报 error 反映现实；未过期则不动（可能仍有实例在录制）。
+    /// </summary>
+    private async Task CorrectStaleRecordingStatusAsync(long roomId, string reason, CancellationToken ct)
+    {
+        try
+        {
+            var status = await statusRepository.GetByRoomIdAsync(roomId, ct);
+            if (status is null || status.State != RecordingStates.Recording)
+            {
+                return;
+            }
+
+            var threshold = TimeSpan.FromSeconds(options.StaleStatusThresholdSeconds);
+            if (DateTime.UtcNow - status.UpdatedAt < threshold)
+            {
+                return;
+            }
+
+            logger.LogWarning("Correcting stale recording status for room {RoomId}: {Reason}", roomId, reason);
+            await reporter.ReportErrorAsync(roomId, reason, status.SessionTitle, status.Files, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to correct stale recording status for room {RoomId}.", roomId);
         }
     }
 

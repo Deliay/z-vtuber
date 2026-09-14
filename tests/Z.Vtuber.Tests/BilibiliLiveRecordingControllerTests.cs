@@ -100,6 +100,28 @@ public class BilibiliLiveRecordingControllerTests(MongoDbFixture fixture) : ICla
     }
 
     [Fact]
+    public async Task RecordingStatus_StaleRecording_ReturnsUnknown()
+    {
+        await SeedSubscriptionAsync(1003, 900003);
+        await new RecordingStatusRepository(fixture.Database).UpsertAsync(new RecordingStatusRecord
+        {
+            RoomId = 900003,
+            State = "recording",
+            HostName = "host",
+            SessionTitle = "旧场次",
+            UpdatedAt = DateTime.UtcNow - TimeSpan.FromMinutes(10),
+        });
+
+        var controller = CreateController(fixture.Database, new HttpClient(new StubHandler()));
+        var result = await controller.ListRecordingStatus(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var items = (System.Collections.IEnumerable)ok.Value!.GetType().GetProperty("items")!.GetValue(ok.Value)!;
+        var item = Assert.Single(items.Cast<object>());
+        Assert.Equal("unknown", item.GetType().GetProperty("state")!.GetValue(item));
+    }
+
+    [Fact]
     public async Task ListRecordings_ProxiesRecordingService()
     {
         var handler = new StubHandler
