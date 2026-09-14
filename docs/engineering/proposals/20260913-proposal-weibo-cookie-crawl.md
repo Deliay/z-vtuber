@@ -1,10 +1,12 @@
 # 微博 Cookie 抓取（weibo-cookie-crawl）- 技术提案
 
-- 日期：2026-09-13（v1.1 修订：2026-09-13；v1.2 修订：2026-09-14，实现前评审查缺补漏）
+- 日期：2026-09-13（v1.1 修订：2026-09-13；v1.2 修订：2026-09-14，实现前评审查缺补漏；v1.3 修订：2026-09-14，实现方案评审打回）
 - 状态：待评审
 - feat-branch：`feat/weibo-cookie-crawl`
 - 关联文档：[PRD](../product/draft/20260913-weibo-cookie-crawl-prd.md)
 
+> v1.3 变更（2026-09-14，实现方案评审打回）：**撤销「apphost 浏览器会话目录挂数据卷」**（原实现点 4 / 决策 13）——经人类确认，apphost 无需挂数据卷，浏览器会话目录使用容器内默认可写路径即可满足需求；重启丢会话由既有失效状态机兜底（session invalid → cookie offline + 失效通知 → 运维重新扫码），属可接受行为。浏览器上下文按需恢复保留（覆盖目录尚存场景：进程重启、上下文崩溃）。
+>
 > v1.2 变更（2026-09-14，实现前评审）：按 main 代码现状全面修订。v1.0 实现（cookie 服务多平台化、微博登录 cookie 取用/自愈、失效事件按平台拆分、前端双按钮）已全量合并上线，本提案范围收敛为**唯一剩余增量：cookie 服务代理 XHR 端点 + crawler 登录态请求改走代理 + 浏览器上下文重启恢复**。同时勘正 v1.1 中与现状不符的描述（现状综述、文件位置、锁 key、配置项、风控分类器能力、数据模型字段、部署卷），补充遗漏的受影响面（上下文恢复缺口、既有测试资产、apphost 浏览器目录无持久卷）。
 >
 > v1.1 变更（2026-09-13，下游联调打回）：微博登录态数据请求改为经 cookie 服务**代理 XHR 端点**在登录浏览器会话（页面上下文）内发起；crawler 不再直接携带 cookie 头请求 m.weibo.cn（匿名兜底路径除外）。
@@ -28,11 +30,11 @@
 1. cookie 服务新增**代理 XHR 端点**：在 cookieId 所属帐号的登录浏览器会话（页面上下文）内向微博发起请求并原样回传响应；白名单约束目标，不得成为开放代理；
 2. crawler 微博**登录态数据请求全部改经代理端点**，不再直连微博登录态接口（匿名访客兜底路径维持直连不变）；
 3. 补齐浏览器上下文**按需恢复**能力（代理、保鲜、宣告刷新共用），消除进程重启后会话不可用的既有缺口；
-4. cookie 服务浏览器会话目录在编排中持久化，重启不丢登录会话。
+4. ~~cookie 服务浏览器会话目录在编排中持久化~~（v1.3 撤销，经人类确认无需挂卷）：浏览器会话目录使用容器内默认可写路径即可，重启丢会话由既有失效状态机兜底。
 
 ### 1.3 范围
 
-- **内**：`contracts/cookie.openapi.yaml` 新增 proxy 端点（并补 `AccountItem.cookieId` 字段声明，对齐既有实现）；cookie 服务 `BrowserSessionManager.ProxyRequestAsync` + 上下文按需恢复 + proxy 端点；crawler `CookieServiceClient.ProxyWeiboAsync`、`WeiboApiClient` 登录态分流、`WeiboTimelineJob` 自愈重试改走代理；apphost 浏览器会话目录挂卷；测试；
+- **内**：`contracts/cookie.openapi.yaml` 新增 proxy 端点（并补 `AccountItem.cookieId` 字段声明，对齐既有实现）；cookie 服务 `BrowserSessionManager.ProxyRequestAsync` + 上下文按需恢复 + proxy 端点；crawler `CookieServiceClient.ProxyWeiboAsync`、`WeiboApiClient` 登录态分流、`WeiboTimelineJob` 自愈重试改走代理；apphost 浏览器会话目录评估（v1.3：不挂卷、编排零变更）；测试；
 - **外**：已上线的 v1.0 能力零改动（bilibili 全链路、微博扫码/保鲜/事件/前端页面）；匿名访客兜底直连不变；代理池、UA 轮换等进阶风控手段后续迭代。
 
 ## 2. 技术架构
@@ -197,10 +199,11 @@ sequenceDiagram
 - `WeiboRiskControlClassifier` **无需补充**——401/403、3xx 跳 `passport.weibo.com` 与 `login.sina.com.cn`、`ok != 1`、msg 关键词、「预期 JSON 却返回非 JSON」等特征均已具备（勘正 v1.1 实现点 4 的过时描述）；
 - **配置**：`WeiboCrawler:UseLoginCookie` / `LoginCookieRetryOnce` 已存在（默认均 `true`），本期**无新增配置项**（勘正 v1.1 实现点 7）；接入登录 cookie 不提高请求频率（抓取间隔/退避参数不变）。注：PR#91 后 job 不再推进 `since_id`、有新增落库即停止翻页，登录 cookie 切换不改变该行为。
 
-#### 实现点 4: apphost 浏览器会话目录持久化
+#### 实现点 4: apphost 浏览器会话目录评估（v1.3 修订：不挂卷、编排零变更）
 
-- 现状：`infra/apphost` 将 `CookieService:BrowserSessionDataDir` 指向临时目录（`Path.GetTempPath()/z-vtuber-browser-sessions`，无数据卷），重启即丢全部浏览器会话——v1.0 下表现为重启后需重新扫码；代理链路上线后该问题直接影响数据面（勘正 v1.1 §9.1「`/data/browser-sessions` 卷」的描述：该值仅为 `CookieServiceOptions` 默认值，编排中并未生效）；
-- 方案：编排中为 cookie 服务浏览器会话目录挂数据卷（Aspire 卷或具名绑定），生产部署同理。
+- 现状：`infra/apphost` 将 `CookieService:BrowserSessionDataDir` 指向临时目录（`Path.GetTempPath()/z-vtuber-browser-sessions`，无数据卷），重启即丢全部浏览器会话——v1.0 下表现为重启后需重新扫码（勘正 v1.1 §9.1「`/data/browser-sessions` 卷」的描述：该值仅为 `CookieServiceOptions` 默认值，编排中并未生效）；
+- **结论（v1.3，经人类确认）**：**不挂数据卷，编排零变更**。dev（Aspire 同机临时目录）与容器部署（容器内默认可写路径 `/data/browser-sessions`，`CookieServiceOptions` 默认值）均可写、满足运行需求；重启/重建丢会话由既有失效状态机兜底——上下文恢复以 `UserDataDir` 存在为前提（实现点 2），目录缺失时刷新按单次失败计数，连续失败触发 session invalid + cookie offline + 失效通知，运维重新扫码接入，属可接受行为；
+- 原「编排挂数据卷」方案（v1.2 决策 13）撤销。
 
 ### 5.3 已完成事项（v1.0，已上线，本期零改动）
 
@@ -230,7 +233,7 @@ sequenceDiagram
 10. **微博登录态数据请求经 cookie 服务代理 XHR（浏览器会话内发起），crawler 不直连**（v1.1 确立，本期执行）：下游联调证实仅携带 cookie 头的服务端 HTTP 请求过不了微博风控（缺浏览器指纹/同源上下文）；在登录浏览器会话页面内发 XHR 天然携带指纹、cookie 与同源上下文，且复用已常驻的保鲜上下文，零新增基础设施。代价是数据链路依赖浏览器会话可用性——以 `410/502/504` 明确区分「会话失效/浏览器故障/超时」供 crawler 区别处置，匿名直连兜底保留；代理端点以白名单（`m.weibo.cn/api/*`）约束目标，防止成为开放代理。
 11. **代理请求在页面上下文内 `fetch`（`page.EvaluateAsync`），而非 `context.APIRequest`**：页内 XHR 携带完整浏览器指纹与同源上下文，正是过风控的关键；`APIRequest` 共享 cookie jar 但指纹弱，仅作实现期降级备选。代价是页内执行与导航类操作互斥——以 per-session 串行约束消化。
 12. **浏览器上下文按需惰性恢复，而非仅在启动时批量恢复**：进程重启/上下文崩溃后首次使用时恢复，保鲜/宣告/代理三路径共用同一入口与同一把 per-session 锁；恢复以 session `active` + `UserDataDir` 存在为前提，恢复失败按既有单次失败计数，不直接判失效。
-13. **浏览器会话目录挂持久卷**：代理数据面依赖持久化会话，临时目录方案在代理链路上不可接受；编排层修复，应用代码零改动。
+13. ~~**浏览器会话目录挂持久卷**~~（v1.3 撤销）：经人类确认，apphost 无需挂数据卷——容器内默认可写路径即可满足需求，重启丢会话由既有失效状态机兜底（失效通知 → 运维重扫），编排层零变更；浏览器上下文惰性恢复（决策 12）保留，覆盖目录尚存场景（进程重启、上下文崩溃）。
 
 ### 6.2 依赖与约束
 
@@ -260,7 +263,7 @@ servers/crawler/（增量）
 └── Jobs/WeiboTimelineJob.cs                        # 改：自愈重试经代理
 
 infra/apphost/
-└── AppHost.cs                                      # 改：cookie 服务浏览器会话目录挂数据卷
+└── AppHost.cs                                      # 零变更：v1.3 确认会话目录不挂卷（容器内默认可写路径即可）
 
 apps/web/
 └── src/api/schema-cookie.d.ts                      # codegen 再生成（勿手改）
@@ -285,14 +288,14 @@ tests/Z.Vtuber.Tests/                               # 新增代理/恢复用例�
   - `WeiboTimelineJob`：自愈成功后经代理重试一次、代理 410 → 会话失效分支、502/504 → 退避不宣告；
 - **集成测试**（Testcontainers Mongo + Redis）：proxy 端点寻址与状态映射端到端（浏览器层 mock）；
 - **前端**：契约再生成后类型对齐，无页面行为变更（既有页面测试保持绿）；
-- **手工验证**：真实微博帐号扫码登录 → 代理请求时间线 → 风控自愈全链路；重启 cookie 服务后代理/保鲜自动恢复上下文（验证挂卷与惰性恢复）；bilibili 全链路回归。
+- **手工验证**：真实微博帐号扫码登录 → 代理请求时间线 → 风控自愈全链路；重启 cookie 服务进程（目录尚存场景）后代理/保鲜自动恢复上下文（验证惰性恢复）；bilibili 全链路回归。
 
 ## 9. 部署方案
 
 ### 9.1 环境规划
 
 - 无新服务、无新容器；cookie / crawler 镜像随正常发布更新；
-- cookie 服务浏览器会话目录按本期实现点 4 挂数据卷（编排层变更）；帐号规模预期为个位数，资源占用与现状同量级。
+- cookie 服务浏览器会话目录按 v1.3 结论**不挂数据卷**（编排零变更），容器内默认可写路径即可；帐号规模预期为个位数，资源占用与现状同量级。
 
 ### 9.2 配置管理
 
@@ -303,9 +306,9 @@ tests/Z.Vtuber.Tests/                               # 新增代理/恢复用例�
 - [ ] `POST /api/cookie/weibo/proxy` 白名单生效（非 `m.weibo.cn/api/*` 目标 400）；业务响应 `{ status, body }` 原样透传；cookieId 寻址 404、会话失效 410、浏览器故障 502、超时 504 语义正确；
 - [ ] 存在可用微博登录 cookie 时，时间线抓取的登录态请求全部经代理端点完成（crawler 不再直连微博登录态接口）；风控命中经 report-invalid 自愈后经代理重试一次，仍失败则放弃本轮并退避，不产生请求风暴；
 - [ ] 无可用登录 cookie 时回退匿名访客直连，抓取不中断且有可观测的告警日志；
-- [ ] cookie 服务进程重启后，active 会话的浏览器上下文按需恢复，代理与保鲜链路自动可用；
+- [ ] cookie 服务进程重启（会话目录尚存场景）后，active 会话的浏览器上下文按需恢复，代理与保鲜链路自动可用；
 - [ ] 同一帐号的代理/保鲜/宣告/恢复串行执行，无并发上下文操作；
-- [ ] cookie 服务浏览器会话目录在编排中持久化，重启不丢会话；
+- [ ] cookie 服务浏览器会话目录不挂数据卷（容器内默认可写路径即可，编排零变更）；目录丢失时既有失效状态机自动兜底（session invalid + cookie offline + 失效通知）；
 - [ ] bilibili 链路、微博扫码/保鲜/事件/前端既有行为零回归，既有测试全绿；
 - [ ] 单测 + 集成测试通过，核心逻辑覆盖率 ≥ 80%。
 
