@@ -6,6 +6,12 @@ namespace Z.Vtuber.Crawler.Weibo;
 public sealed class WeiboRiskControlException : Exception
 {
     public WeiboRiskControlException(string message) : base(message) { }
+
+    /// <summary>命中风控时使用的登录 cookieId；匿名凭证为 <c>null</c>。</summary>
+    public string? CookieId { get; init; }
+
+    /// <summary>命中风控时是否使用登录 cookie（false=匿名访客凭证）。</summary>
+    public bool IsLoginCookie { get; init; }
 }
 
 public sealed class WeiboRiskControlClassifier
@@ -21,10 +27,11 @@ public sealed class WeiboRiskControlClassifier
             return true;
         }
 
-        // 3xx 跳转至微博 passport 登录页：访客凭证失效
+        // 3xx 跳转至微博 passport / sina 登录页：凭证失效
         if (statusCode >= HttpStatusCode.MultipleChoices && statusCode < HttpStatusCode.BadRequest
             && !string.IsNullOrEmpty(location)
-            && location.Contains("passport.weibo.com", StringComparison.OrdinalIgnoreCase))
+            && (location.Contains("passport.weibo.com", StringComparison.OrdinalIgnoreCase)
+                || location.Contains("login.sina.com.cn", StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }
@@ -37,7 +44,9 @@ public sealed class WeiboRiskControlClassifier
         // 仅在 JSON 的 msg/error 字段上做登录/凭证失效关键词判断，避免误伤正常正文
         if (!TryParseJsonObject(body, out var obj))
         {
-            return false;
+            // 预期 JSON 却返回 HTML/其它非 JSON：状态码非 2xx（可疑路径）判风控；
+            // 2xx 的 HTML（如正常页面）不判，避免误伤。
+            return IsSuspiciousStatus(statusCode) && IsNonJsonContentType(contentType);
         }
 
         // JSON 响应 ok != 1：业务失败（风控 / 无效凭证）
@@ -58,6 +67,13 @@ public sealed class WeiboRiskControlClassifier
 
         return false;
     }
+
+    private static bool IsSuspiciousStatus(HttpStatusCode statusCode) =>
+        (int)statusCode < 200 || (int)statusCode >= 300;
+
+    private static bool IsNonJsonContentType(string? contentType) =>
+        string.IsNullOrEmpty(contentType)
+        || !contentType.Contains("json", StringComparison.OrdinalIgnoreCase);
 
     private static bool TryParseJsonObject(string body, out JsonElement obj)
     {

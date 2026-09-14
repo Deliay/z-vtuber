@@ -1,34 +1,29 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
-using System.Text.Json;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Locking;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Configuration;
-using MongoDB.Bson;
+using Z.Vtuber.Cookie.Platform;
 
 namespace Z.Vtuber.Cookie.Browser;
 
 public class LoginSessionWorker : BackgroundService
 {
-    private readonly IBrowserSessionManager _browserSessionManager;
-    private readonly ICookieSessionRepository _sessionRepository;
-    private readonly ICookiePoolService _cookiePool;
+    private readonly CookiePlatformRegistry _registry;
     private readonly IDistributedLockProvider _lockProvider;
     private readonly CookieServiceOptions _options;
     private readonly ILogger<LoginSessionWorker> _logger;
 
     public LoginSessionWorker(
-        IBrowserSessionManager browserSessionManager,
-        ICookieSessionRepository sessionRepository,
-        ICookiePoolService cookiePool,
+        CookiePlatformRegistry registry,
         IDistributedLockProvider lockProvider,
         IOptions<CookieServiceOptions> options,
         ILogger<LoginSessionWorker> logger)
     {
-        _browserSessionManager = browserSessionManager;
-        _sessionRepository = sessionRepository;
-        _cookiePool = cookiePool;
+        _registry = registry;
         _lockProvider = lockProvider;
         _options = options.Value;
         _logger = logger;
@@ -40,27 +35,30 @@ public class LoginSessionWorker : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try
+            foreach (var context in _registry.All)
             {
-                await ProcessPendingSessions(stoppingToken);
-                await ProcessExpiredSessions(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in LoginSessionWorker loop");
+                try
+                {
+                    await ProcessPendingSessions(context, stoppingToken);
+                    await ProcessExpiredSessions(context, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in LoginSessionWorker loop for platform {Platform}", context.Platform);
+                }
             }
 
             await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
         }
     }
 
-    private async Task ProcessPendingSessions(CancellationToken ct)
+    private async Task ProcessPendingSessions(CookiePlatformContext context, CancellationToken ct)
     {
-        var pendingSessions = await _sessionRepository.GetByStatusAsync("pending_login", ct);
+        var pendingSessions = await context.SessionRepository.GetByStatusAsync("pending_login", ct);
 
         foreach (var session in pendingSessions)
         {
@@ -69,7 +67,7 @@ public class LoginSessionWorker : BackgroundService
                 continue;
             }
 
-            var lockKey = $"lock:cookie-login:{session.Id}";
+            var lockKey = $"lock:cookie-login:{context.Profile.LockKeyPrefix}{session.Id}";
             var lockTtl = TimeSpan.FromSeconds(30);
             var lockWait = TimeSpan.FromMilliseconds(500);
 
@@ -81,7 +79,7 @@ public class LoginSessionWorker : BackgroundService
 
             try
             {
-                await MonitorLoginAsync(session, ct);
+                await MonitorLoginAsync(context, session, ct);
             }
             catch (Exception ex)
             {
@@ -90,7 +88,7 @@ public class LoginSessionWorker : BackgroundService
         }
     }
 
-    private async Task MonitorLoginAsync(CookieSessionRecord session, CancellationToken ct)
+    private async Task MonitorLoginAsync(CookiePlatformContext context, CookieSessionRecord session, CancellationToken ct)
     {
         var remaining = session.ExpiresAt - DateTime.UtcNow;
         if (remaining <= TimeSpan.Zero)
@@ -98,7 +96,7 @@ public class LoginSessionWorker : BackgroundService
             return;
         }
 
-        var navResponse = await _browserSessionManager.WaitForNavResponseAsync(
+        var navResponse = await context.BrowserSessionManager.WaitForNavResponseAsync(
             session.Id.ToString(), remaining, ct);
 
         if (navResponse is null)
@@ -107,37 +105,13 @@ public class LoginSessionWorker : BackgroundService
             return;
         }
 
-        // Login successful - extract cookies
-        var cookie = await _browserSessionManager.ExtractCookiesAsync(session.Id.ToString(), ct);
+        var cookie = await context.BrowserSessionManager.ExtractCookiesAsync(session.Id.ToString(), ct);
 
-        // Create cookie record in common pool
-        var cookieRecord = await _cookiePool.AddAsync(cookie, accountId: null, ct: ct);
+        var cookieRecord = await context.CookiePool.AddAsync(cookie, accountId: null, ct: ct);
 
-        // Parse mid from nav response
-        long? mid = null;
-        string? uname = null;
-        try
-        {
-            using var doc = JsonDocument.Parse(navResponse);
-            if (doc.RootElement.TryGetProperty("data", out var data))
-            {
-                if (data.TryGetProperty("mid", out var midElement))
-                {
-                    mid = midElement.GetInt64();
-                }
-                if (data.TryGetProperty("uname", out var unameElement))
-                {
-                    uname = unameElement.GetString();
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to parse mid from nav response for session {SessionId}", session.Id);
-        }
+        var identity = context.Profile.ExtractIdentity(navResponse);
 
-        // Transition session to active
-        var migrated = await _sessionRepository.TransitionStatusAsync(
+        var migrated = await context.SessionRepository.TransitionStatusAsync(
             session.Id, "pending_login", "active", ct);
 
         if (migrated)
@@ -146,32 +120,31 @@ public class LoginSessionWorker : BackgroundService
             session.Cookie = cookie;
             session.CookieId = cookieRecord.Id.ToString();
             session.LastLoginAt = DateTime.UtcNow;
-            session.Mid = mid;
-            session.Uname = uname;
-            await _sessionRepository.UpdateAsync(session, ct);
+            session.Mid = identity.Mid;
+            session.Uname = identity.Uname;
+            await context.SessionRepository.UpdateAsync(session, ct);
 
-            // Update cookie record with AccountId
-            var update = Builders<Z.Vtuber.Common.Persistence.Entities.CookieRecord>.Update.Set(c => c.AccountId, session.Id.ToString());
-            await _cookiePool.UpdateAsync(cookieRecord.Id.ToString(), update, ct);
+            var update = Builders<CookieRecord>.Update.Set(c => c.AccountId, session.Id.ToString());
+            await context.CookiePool.UpdateAsync(cookieRecord.Id.ToString(), update, ct);
 
-            _logger.LogInformation("Login successful for session {SessionId}, cookie created {CookieId}, mid {Mid}",
-                session.Id, cookieRecord.Id, mid);
+            _logger.LogInformation("Login successful for {Platform} session {SessionId}, cookie created {CookieId}, mid {Mid}",
+                context.Platform, session.Id, cookieRecord.Id, identity.Mid);
         }
     }
 
-    private async Task ProcessExpiredSessions(CancellationToken ct)
+    private async Task ProcessExpiredSessions(CookiePlatformContext context, CancellationToken ct)
     {
-        var expiredSessions = await _sessionRepository.GetPendingExpiredAsync(DateTime.UtcNow, ct);
+        var expiredSessions = await context.SessionRepository.GetPendingExpiredAsync(DateTime.UtcNow, ct);
 
         foreach (var session in expiredSessions)
         {
-            var migrated = await _sessionRepository.TransitionStatusAsync(
+            var migrated = await context.SessionRepository.TransitionStatusAsync(
                 session.Id, "pending_login", "expired", ct);
 
             if (migrated)
             {
                 _logger.LogInformation("Session {SessionId} expired, cleaning up browser context", session.Id);
-                await _browserSessionManager.DeleteSessionAsync(session.Id.ToString(), ct);
+                await context.BrowserSessionManager.DeleteSessionAsync(session.Id.ToString(), ct);
             }
         }
     }

@@ -4,11 +4,26 @@ import {
   createCookieAccount,
   getCookieAccount,
   deleteCookieAccount,
+  listWeiboCookieAccounts,
+  createWeiboCookieAccount,
+  getWeiboCookieAccount,
+  deleteWeiboCookieAccount,
 } from '../../api/client'
 import type { components } from '../../api/schema-cookie'
 
 type AccountItem = components['schemas']['AccountItem']
 type PendingAccount = components['schemas']['PendingAccount']
+type Platform = 'bilibili' | 'weibo'
+
+const PLATFORM_LABELS: Record<string, string> = {
+  bilibili: 'Bilibili',
+  weibo: '微博',
+}
+
+const QR_HINTS: Record<Platform, string> = {
+  bilibili: '请使用 B 站客户端扫描二维码',
+  weibo: '请使用微博 App 扫描二维码',
+}
 
 const SESSION_STATUS_LABELS: Record<string, string> = {
   pending_login: '等待扫码',
@@ -32,6 +47,7 @@ export function CookiePage() {
   const [error, setError] = useState<string | null>(null)
 
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [createPlatform, setCreatePlatform] = useState<Platform>('bilibili')
   const [pendingAccount, setPendingAccount] = useState<PendingAccount | null>(null)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -42,16 +58,26 @@ export function CookiePage() {
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchAccounts = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-      const data = await listCookieAccounts()
-      setAccounts(data)
-    } catch {
-      setError('服务不可用')
-    } finally {
-      setLoading(false)
+    setLoading(true)
+    setError(null)
+    const [bilibiliResult, weiboResult] = await Promise.allSettled([
+      listCookieAccounts(),
+      listWeiboCookieAccounts(),
+    ])
+
+    const merged: AccountItem[] = []
+    if (bilibiliResult.status === 'fulfilled') {
+      merged.push(...(bilibiliResult.value ?? []))
     }
+    if (weiboResult.status === 'fulfilled') {
+      merged.push(...(weiboResult.value ?? []))
+    }
+    setAccounts(merged)
+
+    if (bilibiliResult.status === 'rejected' && weiboResult.status === 'rejected') {
+      setError('服务不可用')
+    }
+    setLoading(false)
   }
 
   useEffect(() => {
@@ -67,14 +93,16 @@ export function CookiePage() {
     }
   }, [])
 
-  const startPolling = (accountId: string) => {
+  const startPolling = (accountId: string, platform: Platform) => {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current)
     }
     setPollError(null)
     pollTimerRef.current = setInterval(async () => {
       try {
-        const status = await getCookieAccount(accountId)
+        const status = platform === 'weibo'
+          ? await getWeiboCookieAccount(accountId)
+          : await getCookieAccount(accountId)
         if (status.status === 'active' || status.status === 'expired' || status.status === 'invalid') {
           if (pollTimerRef.current) {
             clearInterval(pollTimerRef.current)
@@ -124,15 +152,17 @@ export function CookiePage() {
     return () => clearTimeout(timeout)
   }, [pendingAccount?.expiresAt])
 
-  const handleCreate = async () => {
+  const handleCreate = async (platform: Platform) => {
     setCreateError(null)
     setQrExpired(false)
     try {
       setCreating(true)
-      const pending = await createCookieAccount()
+      const pending = platform === 'weibo'
+        ? await createWeiboCookieAccount()
+        : await createCookieAccount()
       setPendingAccount(pending)
       if (pending.accountId) {
-        startPolling(pending.accountId)
+        startPolling(pending.accountId, platform)
       }
     } catch (err: any) {
       if (err.status === 429) {
@@ -157,13 +187,24 @@ export function CookiePage() {
     setQrExpired(false)
   }
 
-  const handleDelete = async (accountId: string) => {
+  const handleDelete = async (account: AccountItem) => {
+    if (!account.accountId) return
     try {
-      await deleteCookieAccount(accountId)
+      if (account.platform === 'weibo') {
+        await deleteWeiboCookieAccount(account.accountId)
+      } else {
+        await deleteCookieAccount(account.accountId)
+      }
       await fetchAccounts()
     } catch {
       setDeleteError('删除失败，请重试')
     }
+  }
+
+  const handleOpenCreate = (platform: Platform) => {
+    setCreatePlatform(platform)
+    setShowCreateModal(true)
+    handleCreate(platform)
   }
 
   const formatDate = (dateString?: string | null) => {
@@ -177,14 +218,16 @@ export function CookiePage() {
 
       <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         <button
-          onClick={() => {
-            setShowCreateModal(true)
-            setCreateError(null)
-            handleCreate()
-          }}
+          onClick={() => handleOpenCreate('weibo')}
           style={{ padding: '0.5rem 1rem' }}
         >
-          新增帐号
+          新增微博帐号
+        </button>
+        <button
+          onClick={() => handleOpenCreate('bilibili')}
+          style={{ padding: '0.5rem 1rem' }}
+        >
+          新增Bilibili帐号
         </button>
       </div>
 
@@ -197,12 +240,13 @@ export function CookiePage() {
       ) : error ? (
         <p style={{ color: '#f87171' }}>{error}</p>
       ) : accounts.length === 0 ? (
-        <p>暂无帐号，点击「新增帐号」添加</p>
+        <p>暂无帐号，点击「新增微博帐号」或「新增Bilibili帐号」添加</p>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>昵称/MID</th>
+              <th style={{ textAlign: 'left', padding: '0.5rem' }}>平台</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>Session 状态</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>Cookie 状态</th>
               <th style={{ textAlign: 'left', padding: '0.5rem' }}>最近刷新时间</th>
@@ -221,6 +265,9 @@ export function CookiePage() {
                     {item.uname
                       ? `${item.uname}（${item.mid ?? '-'}）`
                       : item.mid ?? '-'}
+                  </td>
+                  <td style={{ padding: '0.5rem' }}>
+                    {PLATFORM_LABELS[item.platform ?? 'bilibili'] ?? item.platform}
                   </td>
                   <td style={{ padding: '0.5rem' }}>
                     <span
@@ -243,7 +290,7 @@ export function CookiePage() {
                   <td style={{ padding: '0.5rem' }}>
                     {canDelete && (
                       <button
-                        onClick={() => handleDelete(item.accountId!)}
+                        onClick={() => handleDelete(item)}
                         style={{ padding: '0.25rem 0.5rem' }}
                       >
                         删除
@@ -290,7 +337,7 @@ export function CookiePage() {
                 <p style={{ color: '#f87171' }}>{createError}</p>
                 <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
                   <button
-                    onClick={handleCreate}
+                    onClick={() => handleCreate(createPlatform)}
                     style={{ padding: '0.5rem 1rem' }}
                   >
                     重试
@@ -327,7 +374,7 @@ export function CookiePage() {
                         onClick={() => {
                           setQrExpired(false)
                           setPendingAccount(null)
-                          handleCreate()
+                          handleCreate(createPlatform)
                         }}
                         style={{ padding: '0.5rem 1rem' }}
                       >
@@ -351,7 +398,7 @@ export function CookiePage() {
                 ) : (
                   <>
                     <p style={{ marginBottom: '0.5rem', fontSize: '0.875rem', color: '#94a3b8' }}>
-                      请使用 B 站客户端扫描二维码
+                      {QR_HINTS[createPlatform]}
                     </p>
                     <img
                       src={`data:image/png;base64,${pendingAccount.qrCodeImage}`}

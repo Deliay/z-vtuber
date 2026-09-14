@@ -1,5 +1,6 @@
 using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
+using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Crawler.Weibo;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
@@ -13,6 +14,7 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
     private readonly IWeiboSubscriptionService _subscription;
     private readonly WeiboTimelineRepository _repository;
     private readonly IWeiboVisitorCookieProvider _cookies;
+    private readonly IWeiboLoginCookieProvider _loginCookies;
     private readonly CrawlLockProvider _locks;
     private readonly CrawlBackoffRegistry _backoff;
     private readonly WeiboCrawlerOptions _options;
@@ -23,6 +25,7 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
         IWeiboSubscriptionService subscription,
         WeiboTimelineRepository repository,
         IWeiboVisitorCookieProvider cookies,
+        IWeiboLoginCookieProvider loginCookies,
         CrawlLockProvider locks,
         CrawlBackoffRegistry backoff,
         WeiboCrawlerOptions options,
@@ -32,6 +35,7 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
         _subscription = subscription;
         _repository = repository;
         _cookies = cookies;
+        _loginCookies = loginCookies;
         _locks = locks;
         _backoff = backoff;
         _options = options;
@@ -84,10 +88,13 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
                 }
                 catch (WeiboRiskControlException ex)
                 {
-                    _logger.LogWarning(ex, "Weibo timeline crawl risk control for uid {Uid}; backing off and renewing visitor cookie.", uid);
-                    _backoff.ReportRiskControl(backoffKey);
-                    await RenewCookieSafelyAsync(ct);
-                    return;
+                    var retried = await HandleRiskControlAsync(uid, sinceId, ex, backoffKey, ct);
+                    if (retried is null)
+                    {
+                        return;
+                    }
+
+                    page = retried;
                 }
                 catch (Exception ex)
                 {
@@ -149,6 +156,69 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
 
                 sinceId = page.SinceId;
             }
+    }
+
+    /// <summary>
+    /// 处理风控命中。返回重试成功后的页面；返回 <c>null</c> 表示本轮放弃（已登记退避）。
+    /// 登录 cookie：宣告失效，200 自愈后重试一次（重试经 WeiboCookieSource 重新 checkout，
+    /// 自然拿到刷新后的 cookie）；410/404/504 或重试仍风控则放弃。
+    /// 匿名凭证：维持既有 RenewAsync + 退避语义。
+    /// </summary>
+    private async Task<WeiboTimelinePage?> HandleRiskControlAsync(
+        long uid,
+        string sinceId,
+        WeiboRiskControlException ex,
+        string backoffKey,
+        CancellationToken ct)
+    {
+        if (!ex.IsLoginCookie)
+        {
+            _logger.LogWarning(ex, "Weibo timeline crawl risk control for uid {Uid}; backing off and renewing visitor cookie.", uid);
+            _backoff.ReportRiskControl(backoffKey);
+            await RenewCookieSafelyAsync(ct);
+            return null;
+        }
+
+        if (!_options.LoginCookieRetryOnce || string.IsNullOrEmpty(ex.CookieId))
+        {
+            _logger.LogWarning(ex, "Weibo timeline crawl risk control on login cookie for uid {Uid}; retry disabled or cookieId missing; backing off.", uid);
+            _backoff.ReportRiskControl(backoffKey);
+            return null;
+        }
+
+        ReportInvalidResult report;
+        try
+        {
+            report = await _loginCookies.ReportInvalidAsync(ex.CookieId, ct);
+        }
+        catch (Exception reportEx)
+        {
+            _logger.LogWarning(reportEx, "Weibo report-invalid failed for uid {Uid} cookie {CookieId}; backing off.", uid, ex.CookieId);
+            _backoff.ReportRiskControl(backoffKey);
+            return null;
+        }
+
+        if (report.Status != ReportInvalidStatus.Refreshed)
+        {
+            _logger.LogWarning(
+                "Weibo login cookie {CookieId} report-invalid returned {Status} for uid {Uid}; giving up this round.",
+                ex.CookieId, report.Status, uid);
+            _backoff.ReportRiskControl(backoffKey);
+            return null;
+        }
+
+        _logger.LogInformation("Weibo login cookie {CookieId} refreshed for uid {Uid}; retrying once.", ex.CookieId, uid);
+        try
+        {
+            return await _api.GetUserTimelineAsync(uid, string.IsNullOrEmpty(sinceId) ? null : sinceId, ct);
+        }
+        catch (WeiboRiskControlException retryEx)
+        {
+            // 只宣告一次：重试仍风控不再 report-invalid，直接退避。
+            _logger.LogWarning(retryEx, "Weibo retry still hit risk control for uid {Uid}; not reporting again; backing off.", uid);
+            _backoff.ReportRiskControl(backoffKey);
+            return null;
+        }
     }
 
     private async Task RenewCookieSafelyAsync(CancellationToken ct)

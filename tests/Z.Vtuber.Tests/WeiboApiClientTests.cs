@@ -12,8 +12,8 @@ public sealed class WeiboApiClientTests
 
     private static WeiboApiClient CreateClient(
         RecordingHandler handler,
-        IWeiboVisitorCookieProvider? cookies = null) => new(
-        cookies ?? new FakeWeiboVisitorCookieProvider { CookieHeader = "SUB=a; SUBP=b" },
+        IWeiboCookieSource? source = null) => new(
+        source ?? new FakeWeiboCookieSource { Cookie = "SUB=a; SUBP=b" },
         Options,
         NullLogger<WeiboApiClient>.Instance,
         handler: handler);
@@ -67,6 +67,35 @@ public sealed class WeiboApiClientTests
         var client = CreateClient(handler);
 
         await Assert.ThrowsAsync<WeiboRiskControlException>(() => client.GetUserTimelineAsync(12345));
+    }
+
+    [Fact]
+    public async Task GetUserTimeline_RiskResponse_CarriesCookieIdentity()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"ok":0,"msg":"cookie error"}"""));
+        var client = CreateClient(handler, new FakeWeiboCookieSource
+        {
+            Cookie = "SUB=login",
+            IsLoginCookie = true,
+            CookieId = "weibo-cookie-1",
+        });
+
+        var ex = await Assert.ThrowsAsync<WeiboRiskControlException>(() => client.GetUserTimelineAsync(12345));
+
+        Assert.True(ex.IsLoginCookie);
+        Assert.Equal("weibo-cookie-1", ex.CookieId);
+    }
+
+    [Fact]
+    public async Task GetUserTimeline_AnonymousRiskResponse_CarriesNoCookieId()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"ok":0,"msg":"cookie error"}"""));
+        var client = CreateClient(handler);
+
+        var ex = await Assert.ThrowsAsync<WeiboRiskControlException>(() => client.GetUserTimelineAsync(12345));
+
+        Assert.False(ex.IsLoginCookie);
+        Assert.Null(ex.CookieId);
     }
 
     [Fact]

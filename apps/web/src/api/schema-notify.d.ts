@@ -78,10 +78,10 @@ export interface components {
             /** @description 订阅 ID */
             id?: string;
             /**
-             * @description 通知类型（当前仅 cookie_invalid）
+             * @description 通知类型（bilibili_cookie_invalid 或 weibo_cookie_invalid）
              * @enum {string}
              */
-            eventType?: "cookie_invalid";
+            eventType?: "bilibili_cookie_invalid" | "weibo_cookie_invalid";
             /** @description 群号（int64 字符串表达） */
             groupId?: string;
             /** @description 群名称 */
@@ -97,10 +97,10 @@ export interface components {
         };
         CreateNotificationSubscriptionRequest: {
             /**
-             * @description 通知类型（当前仅支持 cookie_invalid）
+             * @description 通知类型（bilibili_cookie_invalid 或 weibo_cookie_invalid）
              * @enum {string}
              */
-            eventType: "cookie_invalid";
+            eventType: "bilibili_cookie_invalid" | "weibo_cookie_invalid";
             /** @description 群号（int64 字符串表达） */
             groupId: string;
             /** @description 群名称 */
@@ -199,7 +199,7 @@ export interface operations {
                     "application/json": components["schemas"]["NotificationSubscription"];
                 };
             };
-            /** @description eventType 非法（当前仅支持 cookie_invalid）或 groupId 非法（无法解析为 int64） */
+            /** @description eventType 非法（仅支持 bilibili_cookie_invalid 或 weibo_cookie_invalid）或 groupId 非法（无法解析为 int64） */
             400: {
                 headers: {
                     [name: string]: unknown;
