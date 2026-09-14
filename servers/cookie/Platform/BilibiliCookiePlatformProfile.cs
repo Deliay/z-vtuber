@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Z.Vtuber.Cookie.Platform;
 
-/// <summary>Bilibili 平台差异：登录页、扫码二维码、nav 登录态检测与 mid/uname 身份解析。</summary>
+/// <summary>Bilibili 平台差异：登录页、扫码二维码、nav 登录态检测（<c>data.isLogin</c>）与 mid/uname 身份解析。</summary>
 public sealed class BilibiliCookiePlatformProfile : ICookiePlatformProfile
 {
     public string Platform => "bilibili";
@@ -25,7 +25,12 @@ public sealed class BilibiliCookiePlatformProfile : ICookiePlatformProfile
         try
         {
             using var doc = JsonDocument.Parse(responseBody);
-            return doc.RootElement.TryGetProperty("isLogin", out var isLogin)
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            return data.TryGetProperty("isLogin", out var isLogin)
                 && isLogin.ValueKind == JsonValueKind.True;
         }
         catch (JsonException)

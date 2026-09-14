@@ -97,7 +97,8 @@ public sealed class FakeBrowserSessionManager : IBrowserSessionManager
 
     public Task<string?> WaitForNavResponseAsync(string accountId, TimeSpan timeout, CancellationToken ct = default)
     {
-        return WaitForNavResponseAsyncFunc?.Invoke(accountId, timeout, ct) ?? Task.FromResult<string?>("{\"isLogin\":true}");
+        return WaitForNavResponseAsyncFunc?.Invoke(accountId, timeout, ct)
+            ?? Task.FromResult<string?>("{\"code\":0,\"data\":{\"isLogin\":true,\"mid\":123,\"uname\":\"fake\"}}");
     }
 
     public Task<string> ExtractCookiesAsync(string accountId, CancellationToken ct = default)
