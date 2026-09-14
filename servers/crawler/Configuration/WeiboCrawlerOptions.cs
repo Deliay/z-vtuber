@@ -4,7 +4,7 @@ public sealed class WeiboCrawlerOptions
 {
     public const string SectionName = "WeiboCrawler";
 
-    public int TimelineIntervalSeconds { get; set; } = 10;
+    public int TimelineIntervalSeconds { get; set; } = 30;
     public int HttpTimeoutSeconds { get; set; } = 10;
     public int CookieRefreshIntervalMinutes { get; set; } = 60;
     public int MaxPagesPerCrawl { get; set; } = 5;
