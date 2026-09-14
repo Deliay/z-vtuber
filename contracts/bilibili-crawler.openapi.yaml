@@ -63,7 +63,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/SubscriptionItem"
         "400":
-          description: mid 非法或 type 缺失/非法（合法取值：danmaku, dynamic, guard）
+          description: mid 非法或 type 缺失/非法（合法取值：danmaku, dynamic, guard, recording）
   /api/b/subscription/{mid}:
     delete:
       summary: 取消订阅
@@ -73,15 +73,15 @@ paths:
         - name: type
           in: query
           required: true
-          description: 订阅类型（danmaku / dynamic / guard），缺失或非法返回 400。
+          description: 订阅类型（danmaku / dynamic / guard / recording），缺失或非法返回 400。
           schema:
             type: string
-            enum: [danmaku, dynamic, guard]
+            enum: [danmaku, dynamic, guard, recording]
       responses:
         "204":
           description: 取消成功
         "400":
-          description: type 缺失或非法（合法取值：danmaku, dynamic, guard）
+          description: type 缺失或非法（合法取值：danmaku, dynamic, guard, recording）
         "404":
           description: 未订阅
   /api/b/user/{mid}:
@@ -269,6 +269,77 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BackstageCookieList"
+  /api/b/live/recording-status:
+    get:
+      summary: 聚合查询录播录制状态
+      description: 读取 bilibili_subscriptions 中 recording 类型订阅，与录制状态（recording_status 集合）内存 join，返回每个订阅主播的录制状态。recording 服务不可达时仍返回订阅列表，状态退化为未知。
+      operationId: listRecordingStatus
+      responses:
+        "200":
+          description: 录制状态聚合列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingStatusList"
+  /api/b/live/{roomId}/recordings:
+    get:
+      summary: 查询房间录播文件列表
+      description: 代理 recording 服务，列出指定房间的录播文件名；无录播返回空数组。
+      operationId: listRoomRecordings
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: 录播文件名列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingFileList"
+        "502":
+          description: recording 服务不可达
+  /api/b/live/{roomId}/recordings/{fileName}:
+    get:
+      summary: 下载房间录播文件
+      description: 代理 recording 服务，流式转发录播文件二进制内容；文件不存在返回 404。
+      operationId: downloadRoomRecording
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - name: fileName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 录播文件二进制内容
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: 文件不存在
+        "502":
+          description: recording 服务不可达
+  /api/b/live/{roomId}/live-stream/audio:
+    get:
+      summary: 代理实时音频流
+      description: 代理 recording 服务的实时音频流，录制中返回 200 并持续输出 flv 封装音频；未在录制返回 404。
+      operationId: proxyLiveAudio
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: 实时音频流（flv 封装）
+          content:
+            video/x-flv:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: 该房间当前未在录制
+        "502":
+          description: recording 服务不可达
 components:
   parameters:
     Mid:
@@ -410,8 +481,8 @@ components:
           format: int64
         type:
           type: string
-          enum: [danmaku, dynamic, guard]
-          description: 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长），必填。
+          enum: [danmaku, dynamic, guard, recording]
+          description: 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长 / recording 录播），必填。
     SubscriptionItem:
       type: object
       properties:
@@ -420,8 +491,8 @@ components:
           format: int64
         type:
           type: string
-          enum: [danmaku, dynamic, guard]
-          description: 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长）
+          enum: [danmaku, dynamic, guard, recording]
+          description: 订阅类型（danmaku 弹幕 / dynamic 动态 / guard 舰长 / recording 录播）
         subscribedAt:
           type: string
           format: date-time
@@ -447,7 +518,7 @@ components:
           format: int64
         type:
           type: string
-          enum: [danmaku, dynamic, guard]
+          enum: [danmaku, dynamic, guard, recording]
         subscribedAt:
           type: string
           format: date-time
@@ -661,3 +732,50 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LiveGuardOnboardItem"
+    RecordingStatusItem:
+      type: object
+      properties:
+        mid:
+          type: integer
+          format: int64
+        roomId:
+          type: integer
+          format: int64
+          nullable: true
+        state:
+          type: string
+          enum: [not_live, recording, error, unknown]
+          description: 录制状态（unknown 表示 recording 服务不可达或尚无状态记录）
+        hostName:
+          type: string
+          nullable: true
+        sessionTitle:
+          type: string
+          nullable: true
+        files:
+          type: array
+          items:
+            type: string
+        error:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        streamer:
+          $ref: "#/components/schemas/BackstageStreamerRef"
+    RecordingStatusList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingStatusItem"
+    RecordingFileList:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            type: string
