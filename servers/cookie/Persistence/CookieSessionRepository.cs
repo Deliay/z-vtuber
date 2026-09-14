@@ -8,9 +8,9 @@ public class CookieSessionRepository : ICookieSessionRepository
 {
     private readonly IMongoCollection<CookieSessionRecord> _collection;
 
-    public CookieSessionRepository(IMongoDatabase database)
+    public CookieSessionRepository(IMongoDatabase database, string collectionName = "bilibili_cookie_sessions")
     {
-        _collection = database.GetCollection<CookieSessionRecord>("bilibili_cookie_sessions");
+        _collection = database.GetCollection<CookieSessionRecord>(collectionName);
     }
 
     public async Task<CookieSessionRecord?> GetByIdAsync(ObjectId id, CancellationToken ct = default)

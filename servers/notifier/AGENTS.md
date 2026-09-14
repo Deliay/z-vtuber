@@ -21,10 +21,11 @@
   - `MilkyApiClient`：基于 `Milky.Net.Client.MilkyClient` 封装实现
   - `MilkyOptions`：配置选项（`Endpoint`、`AccessToken`）
 - `Dispatch/`：通知投递调度
-  - `NotificationDispatchService`：监听直播状态变化，按订阅维度投递通知
+  - `NotificationDispatchService`：消费 `cookie-invalid` 事件，按事件 `platform` 映射 eventType（`bilibili`/空 → `bilibili_cookie_invalid`，`weibo` → `weibo_cookie_invalid`）匹配订阅投递，文案带平台名与账号标识
+- `Events/`：`CookieInvalidEventSubscriber`：订阅 Redis 频道 `cookie-invalid`（单频道，原样转发 dispatch）
 - `Controllers/`：配置管理 API
-  - `NotifyConfigController`：提供群列表查询与订阅 CRUD 接口
-- `Program.cs`：服务启动与 DI 注册
+  - `NotifyConfigController`：提供群列表查询与订阅 CRUD 接口；eventType 仅接受 `bilibili_cookie_invalid`/`weibo_cookie_invalid`
+- `Program.cs`：服务启动与 DI 注册；启动时 `EnsureIndexesAsync` 后调用 `MigrateCookieInvalidEventTypeSplitAsync`（存量 `cookie_invalid` 订阅幂等迁移为 `bilibili_cookie_invalid`）
 
 ## 环境变量
 

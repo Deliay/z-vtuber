@@ -231,6 +231,63 @@ export async function listAvailableCookies(): Promise<cookieComponents['schemas'
   return data.items ?? []
 }
 
+export async function listWeiboCookieAccounts(): Promise<cookieComponents['schemas']['AccountItem'][]> {
+  const data = await request<cookieComponents['schemas']['AccountList']>(
+    '/cookie/weibo/accounts',
+  )
+  return data.items ?? []
+}
+
+export async function createWeiboCookieAccount(): Promise<cookieComponents['schemas']['PendingAccount']> {
+  return request<cookieComponents['schemas']['PendingAccount']>('/cookie/weibo/accounts', {
+    method: 'POST',
+  })
+}
+
+export async function getWeiboCookieAccount(
+  accountId: string,
+): Promise<cookieComponents['schemas']['AccountStatus']> {
+  return request<cookieComponents['schemas']['AccountStatus']>(
+    `/cookie/weibo/accounts/${accountId}`,
+  )
+}
+
+export async function deleteWeiboCookieAccount(accountId: string): Promise<void> {
+  return request<void>(`/cookie/weibo/accounts/${accountId}`, { method: 'DELETE' })
+}
+
+export async function listAvailableWeiboCookies(): Promise<cookieComponents['schemas']['CookieItem'][]> {
+  const data = await request<cookieComponents['schemas']['CookieList']>(
+    '/cookie/weibo/available',
+  )
+  return data.items ?? []
+}
+
+export async function checkoutWeiboCookie(): Promise<cookieComponents['schemas']['CookieCheckout']> {
+  return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/weibo/checkout', {
+    method: 'POST',
+  })
+}
+
+export async function reportInvalidWeiboCookie(
+  cookieId: string,
+): Promise<cookieComponents['schemas']['CookieCheckout']> {
+  return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/weibo/report-invalid', {
+    method: 'POST',
+    body: JSON.stringify({ cookieId }),
+  })
+}
+
+export async function cooldownWeiboCookie(
+  cookieId: string,
+  durationSeconds: number,
+): Promise<void> {
+  return request<void>('/cookie/weibo/cooldown', {
+    method: 'POST',
+    body: JSON.stringify({ cookieId, durationSeconds }),
+  })
+}
+
 export async function checkoutCookie(): Promise<cookieComponents['schemas']['CookieCheckout']> {
   return request<cookieComponents['schemas']['CookieCheckout']>('/cookie/checkout', {
     method: 'POST',

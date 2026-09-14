@@ -195,6 +195,7 @@ public sealed class MockCookiePoolService : ICookiePoolService
     public List<(string Cookie, TimeSpan Duration)> CooldownCalls { get; } = [];
     public List<string> OfflineCalls { get; } = [];
     public Func<string, CookieRecord?>? FindByCookieFunc { get; set; }
+    public Func<string, CookieRecord?>? FindByCookieIdFunc { get; set; }
     public bool MarkOfflineReturns { get; set; } = true;
 
     public Task<IReadOnlyList<CookieRecord>> GetActiveAsync(CancellationToken ct = default)
@@ -234,7 +235,7 @@ public sealed class MockCookiePoolService : ICookiePoolService
         => Task.FromResult(FindByCookieFunc?.Invoke(cookie));
 
     public Task<CookieRecord?> FindByCookieIdAsync(string cookieId, CancellationToken ct = default)
-        => Task.FromResult<CookieRecord?>(null);
+        => Task.FromResult(FindByCookieIdFunc?.Invoke(cookieId));
 
     public Task UpdateAsync(string cookieId, MongoDB.Driver.UpdateDefinition<CookieRecord> update, CancellationToken ct = default)
         => Task.CompletedTask;
@@ -269,6 +270,11 @@ public sealed class FakeCookieServiceClient : ICookieServiceClient
     public List<string> ReportInvalidCalls { get; } = [];
     public List<(string CookieId, TimeSpan Duration)> CooldownCalls { get; } = [];
 
+    public Func<CancellationToken, Task<WeiboCookieCheckoutResult>>? CheckoutWeiboFunc { get; set; }
+    public Func<string, CancellationToken, Task<ReportInvalidResult>>? ReportWeiboInvalidFunc { get; set; }
+    public List<string> ReportWeiboInvalidCalls { get; } = [];
+    public List<(string CookieId, TimeSpan Duration)> CooldownWeiboCalls { get; } = [];
+
     public Task<CookieCheckoutResult> CheckoutAsync(CancellationToken ct = default)
     {
         return CheckoutFunc?.Invoke(ct) ?? Task.FromResult(new CookieCheckoutResult
@@ -289,6 +295,85 @@ public sealed class FakeCookieServiceClient : ICookieServiceClient
         CooldownCalls.Add((cookieId, duration));
         return Task.CompletedTask;
     }
+
+    public Task<WeiboCookieCheckoutResult> CheckoutWeiboAsync(CancellationToken ct = default)
+    {
+        // 默认无可用登录 cookie（Available=false），微博链路回退匿名。
+        return CheckoutWeiboFunc?.Invoke(ct)
+            ?? Task.FromResult(new WeiboCookieCheckoutResult { Available = false });
+    }
+
+    public Task<ReportInvalidResult> ReportWeiboInvalidAsync(string cookieId, CancellationToken ct = default)
+    {
+        ReportWeiboInvalidCalls.Add(cookieId);
+        return ReportWeiboInvalidFunc?.Invoke(cookieId, ct)
+            ?? Task.FromResult(new ReportInvalidResult
+            {
+                Status = ReportInvalidStatus.Refreshed,
+                CookieId = cookieId,
+                Cookie = $"refreshed-{cookieId}",
+            });
+    }
+
+    public Task CooldownWeiboAsync(string cookieId, TimeSpan duration, CancellationToken ct = default)
+    {
+        CooldownWeiboCalls.Add((cookieId, duration));
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class FakeWeiboLoginCookieProvider : IWeiboLoginCookieProvider
+{
+    public WeiboLoginCookie? Cookie { get; set; }
+    public int GetCalls { get; private set; }
+    public Func<string, CancellationToken, Task<ReportInvalidResult>>? ReportInvalidFunc { get; set; }
+    public List<string> ReportInvalidCalls { get; } = [];
+
+    public Task<WeiboLoginCookie?> GetAsync(CancellationToken ct = default)
+    {
+        GetCalls++;
+        return Task.FromResult(Cookie);
+    }
+
+    public async Task<WeiboLoginCookieLease?> AcquireAsync(CancellationToken ct = default)
+    {
+        var cookie = await GetAsync(ct);
+        if (cookie is null)
+        {
+            return null;
+        }
+
+        // 测试用：不经过真实分布式锁，包装为无操作句柄。
+        return new WeiboLoginCookieLease(cookie, new NoopLockHandle($"cookie-call:{cookie.CookieId}"));
+    }
+
+    public Task<ReportInvalidResult> ReportInvalidAsync(string cookieId, CancellationToken ct = default)
+    {
+        ReportInvalidCalls.Add(cookieId);
+        return ReportInvalidFunc?.Invoke(cookieId, ct)
+            ?? Task.FromResult(new ReportInvalidResult
+            {
+                Status = ReportInvalidStatus.Refreshed,
+                CookieId = cookieId,
+                Cookie = $"refreshed-{cookieId}",
+            });
+    }
+}
+
+public sealed class FakeWeiboCookieSource : IWeiboCookieSource
+{
+    public string Cookie { get; set; } = "SUB=a; SUBP=b";
+    public bool IsLoginCookie { get; set; }
+    public string? CookieId { get; set; }
+
+    public Task<WeiboCookieLease> AcquireAsync(CancellationToken ct = default) =>
+        Task.FromResult(new WeiboCookieLease(Cookie, IsLoginCookie, CookieId));
+}
+
+internal sealed class NoopLockHandle(string key) : IDistributedLockHandle
+{
+    public string Key { get; } = key;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
 public sealed class FakeWeiboVisitorCookieProvider : IWeiboVisitorCookieProvider
@@ -311,11 +396,24 @@ public sealed class FakeWeiboApiClient : IWeiboApiClient
 {
     public Func<string?, WeiboTimelinePage>? PageProvider { get; set; }
     public Func<string?, WeiboTimelinePage>? OnRiskProvider { get; set; }
+
+    /// <summary>按调用序号（0-based）响应，用于模拟「首次风控、重试成功」等序列。</summary>
+    public Func<int, string?, WeiboTimelinePage>? SequencedProvider { get; set; }
+
     public List<string?> CalledSinceIds { get; } = [];
+
+    private int _callCount;
 
     public Task<WeiboTimelinePage> GetUserTimelineAsync(long uid, string? sinceId = null, CancellationToken ct = default)
     {
         CalledSinceIds.Add(sinceId);
+        var index = _callCount++;
+
+        if (SequencedProvider is not null)
+        {
+            return Task.FromResult(SequencedProvider(index, sinceId));
+        }
+
         var provider = sinceId is null ? OnRiskProvider : null;
         return Task.FromResult(provider?.Invoke(sinceId)
             ?? PageProvider?.Invoke(sinceId)

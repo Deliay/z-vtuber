@@ -5,6 +5,7 @@ using Z.Vtuber.Common.Services;
 using Z.Vtuber.Crawler.Configuration;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Jobs;
+using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Crawler.Weibo;
 using Z.Vtuber.Common.Locking;
 
@@ -24,11 +25,13 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IClassFixture<Mongo
         WeiboTimelineRepository repository,
         FakeWeiboVisitorCookieProvider cookies,
         CrawlBackoffRegistry? backoff = null,
-        WeiboCrawlerOptions? options = null) => new(
+        WeiboCrawlerOptions? options = null,
+        FakeWeiboLoginCookieProvider? loginCookies = null) => new(
         api,
         subscription,
         repository,
         cookies,
+        loginCookies ?? new FakeWeiboLoginCookieProvider(),
         new CrawlLockProvider(new FakeDistributedLockProvider()),
         backoff ?? new CrawlBackoffRegistry(
             TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5),
@@ -158,6 +161,115 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IClassFixture<Mongo
         await job.RunOnceAsync(CancellationToken.None);
 
         Assert.Equal(1, cookies.RenewCount);
+        Assert.False(backoff.TryAcquire($"weibo:{Uid}", out _));
+    }
+
+    [Fact]
+    public async Task RunOnce_LoginCookieRiskControl_Refreshed_RetriesOnceAndContinues()
+    {
+        var subscription = SubscribeService(fixture.Database);
+        await subscription.SubscribeAsync(Uid);
+        var backoff = new CrawlBackoffRegistry(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5);
+        var cookies = new FakeWeiboVisitorCookieProvider();
+        var loginCookies = new FakeWeiboLoginCookieProvider
+        {
+            Cookie = new WeiboLoginCookie("c1", "SUB=login", null),
+        };
+        var api = new FakeWeiboApiClient
+        {
+            SequencedProvider = (index, _) => index == 0
+                ? throw new WeiboRiskControlException("risk") { IsLoginCookie = true, CookieId = "c1" }
+                : Page("m1"),
+        };
+        var repo = new WeiboTimelineRepository(fixture.Database);
+        var job = CreateJob(api, subscription, repo, cookies, backoff: backoff, loginCookies: loginCookies);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(["c1"], loginCookies.ReportInvalidCalls);
+        Assert.Equal(0, cookies.RenewCount);
+        var (total, _) = await repo.GetPageAsync(Uid, 1, 100);
+        Assert.Equal(1, total);
+        Assert.True(backoff.TryAcquire($"weibo:{Uid}", out _));
+    }
+
+    [Fact]
+    public async Task RunOnce_LoginCookieRiskControl_SessionInvalid_BacksOff()
+    {
+        var subscription = SubscribeService(fixture.Database);
+        await subscription.SubscribeAsync(Uid);
+        var backoff = new CrawlBackoffRegistry(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5);
+        var cookies = new FakeWeiboVisitorCookieProvider();
+        var loginCookies = new FakeWeiboLoginCookieProvider
+        {
+            Cookie = new WeiboLoginCookie("c1", "SUB=login", null),
+            ReportInvalidFunc = (_, _) => Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.SessionInvalid }),
+        };
+        var api = new FakeWeiboApiClient
+        {
+            PageProvider = _ => throw new WeiboRiskControlException("risk") { IsLoginCookie = true, CookieId = "c1" },
+        };
+        var repo = new WeiboTimelineRepository(fixture.Database);
+        var job = CreateJob(api, subscription, repo, cookies, backoff: backoff, loginCookies: loginCookies);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(["c1"], loginCookies.ReportInvalidCalls);
+        Assert.Equal(0, cookies.RenewCount);
+        Assert.Equal(1, api.CalledSinceIds.Count);
+        Assert.False(backoff.TryAcquire($"weibo:{Uid}", out _));
+    }
+
+    [Fact]
+    public async Task RunOnce_LoginCookieRiskControl_RetryStillRisk_ReportsInvalidOnceOnly()
+    {
+        var subscription = SubscribeService(fixture.Database);
+        await subscription.SubscribeAsync(Uid);
+        var backoff = new CrawlBackoffRegistry(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5);
+        var cookies = new FakeWeiboVisitorCookieProvider();
+        var loginCookies = new FakeWeiboLoginCookieProvider
+        {
+            Cookie = new WeiboLoginCookie("c1", "SUB=login", null),
+        };
+        var api = new FakeWeiboApiClient
+        {
+            PageProvider = _ => throw new WeiboRiskControlException("risk") { IsLoginCookie = true, CookieId = "c1" },
+        };
+        var repo = new WeiboTimelineRepository(fixture.Database);
+        var job = CreateJob(api, subscription, repo, cookies, backoff: backoff, loginCookies: loginCookies);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(["c1"], loginCookies.ReportInvalidCalls);
+        Assert.Equal(2, api.CalledSinceIds.Count);
+        Assert.Equal(0, cookies.RenewCount);
+        Assert.False(backoff.TryAcquire($"weibo:{Uid}", out _));
+    }
+
+    [Fact]
+    public async Task RunOnce_LoginCookieRiskControl_RetryDisabled_BacksOffWithoutReporting()
+    {
+        var subscription = SubscribeService(fixture.Database);
+        await subscription.SubscribeAsync(Uid);
+        var backoff = new CrawlBackoffRegistry(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5);
+        var cookies = new FakeWeiboVisitorCookieProvider();
+        var loginCookies = new FakeWeiboLoginCookieProvider
+        {
+            Cookie = new WeiboLoginCookie("c1", "SUB=login", null),
+        };
+        var api = new FakeWeiboApiClient
+        {
+            PageProvider = _ => throw new WeiboRiskControlException("risk") { IsLoginCookie = true, CookieId = "c1" },
+        };
+        var repo = new WeiboTimelineRepository(fixture.Database);
+        var options = new WeiboCrawlerOptions { MaxPagesPerCrawl = 5, LoginCookieRetryOnce = false };
+        var job = CreateJob(api, subscription, repo, cookies, backoff: backoff, options: options, loginCookies: loginCookies);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Empty(loginCookies.ReportInvalidCalls);
+        Assert.Equal(0, cookies.RenewCount);
+        Assert.Equal(1, api.CalledSinceIds.Count);
         Assert.False(backoff.TryAcquire($"weibo:{Uid}", out _));
     }
 

@@ -19,6 +19,8 @@ public sealed class WeiboCrawlerOptionsTests
         Assert.Equal(15, options.BackoffMaxMinutes);
         Assert.Equal(10, options.CooldownMinutes);
         Assert.Equal(5, options.RiskControlCooldownThreshold);
+        Assert.True(options.UseLoginCookie);
+        Assert.True(options.LoginCookieRetryOnce);
         Assert.Contains("iPhone", options.UserAgent);
     }
 }
@@ -106,6 +108,23 @@ public sealed class WeiboRiskControlClassifierTests
     {
         Assert.True(Classifier.IsRiskControl(
             System.Net.HttpStatusCode.Found, "text/html", "<html></html>", "https://passport.weibo.com/signin/login"));
+    }
+
+    [Fact]
+    public void IsRiskControl_True_OnRedirectToLoginSina()
+    {
+        Assert.True(Classifier.IsRiskControl(
+            System.Net.HttpStatusCode.Found, "text/html", "<html></html>", "https://login.sina.com.cn/sso/login.php"));
+    }
+
+    [Fact]
+    public void IsRiskControl_True_OnNonJsonHtml_SuspiciousStatus()
+    {
+        // 预期 JSON 却返回 HTML 且状态码非 2xx（可疑路径）→ 判风控
+        Assert.True(Classifier.IsRiskControl(
+            System.Net.HttpStatusCode.InternalServerError, "text/html", "<html>captcha</html>"));
+        Assert.True(Classifier.IsRiskControl(
+            System.Net.HttpStatusCode.BadGateway, "text/html", "<html>proxy error</html>"));
     }
 
     [Fact]

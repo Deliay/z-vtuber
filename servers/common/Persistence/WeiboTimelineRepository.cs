@@ -64,6 +64,17 @@ public sealed class WeiboTimelineRepository(IMongoDatabase database)
         return (total, items);
     }
 
+    public async Task<string?> GetLatestIdAsync(long uid, CancellationToken ct = default)
+    {
+        return await _collection
+            .Find(t => t.Uid == uid)
+            .SortByDescending(t => t.PubTs)
+            .Limit(1)
+            .ToAsyncEnumerable()
+            .Select(t => t.MblogId)
+            .FirstOrDefaultAsync();
+    }
+
     internal static FilterDefinition<WeiboTimelineRecord> BuildTimeRangeFilter(
         FilterDefinition<WeiboTimelineRecord> baseFilter, DateTime? startedAt, DateTime? endedAt)
     {

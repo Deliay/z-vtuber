@@ -1,8 +1,16 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Common.Services;
+using Z.Vtuber.Cookie.Browser;
+using Z.Vtuber.Cookie.Configuration;
+using Z.Vtuber.Cookie.Controllers;
+using Z.Vtuber.Cookie.Persistence;
 using Z.Vtuber.Cookie.Pool;
 
 namespace Z.Vtuber.Tests;
@@ -103,6 +111,36 @@ public class CookieDispatchTests(MongoDbFixture db) : IClassFixture<MongoDbFixtu
         var items = await service.GetAvailableAsync();
         Assert.Single(items);
         Assert.Equal(active.Id.ToString(), items[0].CookieId);
+    }
+
+    [Fact]
+    public async Task DeleteAccount_OfflinesLinkedCookie_SoItCannotBeCheckedOut()
+    {
+        var cookie = await InsertCookieAsync();
+        var session = new CookieSessionRecord
+        {
+            Status = "active",
+            Cookie = cookie.Cookie,
+            CookieId = cookie.Id.ToString(),
+        };
+        await db.Database.GetCollection<CookieSessionRecord>(MongoCollectionNames.CookieSessions).InsertOneAsync(session);
+
+        var controller = new CookieAccountController(
+            new CookieSessionRepository(db.Database),
+            new FakeBrowserSessionManager(),
+            new CookiePoolService(db.Database),
+            new FakeDistributedLockProvider(),
+            new FakeCookieInvalidEventPublisher(),
+            Options.Create(new CookieServiceOptions()),
+            NullLogger<CookieAccountController>.Instance);
+
+        var deleteResult = await controller.DeleteAccount(session.Id.ToString(), CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(deleteResult);
+        var reloaded = await Collection.Find(c => c.Id == cookie.Id).FirstOrDefaultAsync();
+        Assert.Equal(CookieStatus.Offline, reloaded!.Status);
+
+        await Assert.ThrowsAsync<NoAvailableCookieException>(() => CreateService().CheckoutAsync());
     }
 
     [Fact]

@@ -24,10 +24,10 @@ public sealed class NoAvailableCookieException : InvalidOperationException
     }
 }
 
-public sealed class CookiePoolService(IMongoDatabase database) : ICookiePoolService
+public sealed class CookiePoolService(IMongoDatabase database, string cookiesCollection = MongoCollectionNames.Cookies) : ICookiePoolService
 {
     private readonly IMongoCollection<CookieRecord> _collection =
-        database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
+        database.GetCollection<CookieRecord>(cookiesCollection);
 
     public async Task<CookieRecord> AddAsync(string cookie, string? accountId = null, CancellationToken ct = default)
     {

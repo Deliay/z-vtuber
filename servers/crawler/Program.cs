@@ -59,6 +59,8 @@ builder.Services.AddSingleton<WeiboSubscriptionRepository>();
 builder.Services.AddSingleton<WeiboTimelineRepository>();
 builder.Services.AddSingleton<IWeiboSubscriptionService, WeiboSubscriptionService>();
 builder.Services.AddSingleton<IWeiboVisitorCookieProvider, WeiboVisitorCookieProvider>();
+builder.Services.AddSingleton<IWeiboLoginCookieProvider, WeiboLoginCookieProvider>();
+builder.Services.AddSingleton<IWeiboCookieSource, WeiboCookieSource>();
 builder.Services.AddSingleton<IWeiboApiClient, WeiboApiClient>();
 
 builder.Services.AddSingleton<IAccountInfoCrawler, AccountInfoCrawler>();

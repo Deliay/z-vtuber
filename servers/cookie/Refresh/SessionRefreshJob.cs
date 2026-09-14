@@ -3,21 +3,32 @@ using Microsoft.Extensions.Options;
 using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Services;
 using Z.Vtuber.Cookie.Configuration;
+using Z.Vtuber.Cookie.Platform;
 using Z.Vtuber.Common.Persistence;
-using Z.Vtuber.Cookie.Refresh;
 
 namespace Z.Vtuber.Cookie.Refresh;
 
 public class SessionRefreshJob : BackgroundService
 {
-    private readonly ICookieSessionRepository _sessionRepository;
-    private readonly Z.Vtuber.Cookie.Browser.IBrowserSessionManager _browserSessionManager;
-    private readonly ICookiePoolService _cookiePool;
+    private readonly CookiePlatformRegistry _registry;
     private readonly IDistributedLockProvider _lockProvider;
-    private readonly ICookieInvalidEventPublisher _eventPublisher;
     private readonly CookieServiceOptions _options;
     private readonly ILogger<SessionRefreshJob> _logger;
 
+    /// <summary>DI 构造：覆盖全部平台。</summary>
+    public SessionRefreshJob(
+        CookiePlatformRegistry registry,
+        IDistributedLockProvider lockProvider,
+        IOptions<CookieServiceOptions> options,
+        ILogger<SessionRefreshJob> logger)
+    {
+        _registry = registry;
+        _lockProvider = lockProvider;
+        _options = options.Value;
+        _logger = logger;
+    }
+
+    /// <summary>单平台兼容构造（测试用）。</summary>
     public SessionRefreshJob(
         ICookieSessionRepository sessionRepository,
         Z.Vtuber.Cookie.Browser.IBrowserSessionManager browserSessionManager,
@@ -26,14 +37,19 @@ public class SessionRefreshJob : BackgroundService
         ICookieInvalidEventPublisher eventPublisher,
         IOptions<CookieServiceOptions> options,
         ILogger<SessionRefreshJob> logger)
+        : this(
+            new CookiePlatformRegistry(new CookiePlatformContext
+            {
+                Profile = new BilibiliCookiePlatformProfile(),
+                SessionRepository = sessionRepository,
+                CookiePool = cookiePool,
+                BrowserSessionManager = browserSessionManager,
+                EventPublisher = eventPublisher,
+            }),
+            lockProvider,
+            options,
+            logger)
     {
-        _sessionRepository = sessionRepository;
-        _browserSessionManager = browserSessionManager;
-        _cookiePool = cookiePool;
-        _lockProvider = lockProvider;
-        _eventPublisher = eventPublisher;
-        _options = options.Value;
-        _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -42,17 +58,20 @@ public class SessionRefreshJob : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try
+            foreach (var context in _registry.All)
             {
-                await RefreshActiveSessions(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in SessionRefreshJob loop");
+                try
+                {
+                    await RefreshActiveSessionsForPlatformAsync(context, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in SessionRefreshJob loop for platform {Platform}", context.Platform);
+                }
             }
 
             await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
@@ -61,7 +80,15 @@ public class SessionRefreshJob : BackgroundService
 
     private async Task RefreshActiveSessions(CancellationToken ct)
     {
-        var activeSessions = await _sessionRepository.GetByStatusAsync("active", ct);
+        foreach (var context in _registry.All)
+        {
+            await RefreshActiveSessionsForPlatformAsync(context, ct);
+        }
+    }
+
+    private async Task RefreshActiveSessionsForPlatformAsync(CookiePlatformContext context, CancellationToken ct)
+    {
+        var activeSessions = await context.SessionRepository.GetByStatusAsync("active", ct);
         var refreshThreshold = DateTime.UtcNow.AddMinutes(-_options.RefreshIntervalMinutes);
 
         foreach (var session in activeSessions)
@@ -71,7 +98,7 @@ public class SessionRefreshJob : BackgroundService
                 continue;
             }
 
-            var lockKey = $"lock:cookie-refresh:{session.Id}";
+            var lockKey = $"lock:cookie-refresh:{context.Profile.LockKeyPrefix}{session.Id}";
             var lockTtl = TimeSpan.FromSeconds(_options.RefreshLockTtlSeconds);
             var lockWait = TimeSpan.FromMilliseconds(_options.LockAcquireWaitMs);
 
@@ -84,7 +111,7 @@ public class SessionRefreshJob : BackgroundService
 
             try
             {
-                await RefreshSessionAsync(session, ct);
+                await RefreshSessionForPlatformAsync(context, session, ct);
             }
             catch (Exception ex)
             {
@@ -93,66 +120,66 @@ public class SessionRefreshJob : BackgroundService
         }
     }
 
-    private async Task RefreshSessionAsync(CookieSessionRecord session, CancellationToken ct)
+    // 单平台反射测试兼容入口：作用于首个注册平台。
+    private Task RefreshSessionAsync(CookieSessionRecord session, CancellationToken ct)
+        => RefreshSessionForPlatformAsync(_registry.All[0], session, ct);
+
+    private async Task RefreshSessionForPlatformAsync(CookiePlatformContext context, CookieSessionRecord session, CancellationToken ct)
     {
         try
         {
-            await _browserSessionManager.RefreshSessionAsync(session.Id.ToString(), ct);
-            var newCookie = await _browserSessionManager.ExtractCookiesAsync(session.Id.ToString(), ct);
+            await context.BrowserSessionManager.RefreshSessionAsync(session.Id.ToString(), ct);
+            var newCookie = await context.BrowserSessionManager.ExtractCookiesAsync(session.Id.ToString(), ct);
 
             if (!string.IsNullOrEmpty(session.Cookie) && session.Cookie != newCookie)
             {
-                await _cookiePool.MarkOfflineAsync(session.Cookie, ct);
+                await context.CookiePool.MarkOfflineAsync(session.Cookie, ct);
             }
 
-            var newCookieRecord = await _cookiePool.AddAsync(newCookie, session.Id.ToString(), ct);
+            var newCookieRecord = await context.CookiePool.AddAsync(newCookie, session.Id.ToString(), ct);
 
             session.Cookie = newCookie;
             session.CookieId = newCookieRecord.Id.ToString();
             session.LastRefreshAt = DateTime.UtcNow;
             session.ConsecutiveRefreshFailures = 0;
-            await _sessionRepository.UpdateAsync(session, ct);
+            await context.SessionRepository.UpdateAsync(session, ct);
 
-            _logger.LogDebug("Refreshed session {SessionId} successfully", session.Id);
+            _logger.LogDebug("Refreshed {Platform} session {SessionId} successfully", context.Platform, session.Id);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Refresh failed for session {SessionId}", session.Id);
 
-            await _sessionRepository.IncrementRefreshFailureAsync(session.Id, ct);
-            var updatedSession = await _sessionRepository.GetByIdAsync(session.Id, ct);
+            await context.SessionRepository.IncrementRefreshFailureAsync(session.Id, ct);
+            var updatedSession = await context.SessionRepository.GetByIdAsync(session.Id, ct);
 
             if (updatedSession is not null && updatedSession.ConsecutiveRefreshFailures >= _options.MaxConsecutiveRefreshFailures)
             {
                 _logger.LogWarning("Session {SessionId} exceeded max refresh failures, marking invalid", session.Id);
-                await InvalidateSessionAsync(session, ct);
+                await InvalidateSessionAsync(context, session, ct);
             }
         }
     }
 
-    private async Task InvalidateSessionAsync(CookieSessionRecord session, CancellationToken ct)
+    private async Task InvalidateSessionAsync(CookiePlatformContext context, CookieSessionRecord session, CancellationToken ct)
     {
-        // Mark session as invalid
-        await _sessionRepository.TransitionStatusAsync(session.Id, "active", "invalid", ct);
+        await context.SessionRepository.TransitionStatusAsync(session.Id, "active", "invalid", ct);
 
-        // Mark cookie as offline in common pool
         if (session.Cookie is not null)
         {
-            await _cookiePool.MarkOfflineAsync(session.Cookie, ct);
+            await context.CookiePool.MarkOfflineAsync(session.Cookie, ct);
         }
 
-        // Publish invalid event
         var cookieId = session.CookieId ?? session.Id.ToString();
         try
         {
-            await _eventPublisher.PublishAsync(cookieId, "refresh_nav_missing", ct);
+            await context.EventPublisher.PublishAsync(cookieId, "refresh_nav_missing", ct);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to publish invalid event for session {SessionId}", session.Id);
         }
 
-        // Clean up browser context
-        await _browserSessionManager.DeleteSessionAsync(session.Id.ToString(), ct);
+        await context.BrowserSessionManager.DeleteSessionAsync(session.Id.ToString(), ct);
     }
 }
