@@ -22,25 +22,53 @@ public sealed class RecordingController(
     }
 
     [HttpGet("{roomId:long}/recordings")]
-    public IActionResult ListRecordings(long roomId)
+    public async Task<IActionResult> ListRecordings(long roomId, CancellationToken ct)
     {
         var directory = RoomDirectory(roomId);
         if (!Directory.Exists(directory))
         {
-            return Ok(new { files = Array.Empty<string>() });
+            return Ok(new { files = Array.Empty<object>() });
         }
 
-        var files = Directory.EnumerateFiles(directory, "*.flv")
-            .Select(Path.GetFileName)
-            .Where(name => !string.IsNullOrEmpty(name))
-            .OrderBy(name => name, StringComparer.Ordinal)
+        var recordingFiles = await GetRecordingFilesAsync(roomId, ct);
+        var entries = new List<(string Name, long Size, DateTime CreatedAt)>();
+
+        foreach (var path in Directory.EnumerateFiles(directory, "*.flv"))
+        {
+            var name = Path.GetFileName(path);
+            if (string.IsNullOrEmpty(name) || recordingFiles.Contains(name))
+            {
+                continue;
+            }
+
+            try
+            {
+                var info = new FileInfo(path);
+                var size = info.Length;
+                var createdAt = info.CreationTimeUtc;
+                if (createdAt == default)
+                {
+                    createdAt = info.LastWriteTimeUtc;
+                }
+
+                entries.Add((name, size, createdAt));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 枚举与读取之间文件被清理：跳过该文件，不影响整体响应
+            }
+        }
+
+        var files = entries
+            .OrderBy(e => e.Name, StringComparer.Ordinal)
+            .Select(e => new { name = e.Name, size = e.Size, createdAt = e.CreatedAt })
             .ToArray();
 
         return Ok(new { files });
     }
 
     [HttpGet("{roomId:long}/recordings/{fileName}")]
-    public IActionResult DownloadRecording(long roomId, string fileName)
+    public async Task<IActionResult> DownloadRecording(long roomId, string fileName, CancellationToken ct)
     {
         if (!IsSafeFileName(fileName))
         {
@@ -51,8 +79,18 @@ public sealed class RecordingController(
         var fullPath = Path.GetFullPath(Path.Combine(directory, fileName));
 
         // 解析后必须落在房间存储目录内
-        if (!fullPath.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-            || !System.IO.File.Exists(fullPath))
+        if (!fullPath.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return NotFound();
+        }
+
+        var recordingFiles = await GetRecordingFilesAsync(roomId, ct);
+        if (recordingFiles.Contains(fileName))
+        {
+            return BadRequest(new { error = "file is still recording and cannot be downloaded" });
+        }
+
+        if (!System.IO.File.Exists(fullPath))
         {
             return NotFound();
         }
@@ -97,6 +135,26 @@ public sealed class RecordingController(
     }
 
     private string RoomDirectory(long roomId) => Path.Combine(options.StorageDir, roomId.ToString());
+
+    /// <summary>
+    /// 当前场次「录制中」文件集合：state=recording 且心跳未超阈值时取当前场次产出文件名；否则为空集合。
+    /// 与 recording-status 读侧陈旧退化口径一致。
+    /// </summary>
+    private async Task<HashSet<string>> GetRecordingFilesAsync(long roomId, CancellationToken ct)
+    {
+        var record = await statusRepository.GetByRoomIdAsync(roomId, ct);
+        if (record is null || record.State != "recording")
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        if (DateTime.UtcNow - record.UpdatedAt > TimeSpan.FromSeconds(options.StaleStatusThresholdSeconds))
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        return new HashSet<string>(record.Files, StringComparer.Ordinal);
+    }
 
     internal static bool IsSafeFileName(string fileName)
     {
