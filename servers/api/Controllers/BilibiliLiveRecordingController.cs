@@ -130,10 +130,22 @@ public class BilibiliLiveRecordingController(
         HttpResponseMessage response;
         try
         {
-            response = await client.GetAsync(
-                $"api/{roomId}/recordings/{Uri.EscapeDataString(fileName)}",
-                HttpCompletionOption.ResponseHeadersRead,
-                ct);
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"api/{roomId}/recordings/{Uri.EscapeDataString(fileName)}");
+
+            // 透传 Range/If-Range：是否可满足（206/416）由上游框架按标准判定，本层不解释
+            if (Request.Headers.TryGetValue("Range", out var range) && range.Count > 0)
+            {
+                request.Headers.TryAddWithoutValidation("Range", range.ToArray());
+            }
+
+            if (Request.Headers.TryGetValue("If-Range", out var ifRange) && ifRange.Count > 0)
+            {
+                request.Headers.TryAddWithoutValidation("If-Range", ifRange.ToArray());
+            }
+
+            response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         }
         catch (HttpRequestException)
         {
@@ -161,11 +173,24 @@ public class BilibiliLiveRecordingController(
                 return badRequest;
             }
 
+            if (response.StatusCode == System.Net.HttpStatusCode.RequestedRangeNotSatisfiable)
+            {
+                // 上游 416（区间越界）原样透传 Content-Range，避免被归并为 502
+                Response.StatusCode = StatusCodes.Status416RangeNotSatisfiable;
+                if (response.Content.Headers.ContentRange is not null)
+                {
+                    Response.Headers.ContentRange = response.Content.Headers.ContentRange.ToString();
+                }
+
+                return new EmptyResult();
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
             }
 
+            Response.StatusCode = (int)response.StatusCode;
             Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
             if (response.Content.Headers.ContentDisposition is not null)
             {
@@ -174,6 +199,21 @@ public class BilibiliLiveRecordingController(
             else
             {
                 Response.Headers.ContentDisposition = $"attachment; filename=\"{fileName}\"";
+            }
+
+            if (response.Headers.AcceptRanges.Count > 0)
+            {
+                Response.Headers.AcceptRanges = response.Headers.AcceptRanges.ToString();
+            }
+
+            if (response.Content.Headers.ContentRange is not null)
+            {
+                Response.Headers.ContentRange = response.Content.Headers.ContentRange.ToString();
+            }
+
+            if (response.Content.Headers.ContentLength is not null)
+            {
+                Response.ContentLength = response.Content.Headers.ContentLength;
             }
 
             await response.Content.CopyToAsync(Response.Body, ct);

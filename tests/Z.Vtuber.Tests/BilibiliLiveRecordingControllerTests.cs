@@ -21,12 +21,19 @@ public class BilibiliLiveRecordingControllerTests(MongoDbFixture fixture) : ICla
     {
         public Func<HttpRequestMessage, HttpResponseMessage>? Handler { get; set; }
         public List<string> Requests { get; } = [];
+        public List<string?> RangeHeaders { get; } = [];
+        public List<string?> IfRangeHeaders { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Requests.Add(request.RequestUri!.PathAndQuery);
+            RangeHeaders.Add(GetHeader(request, "Range"));
+            IfRangeHeaders.Add(GetHeader(request, "If-Range"));
             return Task.FromResult(Handler?.Invoke(request) ?? new HttpResponseMessage(HttpStatusCode.OK));
         }
+
+        private static string? GetHeader(HttpRequestMessage request, string name) =>
+            request.Headers.TryGetValues(name, out var values) ? string.Join(",", values) : null;
     }
 
     private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
@@ -231,6 +238,134 @@ public class BilibiliLiveRecordingControllerTests(MongoDbFixture fixture) : ICla
 
         var status = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task DownloadRecording_ForwardsRangeAndIfRangeHeadersToUpstream()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) },
+        };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+        controller.HttpContext.Request.Headers.Range = "bytes=0-99";
+        controller.HttpContext.Request.Headers.IfRange = "\"etag-value\"";
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DownloadRecording(900020, "a.flv", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("bytes=0-99", handler.RangeHeaders[0]);
+        Assert.Equal("\"etag-value\"", handler.IfRangeHeaders[0]);
+    }
+
+    [Fact]
+    public async Task DownloadRecording_WithoutRange_DoesNotForwardRangeHeader()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) },
+        };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DownloadRecording(900021, "a.flv", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Null(handler.RangeHeaders[0]);
+        Assert.Null(handler.IfRangeHeaders[0]);
+    }
+
+    [Fact]
+    public async Task DownloadRecording_Upstream206_PassthroughPartialContent()
+    {
+        var fragment = new byte[] { 1, 2, 3, 4, 5 };
+        var handler = new StubHandler
+        {
+            Handler = _ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                {
+                    Content = new ByteArrayContent(fragment),
+                };
+                response.Headers.AcceptRanges.Add("bytes");
+                response.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                response.Content.Headers.ContentRange = new ContentRangeHeaderValue(0, 4, 200);
+                return response;
+            },
+        };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DownloadRecording(900022, "a.flv", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status206PartialContent, controller.Response.StatusCode);
+        Assert.Equal("bytes 0-4/200", controller.Response.Headers.ContentRange.ToString());
+        Assert.Equal("bytes", controller.Response.Headers.AcceptRanges.ToString());
+        Assert.Equal(fragment.Length, controller.Response.ContentLength);
+        Assert.Equal(fragment, await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task DownloadRecording_Upstream200_PassthroughAcceptRanges()
+    {
+        var payload = new byte[] { 7, 7, 7 };
+        var handler = new StubHandler
+        {
+            Handler = _ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(payload),
+                };
+                response.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                response.Headers.AcceptRanges.Add("bytes");
+                return response;
+            },
+        };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DownloadRecording(900023, "a.flv", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+        Assert.Equal("bytes", controller.Response.Headers.AcceptRanges.ToString());
+        Assert.Equal(payload, await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task DownloadRecording_Upstream416_PassthroughWithout502()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.RequestedRangeNotSatisfiable)
+                {
+                    Content = new ByteArrayContent([]),
+                };
+                response.Content.Headers.ContentRange = new ContentRangeHeaderValue(200);
+                return response;
+            },
+        };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DownloadRecording(900024, "a.flv", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status416RangeNotSatisfiable, controller.Response.StatusCode);
+        Assert.Equal("bytes */200", controller.Response.Headers.ContentRange.ToString());
+    }
+
+    private static async Task<byte[]> ReadBodyAsync(HttpContext context)
+    {
+        context.Response.Body.Position = 0;
+        using var buffer = new MemoryStream();
+        await context.Response.Body.CopyToAsync(buffer);
+        return buffer.ToArray();
     }
 
     [Fact]
