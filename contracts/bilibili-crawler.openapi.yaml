@@ -300,7 +300,7 @@ paths:
   /api/b/live/{roomId}/recordings/{fileName}:
     get:
       summary: 下载房间录播文件
-      description: 代理 recording 服务，流式转发录播文件二进制内容；文件不存在返回 404，文件名非法或文件正在录制中返回 400。
+      description: 代理 recording 服务，流式转发录播文件二进制内容；支持 Range 分段下载（206）与 If-Range 条件请求，越界区间返回 416；文件不存在返回 404，文件名非法或文件正在录制中返回 400。
       operationId: downloadRoomRecording
       parameters:
         - $ref: "#/components/parameters/RoomId"
@@ -309,14 +309,45 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: "#/components/parameters/Range"
+        - $ref: "#/components/parameters/IfRange"
       responses:
         "200":
-          description: 录播文件二进制内容
+          description: 录播文件二进制内容（未携带 Range 或 Range 不被支持时返回完整文件）
+          headers:
+            Accept-Ranges:
+              description: 服务端支持的分段单位，固定为 bytes
+              schema:
+                type: string
+                example: bytes
           content:
             application/octet-stream:
               schema:
                 type: string
                 format: binary
+        "206":
+          description: 单区间分段内容
+          headers:
+            Content-Range:
+              description: 当前返回的字节区间及文件总大小，如 bytes 0-1023/20480
+              schema:
+                type: string
+            Accept-Ranges:
+              description: 服务端支持的分段单位，固定为 bytes
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "416":
+          description: 请求区间越界（起始位置不小于文件大小）
+          headers:
+            Content-Range:
+              description: 未满足的区间及文件总大小，如 bytes */20480
+              schema:
+                type: string
         "400":
           description: fileName 非法或文件正在录制中无法下载
           content:
@@ -366,6 +397,20 @@ components:
       schema:
         type: integer
         format: int64
+    Range:
+      name: Range
+      in: header
+      required: false
+      description: 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整文件
+      schema:
+        type: string
+    IfRange:
+      name: If-Range
+      in: header
+      required: false
+      description: 条件 Range，校验失败（值与当前文件不匹配）时回退为 200 返回完整文件
+      schema:
+        type: string
     Page:
       name: page
       in: query
