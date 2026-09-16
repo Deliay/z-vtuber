@@ -35,6 +35,7 @@ public sealed class RecordingSession(
     RecordingStatusReporter reporter,
     RecordingRepository recordings,
     IRecordingEventPublisher events,
+    IOrphanRecordingFinalizer orphanFinalizer,
     RecordingOptions options,
     ILogger<RecordingSession> logger) : IRecordingSessionRunner
 {
@@ -103,6 +104,10 @@ public sealed class RecordingSession(
         IRecordingLock sessionLock,
         CancellationToken ct)
     {
+        // 新场次接管同房间前，先幂等收尾该房间遗留的未结束场次（上次异常退出/被接管），
+        // 否则孤儿 recordings 永远 EndedAt=null，手动 enqueue 与 file 自动识别均无法建任务。
+        await orphanFinalizer.FinalizeRoomAsync(roomId, ct);
+
         var candidates = await bili.GetStreamCandidatesAsync(cookie, roomId, ct);
         var stream = StreamResolver.Pick(candidates);
         if (stream is null)
@@ -272,8 +277,21 @@ public sealed class RecordingSession(
         }
         else if (ct.IsCancellationRequested)
         {
-            // 优雅停机：落终态，避免重启期间残留 recording 状态（新实例接管后会重新上报 recording）
+            // 优雅停机/取消订阅：落终态，避免重启期间残留 recording 状态（新实例接管后会重新上报 recording）；
+            // 同时幂等收尾本场次（回写 EndedAt + 发布 finished），使旧 recordings 可 enqueue。
             await reporter.ReportNotLiveAsync(roomId);
+            if (recordingId is not null)
+            {
+                try
+                {
+                    await orphanFinalizer.FinalizeAsync(recordingId.Value, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(
+                        ex, "Failed to finalize recording {RecordingId} on shutdown; continuing.", recordingId);
+                }
+            }
         }
         else if (exitCode == 0)
         {

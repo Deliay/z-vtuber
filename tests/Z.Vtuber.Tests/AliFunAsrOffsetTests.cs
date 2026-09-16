@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Z.Vtuber.RecordingTranscript.Consumer.Asr;
 
@@ -18,9 +19,11 @@ public class AliFunAsrOffsetTests
         begin + ",\"end_time\":" + end + ",\"text\":\"" + text + "\",\"sentence_end\":" +
         (sentenceEnd ? "true" : "false") + "}}}}";
 
-    private static AliFunAsrService CreateService(string url, long offset) =>
+    private static AliFunAsrService CreateService(
+        string url, long offset, TimeSpan? idleTimeout = null, ILogger<AliFunAsrService>? logger = null) =>
         new(new Uri(url), "test-key", offset, "qwen-fun-asr-streaming",
-            NullLogger<AliFunAsrService>.Instance);
+            idleTimeout ?? TimeSpan.FromSeconds(5),
+            logger ?? NullLogger<AliFunAsrService>.Instance);
 
     private static async Task<List<StreamingAsrSegment>> CollectAsync(
         IAsyncEnumerable<StreamingAsrSegment> source, CancellationToken ct = default)
@@ -94,6 +97,36 @@ public class AliFunAsrOffsetTests
         var audio = new MemoryStream(new byte[64000]);
 
         await Assert.ThrowsAnyAsync<Exception>(() => CollectAsync(service.TranscribeAsync(audio)));
+    }
+
+    [Fact]
+    public async Task IdleTimeout_ServerNeverSendsTaskFinished_ThrowsTimeout()
+    {
+        await using var server = new FakeFunAsrServer();
+        server.Connection.SilentOnFinish = true;
+        var service = CreateService(server.Url, 0, TimeSpan.FromMilliseconds(400));
+        var audio = new MemoryStream(new byte[100]);
+
+        // 服务端收到 finish-task 后沉默：停滞超时应使任务可失败重试，而非永久悬挂
+        await Assert.ThrowsAnyAsync<TimeoutException>(() => CollectAsync(service.TranscribeAsync(audio)));
+    }
+
+    [Fact]
+    public async Task KeyLifecycleNodes_AreLogged()
+    {
+        await using var server = new FakeFunAsrServer();
+        server.Connection.Results.Add(ResultJson(0, 500, "hello", true));
+        var logger = new ListLogger<AliFunAsrService>();
+        var service = CreateService(server.Url, 0, logger: logger);
+        var audio = new MemoryStream(new byte[100]);
+
+        await CollectAsync(service.TranscribeAsync(audio));
+
+        var messages = string.Join("\n", logger.Entries.Select(e => e.Message));
+        Assert.Contains("run-task sent", messages);
+        Assert.Contains("task-started", messages);
+        Assert.Contains("finish-task sent", messages);
+        Assert.Contains("task-finished", messages);
     }
 
     private sealed class FakeFunAsrServer : IAsyncDisposable
@@ -172,6 +205,9 @@ public class AliFunAsrOffsetTests
 
         public bool AbortAfterFirstBinary { get; set; }
 
+        /// <summary>收到 finish-task 后不回 task-finished 且不关闭连接，用于验证停滞超时。</summary>
+        public bool SilentOnFinish { get; set; }
+
         public async Task AttachAsync(TcpClient client)
         {
             _client = client;
@@ -231,6 +267,12 @@ public class AliFunAsrOffsetTests
                 }
                 else if (action == "finish-task")
                 {
+                    if (SilentOnFinish)
+                    {
+                        // 模拟服务端收到 finish-task 后既不回 task-finished 也不关闭连接（识别卡死）
+                        return;
+                    }
+
                     foreach (var payload in Results)
                     {
                         await SendTextAsync(socket, payload);

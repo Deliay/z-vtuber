@@ -21,6 +21,34 @@ public sealed class RecordingRepository(IMongoDatabase database)
         return _collection.UpdateOneAsync(r => r.Id == id, update, cancellationToken: ct);
     }
 
+    /// <summary>
+    /// 条件回写 EndedAt（仅当当前仍为 null）：返回是否由本次调用完成收尾。
+    /// 用于孤儿场次幂等收尾，保证多实例/重复调用下只发布一次 finished。
+    /// </summary>
+    public async Task<bool> TrySetEndedAtAsync(ObjectId id, DateTime endedAt, CancellationToken ct = default)
+    {
+        var filter = Builders<RecordingRecord>.Filter.And(
+            Builders<RecordingRecord>.Filter.Eq(r => r.Id, id),
+            Builders<RecordingRecord>.Filter.Eq(r => r.EndedAt, null));
+        var update = Builders<RecordingRecord>.Update.Set(r => r.EndedAt, endedAt);
+        var result = await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
+        return result.MatchedCount == 1;
+    }
+
+    /// <summary>查询未收尾（EndedAt 为 null）的场次，可按 RoomId 过滤。</summary>
+    public async Task<IReadOnlyList<RecordingRecord>> ListOpenAsync(long? roomId = null, CancellationToken ct = default)
+    {
+        var filter = Builders<RecordingRecord>.Filter.Eq(r => r.EndedAt, null);
+        if (roomId.HasValue)
+        {
+            filter &= Builders<RecordingRecord>.Filter.Eq(r => r.RoomId, roomId.Value);
+        }
+
+        return await _collection.Find(filter)
+            .SortBy(r => r.StartedAt)
+            .ToListAsync(ct);
+    }
+
     public async Task<RecordingRecord?> GetByIdAsync(ObjectId id, CancellationToken ct = default) =>
         await _collection.Find(r => r.Id == id).FirstOrDefaultAsync(ct);
 

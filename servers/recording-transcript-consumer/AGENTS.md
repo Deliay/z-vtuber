@@ -33,7 +33,7 @@ graph LR
 - `Enqueue/`：`TranscriptEnqueueService`（幂等建任务：同录播+模型唯一索引，File 优先 `[RAW]` 回退首个；开播/结束/对账/手动共用；重复冲突返回既有 taskId）
 - `Reconcile/`：`TranscriptReconciler`（HostedService，`ReconcileIntervalSeconds` 周期 + 启动抖动：开播中漏建补 live、结束后漏建补 file；仅补「启用之后」的场次，唯一索引幂等）
 - `Tasks/`：`TranscriptTaskScanner`（HostedService，周期扫描 PENDING / RUNNING 无锁任务，按 `_id` 升序抢锁接管，受模型 `MaxConcurrency` 门控）、`TranscriptTaskLock`（`RedisTranscriptTaskLockProvider`：key `transcript:task-lock:{taskId}`，SET NX PX + 续期 Lua + token 比对释放 + `CheckOwnershipAsync` fencing）、`TranscriptTaskRunner`（单任务编排：live 探测实时端点 200 接流 / 404 转 file 从 position seek 补尾，逐句 fencing 校验，EOF→DONE、异常→FAILED、finally 释放锁）、`TranscriptSegmentPersister`（顺序写：先 insert segment 再更新 position；`(TaskId, StartTime)` 唯一索引冲突幂等忽略）、`TranscriptSegmentPublisher`（pub `transcript-segment:{taskId}`）
-- `Asr/`：`IStreamingAsrService`（`StreamingAsrSegment(Start, End, Text)` + `IAsyncEnumerable` 抽象）、`AliFunAsrService`（构造传入 offset，websocket 协议 run-task/音频帧/finish-task，仅成句 yield，时间 = 返回时间 + offset）、`FunAsrProtocol`（协议动作常量）
+- `Asr/`：`IStreamingAsrService`（`StreamingAsrSegment(Start, End, Text)` + `IAsyncEnumerable` 抽象）、`AliFunAsrService`（构造传入 offset，websocket 协议 run-task/音频帧/finish-task，仅成句 yield，时间 = 返回时间 + offset；连接/run-task/task-started/finish-task/task-finished/关闭等关键节点 Info 日志、成句进度节流日志；服务端 `AsrIdleTimeoutSeconds` 无消息即抛 TimeoutException 使任务 FAILED 可重试）、`FunAsrProtocol`（协议动作常量）
 - `Audio/`：`FfmpegAudioStream`（`FfmpegAudioArgs` 参数构造、`IAudioProcess`/`IAudioProcessFactory`、`IAudioSource`/`IAudioSourceFactory`；实时/live 与 file 双音源统一 s16le pipe，按 1 秒（32000B）分块、有界缓冲形成背压）
 - `Services/`：`RecordingServiceClient`（`IRecordingServiceClient`：拼实时音频/录播文件 URL、HEAD 探测实时流可用性）
 - `Program.cs`：注册 Mongo/Redis/Options（`ValidateOnStart`）/仓储/服务/HttpClient（`RecordingService:BaseUrl`）/HostedService，启动幂等索引初始化，`/health`
@@ -51,7 +51,7 @@ graph LR
 - `ConnectionStrings:mongo`：MongoDB 连接串
 - `ConnectionStrings:messaging`：Redis 连接串
 - `RecordingService:BaseUrl`（节 `RecordingService`，默认 `http://recording/`）：recording 服务内网地址
-- `TranscriptConsumer` 节（`ValidateOnStart`）：`ScanIntervalSeconds`(10)、`LockTtlSeconds`(30)、`LockRenewIntervalSeconds`(10)、`AudioBufferSeconds`(60)、`ReconcileIntervalSeconds`(300)、`ScanBatchSize`(50)、`FfmpegPath`(ffmpeg)、`AsrEndpoint`(`wss://dashscope.aliyuncs.com/api-ws/v1/inference`)、`AsrModel`(qwen-fun-asr-streaming)
+- `TranscriptConsumer` 节（`ValidateOnStart`）：`ScanIntervalSeconds`(10)、`LockTtlSeconds`(30)、`LockRenewIntervalSeconds`(10)、`AudioBufferSeconds`(60)、`ReconcileIntervalSeconds`(300)、`ScanBatchSize`(50)、`FfmpegPath`(ffmpeg)、`AsrEndpoint`(`wss://dashscope.aliyuncs.com/api-ws/v1/inference`)、`AsrModel`(qwen-fun-asr-streaming)、`AsrIdleTimeoutSeconds`(60，服务端停滞超时→任务 FAILED 可重试)
 - 健康检查端口：本地 launchSettings 8085
 
 ## 部署要点

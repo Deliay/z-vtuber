@@ -31,6 +31,7 @@ builder.Services.AddSingleton<MongoDbInitializer>();
 builder.Services.AddSingleton<AccountBasicInfoRepository>();
 builder.Services.AddSingleton<RecordingStatusRepository>();
 builder.Services.AddSingleton<RecordingRepository>();
+builder.Services.AddSingleton<IOrphanRecordingFinalizer, OrphanRecordingFinalizer>();
 builder.Services.AddSingleton<LiveSessionRepository>();
 builder.Services.AddSingleton<LiveStatusRepository>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
@@ -77,6 +78,18 @@ using (var scope = app.Services.CreateScope())
     {
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
         logger.LogError(ex, "Recording backfill migration failed; continuing startup.");
+    }
+
+    // 启动时幂等收尾上次进程异常退出遗留的孤儿场次（EndedAt=null），恢复 enqueue/自动识别链路
+    try
+    {
+        var orphanFinalizer = scope.ServiceProvider.GetRequiredService<IOrphanRecordingFinalizer>();
+        await orphanFinalizer.FinalizeAllOpenAsync();
+    }
+    catch (Exception ex)
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Orphan recording finalization failed; continuing startup.");
     }
 }
 

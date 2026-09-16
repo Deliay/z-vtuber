@@ -34,8 +34,15 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
         AudioStreamHub audio,
         RecordingOptions options,
         IRecordingEventPublisher? events = null,
-        ILogger<RecordingSession>? logger = null) =>
-        new(
+        ILogger<RecordingSession>? logger = null)
+    {
+        var publisher = events ?? new FakeRecordingEventPublisher();
+        var orphanFinalizer = new OrphanRecordingFinalizer(
+            new RecordingRepository(fixture.Database),
+            publisher,
+            options,
+            NullLogger<OrphanRecordingFinalizer>.Instance);
+        return new(
             locks,
             bili,
             new FakeStreamBitrateProbe(),
@@ -44,9 +51,11 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
             audio,
             new RecordingStatusReporter(new RecordingStatusRepository(fixture.Database)),
             new RecordingRepository(fixture.Database),
-            events ?? new FakeRecordingEventPublisher(),
+            publisher,
+            orphanFinalizer,
             options,
             logger ?? NullLogger<RecordingSession>.Instance);
+    }
 
     private static string NewStorageDir() =>
         Path.Combine(Path.GetTempPath(), "z-vtuber-rec-tests", Guid.NewGuid().ToString("N"));
@@ -252,7 +261,7 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
     }
 
     [Fact]
-    public async Task Shutdown_DoesNotPublishFinished()
+    public async Task Shutdown_FinalizesRecording_AndPublishesFinished()
     {
         var roomId = 700007L;
         var dir = NewStorageDir();
@@ -275,8 +284,12 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
         await cts.CancelAsync();
         await runTask;
 
+        // 停机/取消订阅：旧场次必须回写 EndedAt 并发布 finished（否则孤儿 recordings 永远无法 enqueue）
         Assert.Single(publisher.Started);
-        Assert.Empty(publisher.Finished);
+        var finished = Assert.Single(publisher.Finished);
+        Assert.Equal(roomId, finished.RoomId);
+        var archived = Assert.Single(await Recordings.ListAsync(roomId, 10, null));
+        Assert.NotNull(archived.EndedAt);
     }
 
     [Fact]

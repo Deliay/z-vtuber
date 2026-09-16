@@ -345,7 +345,8 @@ sequenceDiagram
 #### 实现点 1: recordings 归档与开始/结束事件（recording 服务改造）
 
 - `RecordingSession` 开始录制时 insert `recordings`（title/room_id/mid/files，files 为文件名模板渲染结果），随后发布 `recording-started`（携带实时音频内网 URL `/api/{roomId}/stream/audio`）；`RunLockedAsync` 尾部 exitCode==0 分支：回写 `EndedAt` 后发布 `recording-finished`（发布失败均仅记日志，由对账兜底）；
-- 停机/fencingLost 分支不发布（未正常结束或已被接管，接管方新场次各自归档并各自发布 started）。
+- 停机/取消订阅分支就地收尾本场次（回写 `EndedAt` + 发布 `recording-finished`）；`fencingLost` 分支不发布（已被接管，由新持有者收尾）。
+- **孤儿场次收尾**（`OrphanRecordingFinalizer`）：服务启动时收尾全部 `EndedAt=null` 场次、新场次接管同房间前收尾该房间遗留场次；以条件更新（`EndedAt` 仍为 null）保证幂等、只发布一次 finished、不覆盖新持有者。避免服务重启/取消录制后孤儿 recordings 永久无法 enqueue。
 
 #### 实现点 2: 老数据清洗（一次性幂等迁移）
 
@@ -388,7 +389,9 @@ public interface IStreamingAsrService
 - 单任务一条 websocket 连接（文档：<https://platform.qianwenai.com/docs/api-reference/speech-recognition/fun-asr-realtime/websocket-api.md>）；
 - 握手带 API Key（服务端持有，不外泄）；按协议发送 run-task/音频帧/finish-task；
 - 背压：识别慢于喂入时，1 秒缓冲队列有界（上限 60s 音频），满则暂停读 ffmpeg stdout（OS pipe 背压自然生效）。离线任务不丢音频；**实时任务**上背压会传导至 recording 的 `AudioStreamHub`（慢订阅者 DropOldest），表现为识别落后实时、极端情况丢段——以模型并发上限与监控兜底，见 §6.1；
-- 连接中断：抛出异常使任务 FAILED（断点已落库，retry/接管后从句尾续跑重连）。
+- 连接中断：抛出异常使任务 FAILED（断点已落库，retry/接管后从句尾续跑重连）；
+- **可观测性**：连接/run-task/task-started/finish-task/task-finished/关闭等关键节点 Info 日志（含 taskId/offset），成句进度节流（每 N 句）避免刷屏；
+- **停滞超时**：`TranscriptConsumer:AsrIdleTimeoutSeconds`（默认 60s）内未收到任何服务端消息（含等待 task-finished 阶段）即抛 TimeoutException 使任务 FAILED 可重试，避免永久悬挂占住并发额度。
 
 #### 实现点 6: SSE 实时推送
 

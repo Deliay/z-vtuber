@@ -41,6 +41,13 @@ public sealed class TranscriptConsumerOptions
     /// <summary>FunASR 模型名。</summary>
     [Required]
     public string AsrModel { get; set; } = "qwen-fun-asr-streaming";
+
+    /// <summary>
+    /// FunASR websocket 停滞超时（秒）：超过该时长未收到任何服务端消息（含等待 task-finished 阶段）
+    /// 即视为识别卡死，抛异常使任务 FAILED 可重试，避免任务永久悬挂并占住并发额度。
+    /// </summary>
+    [Range(1, 3600)]
+    public int AsrIdleTimeoutSeconds { get; set; } = 60;
 }
 
 public sealed class RecordingServiceOptions
