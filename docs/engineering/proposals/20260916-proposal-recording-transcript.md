@@ -43,7 +43,7 @@ type: Permanent
 ```mermaid
 graph TD
     Web[apps/web] -->|/api| API[servers/api Z.Vtuber]
-    API -->|"代理 /api/recordings/**"| TAPI[recording-transcript-api]
+    API -->|"代理 /api/transcripts/** 与 /api/recordings/**"| TAPI[recording-transcript-api]
     REC[servers/recording] -->|"pub recording-finished"| R[(Redis messaging)]
     REC -->|写 recordings 归档| M[(MongoDB zvtuber)]
     CONS[recording-transcript-consumer] -->|"sub recording-finished"| R
@@ -80,14 +80,16 @@ graph TD
 | `servers/common`（变更） | 新实体/仓储/索引、事件频道常量与 record | `MongoCollectionNames` + `MongoDbInitializer` 登记 |
 | `servers/recording-transcript-consumer`（新） | 事件订阅 enqueue、对账补建、任务扫描执行、ASR 编排 | 任务锁续期/fencing、ffmpeg pipe、断点 offset |
 | `servers/recording-transcript-api`（新） | 任务/segments/enqueue/retry/SSE/设置/模型 API | SSE  replay + 实时订阅 |
-| `servers/api`（变更） | 代理 `/api/recordings/**` 至 transcript-api | named HttpClient 流式转发（同 recording 代理模式） |
+| `servers/api`（变更） | 代理 `/api/transcripts/**` 与 `/api/recordings/**` 至 transcript-api | named HttpClient 流式转发（同 recording 代理模式） |
 | `apps/web`（变更） | Transcripts 导航与两个 Tab | codegen schema、EventSource |
 
 ## 3. API 设计
 
 ### 3.1 transcript-api 服务 API（本地端口 8084，建 `Properties/launchSettings.json`）
 
-契约：`contracts/recording-transcript.openapi.yaml`（新增）。web 侧经 api 服务同路径代理访问（见 §3.3），代理端点追加至 `contracts/bilibili-crawler.openapi.yaml`。
+契约：`contracts/recording-transcript.openapi.yaml`（新增）。web 侧经 api 服务同路径代理访问（见 §3.2），代理端点追加至 `contracts/bilibili-crawler.openapi.yaml`。
+
+路由分组约定：**与 roomId 无关**的转写端点挂在 `/api/transcripts` 下；**与 roomId 相关**的端点挂在 `/api/recordings/{roomId}/transcripts` 下。
 
 #### GET /health
 
@@ -98,45 +100,68 @@ graph TD
 - 录播场次归档列表（供「识别设置」的场次选择器）。Query：`roomId?`、`limit?`(默认 50)、`before?`(分页游标，StartedAt 倒序)。
 - 响应 200：`{ "items": [{ "id", "roomId", "mid", "title", "files": [...], "startedAt", "endedAt" }] }`。
 
-#### POST /api/recordings/transcripts/enqueue
+#### POST /api/transcripts/enqueue
 
-- 手动 enqueue。Body：`{ "recordingId": "...", "modelId": "..." }`。
+- 手动 enqueue（roomId 无关）。Body：`{ "recordingId": "...", "modelId": "..." }`。
 - 200：`{ "taskId", "status": "PENDING" }`；404 录播或模型不存在/模型被禁用；409 同录播+同模型已存在任务（唯一索引冲突，返回已有 taskId）。
 
-#### GET /api/recordings/transcripts/task
+#### GET /api/transcripts/task
 
 - 任务列表。Query：`recordingId?`、`roomId?`、`status?`、`limit?`。默认按创建时间倒序，进行中优先由 `status` 过滤支持。
 - 响应：`{ "items": [{ "id", "recordingId", "roomId", "title", "file", "modelId", "modelName", "type", "source", "status", "position", "error", "createdAt", "updatedAt" }] }`。
 
-#### GET /api/recordings/transcripts/task/{taskId}
+#### GET /api/transcripts/task/{taskId}
 
 - 任务详情 + 全量 segments（按 startTime 升序）：`{ "task": {...}, "segments": [{ "start", "end", "text" }] }`。
 
-#### POST /api/recordings/transcripts/task/{taskId}/retry
+#### POST /api/transcripts/task/{taskId}/retry
 
 - 重试 FAILED 任务：仅 `FAILED` 可重试，将 `status` 置为 `RUNNING`（不持锁，由扫描器按「RUNNING 无锁」规则接管，从 `position` 断点续跑），清空 `error`。200 返回任务；409 状态不允许。
 
-#### GET /api/recordings/transcripts/task/{taskId}/sse
+#### GET /api/transcripts/task/{taskId}/sse
 
 - `text/event-stream`：先 replay 已入库 segments，再订阅 Redis `transcript-segment:{taskId}` 实时推送新 segment；15s 心跳；任务终态（DONE/FAILED）后推送 `done` 事件并关闭。实现参考 `BilibiliLiveController` 的 SSE 模式。
 
-#### GET /api/recordings/transcripts/settings/auto-enqueue
+#### GET /api/transcripts/settings
 
-- 自动识别设置列表：`{ "items": [{ "roomId", "mid", "anchorName", "enabled" }] }`（关联主播资料补名称）。
+- 自动识别设置全量列表（roomId 无关视角，供设置 Tab 展示全部主播开关）：`{ "items": [{ "roomId", "mid", "anchorName", "enabled" }] }`（关联主播资料补名称）。
 
-#### PUT /api/recordings/transcripts/settings/auto-enqueue/{roomId}
+#### POST /api/recordings/{roomId}/transcripts/settings
 
-- Body：`{ "enabled": true }`。upsert。
+- 设置指定主播的自动识别开关（roomId 相关）。Body：`{ "enable": true }`。
+- upsert `transcript_auto_enqueue`；200 返回 `{ "roomId", "enabled" }`。
 
-#### GET /api/recordings/transcripts/models
+#### GET /api/recordings/{roomId}/transcripts
+
+- roomId 视角查询：该主播的录播场次及各场次的 transcript 任务（含当前自动识别开关状态）。响应 200：
+
+```json
+{
+  "roomId": 123,
+  "autoEnqueueEnabled": true,
+  "items": [
+    {
+      "recordingId": "...",
+      "title": "晚间歌回",
+      "startedAt": "...",
+      "endedAt": "...",
+      "tasks": [{ "taskId": "...", "modelId": "...", "modelName": "qwen-fun-asr", "status": "RUNNING", "position": 123000, "source": "auto", "updatedAt": "..." }]
+    }
+  ]
+}
+```
+
+- 供「识别设置」按主播查看某场直播的 transcript_tasks 并对 FAILED 任务重试（重试走 `/api/transcripts/task/{taskId}/retry`）。
+
+#### GET /api/transcripts/models
 
 - 模型列表：`{ "items": [{ "id", "name", "provider", "type", "enabled", "isDefault", "maxConcurrency", "createdAt" }] }`（**不回传 apiKey**）。
 
-#### POST /api/recordings/transcripts/models
+#### POST /api/transcripts/models
 
 - 添加模型。Body：`{ "name", "provider": "ali-fun-asr", "type": "streaming", "apiKey", "enabled", "isDefault", "maxConcurrency" }`。`isDefault=true` 时原子清除其他模型默认位。
 
-#### PUT /api/recordings/transcripts/models/{modelId}
+#### PUT /api/transcripts/models/{modelId}
 
 - 更新启用/禁用、默认位、最大并发、API Key（可选，不传则不改）。被禁用模型进行中的任务继续跑完。
 
@@ -399,15 +424,15 @@ servers/recording-transcript-consumer/（新增 Z.Vtuber.RecordingTranscript.Con
 
 servers/recording-transcript-api/（新增 Z.Vtuber.RecordingTranscript.Api，本地 8084）
 ├── Program.cs
-├── Controllers/RecordingsArchiveController.cs  # GET /api/recordings
-├── Controllers/TranscriptTasksController.cs    # task 列表/详情/retry/sse/enqueue
-├── Controllers/TranscriptSettingsController.cs # auto-enqueue 设置
-├── Controllers/TranscriptModelsController.cs   # 模型 CRUD
+├── Controllers/RecordingsArchiveController.cs  # GET /api/recordings；GET /api/recordings/{roomId}/transcripts；POST .../settings
+├── Controllers/TranscriptTasksController.cs    # /api/transcripts/task 列表/详情/retry/sse 与 enqueue
+├── Controllers/TranscriptSettingsController.cs # GET /api/transcripts/settings（全量列表）
+├── Controllers/TranscriptModelsController.cs   # /api/transcripts/models CRUD
 ├── Sse/TranscriptSegmentStream.cs              # replay + Redis 订阅 + 去重
 └── Dockerfile                                  # 纯 aspnet 模式
 
 servers/api/（变更）
-├── Controllers/RecordingTranscriptProxyController.cs  # /api/recordings/** 代理
+├── Controllers/RecordingTranscriptProxyController.cs  # /api/transcripts/** 与 /api/recordings/** 代理
 └── Program.cs                                          # TranscriptService:BaseUrl named client
 
 apps/web/src/（变更）
