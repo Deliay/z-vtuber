@@ -82,7 +82,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 下载录播文件 */
+        /**
+         * 下载录播文件
+         * @description 下载录播文件二进制内容；支持 HTTP Range 单区间分段下载（返回 206），越界区间返回 416，未携带 Range 时返回完整文件（200）。
+         */
         get: operations["downloadRecording"];
         put?: never;
         post?: never;
@@ -136,6 +139,10 @@ export interface components {
     responses: never;
     parameters: {
         RoomId: number;
+        /** @description 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整文件 */
+        Range: string;
+        /** @description 条件 Range，校验失败（值与当前文件不匹配）时回退为 200 返回完整文件 */
+        IfRange: string;
     };
     requestBodies: never;
     headers: never;
@@ -237,7 +244,12 @@ export interface operations {
     downloadRecording: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整文件 */
+                Range?: components["parameters"]["Range"];
+                /** @description 条件 Range，校验失败（值与当前文件不匹配）时回退为 200 返回完整文件 */
+                "If-Range"?: components["parameters"]["IfRange"];
+            };
             path: {
                 roomId: components["parameters"]["RoomId"];
                 /** @description 录播文件名（仅允许平文件名，禁止路径分隔符与穿越） */
@@ -247,9 +259,25 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 录播文件二进制内容 */
+            /** @description 录播文件二进制内容（未携带 Range 或 Range 不被支持时返回完整文件） */
             200: {
                 headers: {
+                    "Content-Disposition"?: string;
+                    /** @description 服务端支持的分段单位，固定为 bytes */
+                    "Accept-Ranges"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description 单区间分段内容 */
+            206: {
+                headers: {
+                    /** @description 当前返回的字节区间及文件总大小，如 bytes 0-1023/20480 */
+                    "Content-Range"?: string;
+                    /** @description 服务端支持的分段单位，固定为 bytes */
+                    "Accept-Ranges"?: string;
                     "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
@@ -272,6 +300,15 @@ export interface operations {
             /** @description 文件不存在 */
             404: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求区间越界（起始位置不小于文件大小） */
+            416: {
+                headers: {
+                    /** @description 未满足的区间及文件总大小，如 bytes *\/20480 */
+                    "Content-Range"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;

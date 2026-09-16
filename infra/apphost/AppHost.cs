@@ -55,9 +55,30 @@ var recording = builder.AddProject<Projects.Z_Vtuber_Recording>("recording")
         Path.Combine(Path.GetTempPath(), "z-vtuber-recordings"))
     .WithHttpHealthCheck("/health");
 
+var transcriptApi = builder.AddProject<Projects.Z_Vtuber_RecordingTranscript_Api>("recording-transcript-api")
+    .WithReference(mongo)
+    .WaitFor(mongo)
+    .WithReference(messaging)
+    .WaitFor(messaging)
+    .WithHttpHealthCheck("/health");
+
+var transcriptConsumer = builder.AddProject<Projects.Z_Vtuber_RecordingTranscript_Consumer>("recording-transcript-consumer")
+    .WithReference(mongo)
+    .WaitFor(mongo)
+    .WithReference(messaging)
+    .WaitFor(messaging)
+    .WithReference(recording)
+    .WaitFor(recording)
+    .WithEnvironment("RecordingService:BaseUrl", recording.GetEndpoint("http"))
+    .WithHttpHealthCheck("/health");
+
 api.WithReference(recording)
     .WaitFor(recording)
     .WithEnvironment("RecordingService:BaseUrl", recording.GetEndpoint("http"));
+
+api.WithReference(transcriptApi)
+    .WaitFor(transcriptApi)
+    .WithEnvironment("TranscriptService:BaseUrl", transcriptApi.GetEndpoint("http"));
 
 var web = builder.AddViteApp("web", "../../apps/web")
     .WithReference(api)

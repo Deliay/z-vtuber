@@ -139,10 +139,12 @@ public sealed class FakeRecordingProcess : IRecordingProcess
 public sealed class FakeRecordingSessionRunner : IRecordingSessionRunner
 {
     public List<long> StartedRooms { get; } = [];
-    public Func<long, string?, LiveRoomInfo, string, string, CancellationToken, Task>? RunFunc { get; set; }
+    public List<long> StartedMids { get; } = [];
+    public Func<long, long, string?, LiveRoomInfo, string, string, CancellationToken, Task>? RunFunc { get; set; }
 
     public Task RunAsync(
         long roomId,
+        long mid,
         string? anchorName,
         LiveRoomInfo room,
         string cookieId,
@@ -150,7 +152,8 @@ public sealed class FakeRecordingSessionRunner : IRecordingSessionRunner
         CancellationToken ct)
     {
         StartedRooms.Add(roomId);
-        return RunFunc?.Invoke(roomId, anchorName, room, cookieId, cookie, ct) ?? Task.CompletedTask;
+        StartedMids.Add(mid);
+        return RunFunc?.Invoke(roomId, mid, anchorName, room, cookieId, cookie, ct) ?? Task.CompletedTask;
     }
 }
 

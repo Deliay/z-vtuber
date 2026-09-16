@@ -14,7 +14,7 @@ type: Permanent
 
 ### 1.1 背景
 
-依据 PRD「直播录播语音转写」，在既有录播能力（`servers/recording`，ffmpeg 多输出落盘 flv + 实时音频流出口）之上增加语音转写链路：直播场次结构化归档、**开播即自动开始实时识别**（识别源为直播实时音频）、手动对录播文件离线识别、任务队列断点续跑、流式 ASR（qwen-fun-asr-streaming）识别、实时 Segments 推送与页面管理。
+依据 PRD「直播录播语音转写」，在既有录播能力（`servers/recording`，ffmpeg 多输出落盘 flv + 实时音频流出口）之上增加语音转写链路：直播场次结构化归档、**开播即自动开始实时识别**（识别源为直播实时音频）、手动对录播文件离线识别、任务队列断点续跑、流式 ASR（fun-asr-realtime，官方 FunASR realtime）识别、实时 Segments 推送与页面管理。
 
 现状勘察结论（均经读码确认）：
 
@@ -53,7 +53,7 @@ graph TD
     CONS -->|读写 tasks/segments| M
     CONS -->|"实时任务: ffmpeg 拉直播音频流 /api/{roomId}/stream/audio"| REC
     CONS -->|"离线任务: ffmpeg -ss 拉录播文件(内网 URL)"| REC
-    CONS -->|websocket| ASR[阿里云 FunASR<br/>qwen-fun-asr-streaming]
+    CONS -->|websocket| ASR[阿里云 FunASR<br/>fun-asr-realtime]
     TAPI --> M
     TAPI -->|"sub transcript-segment:{taskId}"| R
     Common[servers/common] -.被引用.-> REC
@@ -147,7 +147,7 @@ graph TD
       "title": "晚间歌回",
       "startedAt": "...",
       "endedAt": "...",
-      "tasks": [{ "taskId": "...", "modelId": "...", "modelName": "qwen-fun-asr", "status": "RUNNING", "position": 123000, "source": "auto", "updatedAt": "..." }]
+      "tasks": [{ "taskId": "...", "modelId": "...", "modelName": "fun-asr-realtime", "status": "RUNNING", "position": 123000, "source": "auto", "updatedAt": "..." }]
     }
   ]
 }
@@ -329,7 +329,7 @@ sequenceDiagram
             C->>A: 建连，TranscribeAsync(stream, 初始position)
             loop 每成句(sentence_end=true)
                 A-->>C: yield segment(start+offset, end+offset, text)
-                C->>M: 事务：insert segment + 更新 position=end
+                C->>M: 顺序写：insert segment 后更新 position=end
                 C->>R: pub transcript-segment:{taskId}
             end
             C->>M: 直播音频流 EOF / 文件识别完 → status=DONE；异常 → FAILED
@@ -345,7 +345,8 @@ sequenceDiagram
 #### 实现点 1: recordings 归档与开始/结束事件（recording 服务改造）
 
 - `RecordingSession` 开始录制时 insert `recordings`（title/room_id/mid/files，files 为文件名模板渲染结果），随后发布 `recording-started`（携带实时音频内网 URL `/api/{roomId}/stream/audio`）；`RunLockedAsync` 尾部 exitCode==0 分支：回写 `EndedAt` 后发布 `recording-finished`（发布失败均仅记日志，由对账兜底）；
-- 停机/fencingLost 分支不发布（未正常结束或已被接管，接管方新场次各自归档并各自发布 started）。
+- 停机/取消订阅分支就地收尾本场次（回写 `EndedAt` + 发布 `recording-finished`）；`fencingLost` 分支不发布（已被接管，由新持有者收尾）。
+- **孤儿场次收尾**（`OrphanRecordingFinalizer`）：服务启动时收尾全部 `EndedAt=null` 场次、新场次接管同房间前收尾该房间遗留场次；以条件更新（`EndedAt` 仍为 null）保证幂等、只发布一次 finished、不覆盖新持有者。避免服务重启/取消录制后孤儿 recordings 永久无法 enqueue。
 
 #### 实现点 2: 老数据清洗（一次性幂等迁移）
 
@@ -367,7 +368,8 @@ sequenceDiagram
 
 - **实时任务（mode=live）**：`ffmpeg -hide_banner -loglevel warning -i "{liveAudioUrl}" -vn -ac 1 -ar 16000 -f s16le pipe:1`，输入为 recording 服务的 `GET /api/{roomId}/stream/audio`（flv 音频封装 chunked 流）。ffmpeg 跟随直播速度输出，stdout 按 1 秒缓冲（32000B）喂入 `TranscribeAsync` 的入参 Stream（`System.IO.Pipelines` 桥接）；下播后流 EOF → 任务 DONE；
 - **离线任务（mode=file）**：`ffmpeg ... -ss {position/1000}s -i "{fileUrl}" -vn -ac 1 -ar 16000 -f s16le pipe:1`，输入为录播文件内网 URL（Range 支持使 `-ss` seek 高效）；文件读完 → 任务 DONE；
-- **live 任务的接管/迟到兜底**：实时任务被扫描器接管（或排队到开播后才执行）时先探测实时音频端点——200 则接流继续识别（**中断窗口的直播内容不回溯**，position 语义退化为「已识别时长坐标」，新句时间以接管时刻的录制时长为 offset 起点，由 recording 状态/归档 `StartedAt` 推算）；404（直播已结束）则按 file 模式从 `position` seek 录播文件补齐剩余部分后 DONE，保证整场覆盖；
+- **live 任务音源选择（关键）**：**仅从未产出任何片段（Position==0）的 live 任务允许接实时流**（首发/开播初；新句时间以录制时长为 offset 起点，由归档 `StartedAt` 推算，中断窗口不回溯）。**已有进度（Position>0）的任务一律不再接实时流**——否则 Position→现在 之间的直播音频会永久丢失；此时须等该场次结束/文件就绪后按 file 模式从 `position` seek 补尾。若文件尚未就绪（`recording.Files` 为空或场次未结束），任务置回 PENDING 等待重试（既不 DONE 也不 FAILED，扫描器下一轮重试），**绝不携空文件名发起请求**；
+- **识别文件运行时解析**：开播事件建任务时 `recording.Files` 尚为空（task.File=""），结束事件对既有任务幂等返回不会回填；因此转 file 模式时以**运行时最新 `recording.Files` 重新选取**（优先 `[RAW]`），并把结果回写任务 File 便于观测；
 - `IStreamingAsrService` 抽象（consumer 内 `Asr/`）：
 
 ```csharp
@@ -380,19 +382,22 @@ public interface IStreamingAsrService
 ```
 
 - `AliFunAsrService`：构造传入**初始 position（offset）**；websocket 逐帧发送音频，仅在 `sentence_end=true` 时把该句 yield 出去，时间 = 返回时间 + offset；
-- 每个 yield 立刻在一个 **Mongo 事务**中：insert segment + 更新 task.Position=segment.End——保证「片段入库」与「断点推进」原子一致；`(TaskId, StartTime)` 唯一索引兜底幂等；
-- 事务要求 Mongo replica set，见 §9 部署变更。
+- 每个 yield 立即**顺序写**：先 insert segment，再更新 task.Position=segment.End（非事务）；`(TaskId, StartTime)` 唯一索引保证重复写入冲突可识别忽略，配合幂等重跑达到最终一致（内部系统可接受）；
+- 不依赖 Mongo 事务，无 replica set 前置要求（见 §9 部署方案）。
 
 #### 实现点 5: AliFunAsrService（FunASR realtime websocket）
 
 - 单任务一条 websocket 连接（文档：<https://platform.qianwenai.com/docs/api-reference/speech-recognition/fun-asr-realtime/websocket-api.md>）；
-- 握手带 API Key（服务端持有，不外泄）；按协议发送 run-task/音频帧/finish-task；
+- 握手带 API Key（服务端持有，不外泄）；按协议发送 run-task/音频帧/finish-task；模型默认 `fun-asr-realtime`；
+- **事件字段**：客户端→服务端**指令**用 `header.action`（run-task/finish-task）；服务端→客户端**事件**用 `header.event`（task-started/result-generated/task-finished/task-failed），与官方示例一致；`task-failed` 解析 `header.error_code`/`error_message` 入日志；连接关闭记录 `CloseStatus`/`CloseStatusDescription`；
 - 背压：识别慢于喂入时，1 秒缓冲队列有界（上限 60s 音频），满则暂停读 ffmpeg stdout（OS pipe 背压自然生效）。离线任务不丢音频；**实时任务**上背压会传导至 recording 的 `AudioStreamHub`（慢订阅者 DropOldest），表现为识别落后实时、极端情况丢段——以模型并发上限与监控兜底，见 §6.1；
-- 连接中断：抛出异常使任务 FAILED（断点已落库，retry/接管后从句尾续跑重连）。
+- 连接中断：抛出异常使任务 FAILED（断点已落库，retry/接管后从句尾续跑重连）；
+- **可观测性**：连接/run-task/task-started/finish-task/task-finished/关闭等关键节点 Info 日志（含 taskId/offset），成句进度节流（每 N 句）避免刷屏；
+- **停滞超时**：`TranscriptConsumer:AsrIdleTimeoutSeconds`（默认 45s，官方说明连接空闲 60s 服务端会断开）内未收到任何服务端消息（含等待 task-finished 阶段）即抛 TimeoutException 使任务 FAILED 可重试，避免永久悬挂占住并发额度。
 
 #### 实现点 6: SSE 实时推送
 
-- transcript-api 端点：先查库 replay 全量 segments，再订阅 `transcript-segment:{taskId}` 转发；去重以 `(start)` 为键（replay 与实时可能交叠）；终态推 `done` 关闭；
+- transcript-api 端点：先订阅 `transcript-segment:{taskId}` 转发，再查库 replay 全量 segments；去重以 `(start)` 为键（replay 与实时可能交叠）；订阅先行使「订阅之后发布」的事件全部入队，replay 覆盖订阅前已落库数据，二者合并不丢不重；终态在排空已入队事件后推 `done` 关闭；
 - web 用原生 `EventSource`（项目首个前端 SSE 用法），断开自动重连由 EventSource 自带，重连后 replay 保证不丢。
 
 #### 实现点 7: 对账补建（事件 fire-and-forget 的可靠性兜底）
@@ -414,7 +419,7 @@ public interface IStreamingAsrService
 | 事件可靠性 | 仅 pub/sub | pub/sub + 对账补建 | B | 既有 pub/sub 全为 fire-and-forget，对账以唯一索引幂等兜底不丢场次 |
 | 任务锁 | 复用 common `IDistributedLockProvider` | 仿 `RecordingLock` 自实现 | B | 需要续期+fencing，common 契约无此语义；同 recording 决策 |
 | 音频获取 | consumer 挂载录播卷直读文件 | 经 recording 内网 HTTP（实时流 + 文件 URL） | B | 实时音频已有 `/stream/audio` 出口零改动复用；无需共享卷；ffmpeg 支持 http+Range Seek |
-| 断点一致性 | 顺序写两次 | Mongo 事务 + 唯一索引兜底 | B | 需求明确事务；单写者由锁保证，唯一索引兜幂等 |
+| 断点一致性 | 顺序写两次 | 顺序写 + 唯一索引幂等 | A | 下游决策：非事务顺序写（先 insert segment 再推进 position），`(TaskId, StartTime)` 唯一索引 + 幂等重跑达到最终一致；内部系统无需为事务切换 Mongo 部署 |
 | 模型配置 | 配置文件/appsettings | Mongo `transcript_models` + 页面管理 | B | 需求要求页面增删改、设默认、并发上限 |
 | web 实时更新 | 轮询 | SSE (EventSource) | B | 需求明确 SSE 端点；服务端有先例 |
 | web 访问路径 | nginx 新增 location 直连 | api 服务代理（同 recording） | B | 沿用 recording 先例，web 只认 `/api`，零 nginx 改动 |
@@ -424,8 +429,7 @@ public interface IStreamingAsrService
 | 类型 | 内容 | 说明 |
 |------|------|------|
 | 依赖 | 部署镜像含 ffmpeg（consumer） | 与 recording 镜像同安装方式 |
-| 依赖 | 阿里云 FunASR API Key 与外网访问 | qwen-fun-asr-streaming websocket |
-| 依赖 | MongoDB replica set | 事务前置条件，见 §9 |
+| 依赖 | 阿里云 FunASR API Key 与外网访问 | fun-asr-realtime websocket |
 | 约束 | 同录播+同模型唯一任务（唯一索引硬约束） | enqueue 409 幂等 |
 | 约束 | .NET 10、契约式开发、TDD、覆盖率 ≥80% | 项目既有规范 |
 
@@ -494,7 +498,7 @@ tests/Z.Vtuber.Tests/（新增）
 ├── RecordingStartedSubscriberTests.cs          # 开播事件→live 任务/未启用不建/幂等
 ├── AliFunAsrOffsetTests.cs                     # offset 相加/sentence_end 过滤（假 websocket）
 ├── FfmpegAudioStreamTests.cs                   # lavfi 源 seek/pcm 格式/实时流跟随
-├── TranscriptTaskRunnerTests.cs                # 断点续跑/事务一致/终态流转/live 接管补尾（404→file 模式）
+├── TranscriptTaskRunnerTests.cs                # 断点续跑/唯一索引幂等/终态流转/live 接管补尾（404→file 模式）
 ├── TranscriptReconcilerTests.cs                # 开播中漏建/结束后漏建/历史不补/幂等
 ├── RecordingBackfillMigrationTests.cs          # 文件名↔场次匹配/幂等
 └── TranscriptApiTests.cs                       # 端点/SSE/retry 409
@@ -509,7 +513,7 @@ tests/Z.Vtuber.Tests/（新增）
 ### 8.2 测试类型
 
 - **单元测试**：segment offset 计算；sentence_end 过滤；任务扫描查询构造；retry 状态机；文件名↔场次匹配纯函数；live 接管时 offset 起点推算；
-- **集成测试（Testcontainers MongoDB + Redis）**：enqueue 唯一约束与 409；锁互斥/续期/TTL 接管；断点续跑（预置 position 与 segments，断言不重不漏）；segment+position 事务原子性；开播/结束事件消费建任务；对账补建幂等；SSE replay+实时；
+- **集成测试（Testcontainers MongoDB + Redis）**：enqueue 唯一约束与 409；锁互斥/续期/TTL 接管；断点续跑（预置 position 与 segments，断言不重不漏）；segment 重跑/并发重复写入的唯一索引幂等（position 不回退）；开播/结束事件消费建任务；对账补建幂等；SSE replay+实时；
 - **ffmpeg 进程测试**：lavfi 生成测试音频，断言 `-ss` seek 后输出起点与 pcm 参数；以本地 chunked HTTP 流模拟 `/stream/audio`，断言实时跟随与 EOF 收尾；
 - **ASR 契约测试**：以本地假 websocket server 模拟 FunASR 协议（run-task/句子结果/finish），断言 yield 时机与 offset；
 - **web**：Vitest + RTL 覆盖两个 Tab 渲染、FAILED 重试交互、EventSource mock 的实时追加。
@@ -517,7 +521,7 @@ tests/Z.Vtuber.Tests/（新增）
 ## 9. 部署方案
 
 - AppHost 增加两服务：`WithReference(mongo/messaging)`、consumer 增 `RecordingService:BaseUrl`、api 增 `TranscriptService:BaseUrl`、健康检查 `/health`；
-- **MongoDB 调整为单节点 replica set**（事务前置）：AppHost mongo 资源加 `--replSet rs0` 初始化；Testcontainers `MongoDbFixture` 同步改 replica set 模式；连接串对客户端透明（`directConnection=true`）；
+- MongoDB 保持 standalone（非事务顺序写 + 唯一索引幂等，无需 replica set）；AppHost mongo 资源与测试 `MongoDbFixture` 均维持现状；
 - Dockerfile：transcript-api 照 api 纯净模式；consumer 照 recording 模式（装 ffmpeg）；各加镜像 CI workflow；
 - 副本数：consumer 可多副本（锁保证单任务单节点）；transcript-api 无状态多副本；
 - 配置：`TranscriptConsumer:ScanIntervalSeconds`(10)、`TranscriptConsumer:LockTtlSeconds`(30)、`TranscriptConsumer:AudioBufferSeconds`(60)、`TranscriptConsumer:ReconcileIntervalSeconds`(300)、`RecordingService:BaseUrl`、`TranscriptService:BaseUrl`。
@@ -531,7 +535,7 @@ tests/Z.Vtuber.Tests/（新增）
 - [ ] consumer 宕机期间的开播/结束经对账补建；live 任务接管时直播已结束则从断点补尾至 DONE
 - [ ] 手动 enqueue 幂等（同录播同模型 409）；retry 后从断点续跑
 - [ ] 多副本下同一任务仅一个节点执行；杀进程后任务被接管续跑，segments 不重复
-- [ ] segment 与 position 事务一致；SSE 实时可见且不丢不重
+- [ ] segment 顺序落库且 `(TaskId, StartTime)` 唯一索引保证重跑幂等、position 不回退；SSE 实时可见且不丢不重
 - [ ] 模型页面管理（增/禁/默认/并发）生效，API Key 不回传
 - [ ] 单测 + 集成测试通过，核心覆盖率 ≥ 80%
 

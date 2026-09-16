@@ -7,6 +7,8 @@
     <Project Path="notifier/Z.Vtuber.Notifier.csproj" />
     <Project Path="cookie/Z.Vtuber.Cookie.csproj" />
     <Project Path="recording/Z.Vtuber.Recording.csproj" />
+    <Project Path="recording-transcript-api/Z.Vtuber.RecordingTranscript.Api.csproj" />
+    <Project Path="recording-transcript-consumer/Z.Vtuber.RecordingTranscript.Consumer.csproj" />
   </Folder>
 
   <Folder Name="/tests/">

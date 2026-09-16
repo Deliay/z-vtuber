@@ -1,0 +1,284 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { TaskListTab } from './TaskListTab'
+import * as client from '../../api/client'
+
+class MockEventSource {
+  static instances: MockEventSource[] = []
+  url: string
+  closed = false
+  private listeners: Record<string, Array<(event: { data?: string }) => void>> = {}
+
+  constructor(url: string) {
+    this.url = url
+    MockEventSource.instances.push(this)
+  }
+
+  addEventListener(type: string, listener: (event: { data?: string }) => void) {
+    this.listeners[type] = this.listeners[type] ?? []
+    this.listeners[type].push(listener)
+  }
+
+  removeEventListener(type: string, listener: (event: { data?: string }) => void) {
+    this.listeners[type] = (this.listeners[type] ?? []).filter((item) => item !== listener)
+  }
+
+  close() {
+    this.closed = true
+  }
+
+  emit(type: string, payload?: unknown) {
+    for (const listener of this.listeners[type] ?? []) {
+      listener({ data: payload === undefined ? undefined : JSON.stringify(payload) })
+    }
+  }
+}
+
+vi.mock('../../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/client')>()
+  return {
+    ...actual,
+    listTranscriptTasks: vi.fn(),
+    getTranscriptTask: vi.fn(),
+    listTranscriptRecordings: vi.fn(),
+    listTranscriptModels: vi.fn(),
+    getRoomTranscripts: vi.fn(),
+    enqueueTranscript: vi.fn(),
+    retryTranscriptTask: vi.fn(),
+  }
+})
+
+const mockListTasks = vi.mocked(client.listTranscriptTasks)
+const mockGetTask = vi.mocked(client.getTranscriptTask)
+const mockListRecordings = vi.mocked(client.listTranscriptRecordings)
+const mockListModels = vi.mocked(client.listTranscriptModels)
+const mockGetRoomTranscripts = vi.mocked(client.getRoomTranscripts)
+const mockEnqueue = vi.mocked(client.enqueueTranscript)
+const mockRetry = vi.mocked(client.retryTranscriptTask)
+
+describe('TaskListTab', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    MockEventSource.instances = []
+    vi.stubGlobal('EventSource', MockEventSource)
+    mockListTasks.mockResolvedValue([])
+    mockGetTask.mockResolvedValue({ task: {}, segments: [] })
+    mockListRecordings.mockResolvedValue([
+      { id: 'r1', roomId: 101, mid: 1, title: '晚间歌回', files: [], startedAt: '2026-09-16T12:00:00Z' },
+    ])
+    mockListModels.mockResolvedValue([
+      {
+        id: 'm1',
+        name: '默认模型',
+        provider: 'ali-fun-asr',
+        type: 'streaming',
+        enabled: true,
+        isDefault: true,
+        maxConcurrency: 1,
+      },
+    ])
+    mockGetRoomTranscripts.mockResolvedValue({
+      roomId: 101,
+      autoEnqueueEnabled: true,
+      items: [
+        {
+          recordingId: 'r1',
+          title: '晚间歌回',
+          startedAt: '2026-09-16T12:00:00Z',
+          endedAt: null,
+          tasks: [
+            {
+              taskId: 't1',
+              modelId: 'm1',
+              modelName: '默认模型',
+              status: 'FAILED',
+              position: 0,
+              source: 'manual',
+              updatedAt: '2026-09-16T13:00:00Z',
+            },
+          ],
+        },
+      ],
+    })
+    mockEnqueue.mockResolvedValue({ taskId: 't2', status: 'PENDING' })
+    mockRetry.mockResolvedValue({ id: 't1', status: 'RUNNING' })
+  })
+
+  it('should render task list with in-progress tasks first', async () => {
+    mockListTasks.mockResolvedValue([
+      { id: 'a', status: 'DONE', title: '已完成场次', modelName: '模型A', position: 100, createdAt: '2026-09-01T00:00:00Z' },
+      { id: 'b', status: 'RUNNING', title: '识别中场次', modelName: '模型B', position: 200, createdAt: '2026-09-02T00:00:00Z' },
+      { id: 'c', status: 'PENDING', title: '等待中场次', modelName: '模型C', position: 0, createdAt: '2026-09-03T00:00:00Z' },
+      { id: 'd', status: 'FAILED', title: '失败场次', modelName: '模型D', position: 0, createdAt: '2026-09-04T00:00:00Z' },
+    ])
+
+    render(<TaskListTab />)
+
+    await waitFor(() => {
+      expect(screen.getByText('识别中场次')).toBeInTheDocument()
+    })
+
+    const rows = screen.getAllByRole('row')
+    expect(rows[1]).toHaveTextContent('识别中')
+    expect(rows[2]).toHaveTextContent('等待中')
+    expect(screen.getByText('模型B')).toBeInTheDocument()
+  })
+
+  it('should append live segments, dedupe and refill on reconnect replay', async () => {
+    mockListTasks.mockResolvedValue([
+      { id: 't1', status: 'RUNNING', title: '场次1', modelName: '默认模型', position: 1000, createdAt: '2026-09-02T00:00:00Z' },
+    ])
+    mockGetTask.mockResolvedValue({
+      task: { id: 't1' },
+      segments: [
+        { start: 0, end: 1000, text: '第一句' },
+        { start: 1000, end: 2000, text: '第二句' },
+      ],
+    })
+
+    render(<TaskListTab />)
+
+    fireEvent.click(await screen.findByText('查看'))
+
+    await waitFor(() => {
+      expect(screen.getByText('第一句')).toBeInTheDocument()
+    })
+
+    expect(MockEventSource.instances).toHaveLength(1)
+    const source = MockEventSource.instances[0]
+    expect(source.url).toBe('/api/transcripts/task/t1/sse')
+
+    source.emit('message', { start: 2000, end: 3000, text: '第三句' })
+    await waitFor(() => {
+      expect(screen.getByText('第三句')).toBeInTheDocument()
+    })
+
+    source.emit('message', { start: 0, end: 1000, text: '第一句' })
+    source.emit('message', { start: 1000, end: 2000, text: '第二句' })
+    source.emit('message', { start: 2000, end: 3000, text: '第三句' })
+    source.emit('message', { start: 3000, end: 4000, text: '第四句' })
+
+    await waitFor(() => {
+      expect(screen.getByText('第四句')).toBeInTheDocument()
+    })
+
+    expect(screen.getAllByText('第一句')).toHaveLength(1)
+    expect(screen.getAllByRole('listitem')).toHaveLength(4)
+  })
+
+  it('should re-fetch the selected task when the refresh button is clicked', async () => {
+    mockListTasks.mockResolvedValue([
+      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },
+    ])
+    mockGetTask.mockResolvedValue({
+      task: { id: 't1' },
+      segments: [{ start: 0, end: 1000, text: '第一句' }],
+    })
+
+    render(<TaskListTab />)
+
+    fireEvent.click(await screen.findByText('查看'))
+
+    await waitFor(() => {
+      expect(mockGetTask).toHaveBeenCalledTimes(1)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新任务-t1' }))
+
+    await waitFor(() => {
+      expect(mockGetTask).toHaveBeenCalledTimes(2)
+    })
+    expect(mockGetTask).toHaveBeenLastCalledWith('t1')
+  })
+
+  it('should close the EventSource on unmount', async () => {
+    mockListTasks.mockResolvedValue([
+      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },
+    ])
+    mockGetTask.mockResolvedValue({ task: { id: 't1' }, segments: [] })
+
+    const { unmount } = render(<TaskListTab />)
+
+    fireEvent.click(await screen.findByText('查看'))
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1)
+    })
+
+    const source = MockEventSource.instances[0]
+    unmount()
+
+    expect(source.closed).toBe(true)
+  })
+
+  it('should render empty state when there are no tasks', async () => {
+    mockListTasks.mockResolvedValue([])
+
+    render(<TaskListTab />)
+
+    await waitFor(() => {
+      expect(screen.getByText('暂无转写任务')).toBeInTheDocument()
+    })
+  })
+
+  it('should enqueue a manual task and refresh the task list', async () => {
+    mockListTasks
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        { id: 't2', status: 'PENDING', title: '新任务', modelName: '默认模型', createdAt: '2026-09-16T00:00:00Z' },
+      ])
+
+    render(<TaskListTab />)
+
+    await screen.findByText('暂无转写任务')
+
+    fireEvent.change(screen.getByLabelText('录播场次'), { target: { value: 'r1' } })
+    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(screen.getByText('发起识别'))
+
+    await waitFor(() => {
+      expect(mockEnqueue).toHaveBeenCalledWith('r1', 'm1')
+    })
+    expect(await screen.findByText('新任务')).toBeInTheDocument()
+    expect(mockListTasks).toHaveBeenCalledTimes(2)
+  })
+
+  it('should show the existing task id when a manual enqueue returns 409', async () => {
+    mockEnqueue.mockRejectedValue(
+      Object.assign(new Error('conflict'), {
+        status: 409,
+        serverMessage: JSON.stringify({ taskId: 't-existing', status: 'PENDING' }),
+      }),
+    )
+
+    render(<TaskListTab />)
+
+    await screen.findByText('发起识别')
+
+    fireEvent.change(screen.getByLabelText('录播场次'), { target: { value: 'r1' } })
+    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(screen.getByText('发起识别'))
+
+    expect(await screen.findByText('已有任务 t-existing')).toBeInTheDocument()
+    expect(screen.queryByText('发起识别失败')).not.toBeInTheDocument()
+  })
+
+  it('should query a room transcripts and retry a FAILED task', async () => {
+    render(<TaskListTab />)
+
+    await screen.findByText('查询')
+
+    fireEvent.change(screen.getByLabelText('主播'), { target: { value: '101' } })
+    fireEvent.click(screen.getByText('查询'))
+
+    await waitFor(() => {
+      expect(mockGetRoomTranscripts).toHaveBeenCalledWith(101)
+    })
+
+    const retryButton = await screen.findByText('重试')
+    fireEvent.click(retryButton)
+
+    await waitFor(() => {
+      expect(mockRetry).toHaveBeenCalledWith('t1')
+    })
+  })
+})
