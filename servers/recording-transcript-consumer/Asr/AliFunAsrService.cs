@@ -156,12 +156,17 @@ public sealed class AliFunAsrService : IStreamingAsrService
                     result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), idleCts.Token);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        // 未收到 task-finished 的关闭属于异常终止，不得当作识别完成
+                        // 未收到 task-finished 的关闭属于异常终止，不得当作识别完成；带上 CloseStatus 便于排查
                         _logger.LogWarning(
-                            "FunASR connection closed: taskId={TaskId} finishedNormally={Finished}", taskId, finishedNormally);
+                            "FunASR connection closed: taskId={TaskId} finishedNormally={Finished} closeStatus={CloseStatus} closeStatusDescription={CloseStatusDescription}",
+                            taskId,
+                            finishedNormally,
+                            result.CloseStatus,
+                            result.CloseStatusDescription);
                         writer.TryComplete(finishedNormally
                             ? null
-                            : new IOException("FunASR connection closed before task-finished"));
+                            : new IOException(
+                                $"FunASR connection closed before task-finished (closeStatus={result.CloseStatus}, description={result.CloseStatusDescription})"));
                         return;
                     }
 
@@ -178,18 +183,19 @@ public sealed class AliFunAsrService : IStreamingAsrService
                 }
 
                 var json = Encoding.UTF8.GetString(message.ToArray());
-                if (!FunAsrProtocol.TryParseAction(json, out var action))
+                // 服务端事件使用 header.event（官方协议）
+                if (!FunAsrProtocol.TryParseEvent(json, out var @event))
                 {
                     continue;
                 }
 
-                switch (action)
+                switch (@event)
                 {
-                    case FunAsrProtocol.ActionTaskStarted:
+                    case FunAsrProtocol.EventTaskStarted:
                         _logger.LogInformation("FunASR task-started: taskId={TaskId}", taskId);
                         started.TrySetResult();
                         break;
-                    case FunAsrProtocol.ActionResultGenerated:
+                    case FunAsrProtocol.EventResultGenerated:
                         if (FunAsrProtocol.TryParseSentence(json, _offset, out var segment) && segment is not null)
                         {
                             _logger.LogDebug(
@@ -198,16 +204,19 @@ public sealed class AliFunAsrService : IStreamingAsrService
                         }
 
                         break;
-                    case FunAsrProtocol.ActionTaskFinished:
+                    case FunAsrProtocol.EventTaskFinished:
                         finishedNormally = true;
                         _logger.LogInformation("FunASR task-finished: taskId={TaskId}", taskId);
                         writer.TryComplete();
                         return;
-                    case FunAsrProtocol.ActionTaskFailed:
+                    case FunAsrProtocol.EventTaskFailed:
                         var error = FunAsrProtocol.ParseErrorMessage(json);
                         _logger.LogWarning("FunASR task-failed: taskId={TaskId} error={Error}", taskId, error);
                         writer.TryComplete(new InvalidOperationException(error));
                         return;
+                    default:
+                        _logger.LogDebug("FunASR unknown event ignored: taskId={TaskId} event={Event}", taskId, @event);
+                        break;
                 }
             }
 

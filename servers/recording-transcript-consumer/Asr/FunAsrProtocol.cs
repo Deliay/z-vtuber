@@ -5,15 +5,20 @@ namespace Z.Vtuber.RecordingTranscript.Consumer.Asr;
 /// <summary>
 /// FunASR realtime websocket 协议构造与解析（纯函数，便于针对假 websocket server 做契约测试）。
 /// 参考：https://platform.qianwenai.com/docs/api-reference/speech-recognition/fun-asr-realtime/websocket-api.md
+/// 注意：客户端→服务端【指令】用 <c>header.action</c>（run-task/finish-task）；
+/// 服务端→客户端【事件】用 <c>header.event</c>（task-started/result-generated/task-finished/task-failed）。
 /// </summary>
 internal static class FunAsrProtocol
 {
+    // 客户端指令（header.action）
     public const string ActionRunTask = "run-task";
     public const string ActionFinishTask = "finish-task";
-    public const string ActionTaskStarted = "task-started";
-    public const string ActionResultGenerated = "result-generated";
-    public const string ActionTaskFinished = "task-finished";
-    public const string ActionTaskFailed = "task-failed";
+
+    // 服务端事件（header.event）
+    public const string EventTaskStarted = "task-started";
+    public const string EventResultGenerated = "result-generated";
+    public const string EventTaskFinished = "task-finished";
+    public const string EventTaskFailed = "task-failed";
 
     public static string BuildRunTask(string taskId, string model)
     {
@@ -43,6 +48,7 @@ internal static class FunAsrProtocol
         return JsonSerializer.Serialize(payload);
     }
 
+    /// <summary>解析客户端指令（header.action）。</summary>
     public static bool TryParseAction(string json, out string? action)
     {
         action = null;
@@ -59,6 +65,28 @@ internal static class FunAsrProtocol
         catch (JsonException)
         {
             // 非 JSON 消息（例如服务端心跳）忽略
+        }
+
+        return false;
+    }
+
+    /// <summary>解析服务端事件（header.event）。</summary>
+    public static bool TryParseEvent(string json, out string? @event)
+    {
+        @event = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("header", out var header)
+                && header.TryGetProperty("event", out var eventProp))
+            {
+                @event = eventProp.GetString();
+                return @event is not null;
+            }
+        }
+        catch (JsonException)
+        {
+            // 非 JSON 消息忽略
         }
 
         return false;

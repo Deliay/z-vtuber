@@ -375,22 +375,12 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
             new TranscriptConsumerOptions { ScanBatchSize = 10 },
             NullLogger<TranscriptTaskScanner>.Instance);
 
-        await scanner.ScanOnceAsync();
-
-        Assert.Equal(TranscriptTaskStatus.Running, (await Tasks.GetByIdAsync(first))!.Status);
-        Assert.Equal(TranscriptTaskStatus.Pending, (await Tasks.GetByIdAsync(second))!.Status);
-
         try
         {
-            // RunDetachedAsync 在线程池上执行，Gate 注册可能滞后；等待避免并发负载下索引越界
-            var gateDeadline = DateTime.UtcNow.AddSeconds(5);
-            while (fakeRunner.Gates.Count == 0 && DateTime.UtcNow < gateDeadline)
-            {
-                await Task.Delay(10);
-            }
+            await scanner.ScanOnceAsync();
 
-            fakeRunner.Gates[0].SetResult();
-            await Task.Delay(200);
+            // max=1：第二个任务在第一个 RUNNING 期间应保持 PENDING（不依赖线程池调度时序）
+            Assert.Equal(TranscriptTaskStatus.Running, (await Tasks.GetByIdAsync(first))!.Status);
             Assert.Equal(TranscriptTaskStatus.Pending, (await Tasks.GetByIdAsync(second))!.Status);
 
             // 释放第一个任务的并发额度后，第二个任务方可被接管

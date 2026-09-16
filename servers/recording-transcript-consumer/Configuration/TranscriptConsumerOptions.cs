@@ -34,20 +34,21 @@ public sealed class TranscriptConsumerOptions
     [Required]
     public string FfmpegPath { get; set; } = "ffmpeg";
 
-    /// <summary>FunASR realtime websocket 端点。</summary>
+    /// <summary>FunASR realtime websocket 端点（官方示例含尾斜杠）。</summary>
     [Required]
-    public string AsrEndpoint { get; set; } = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
+    public string AsrEndpoint { get; set; } = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
 
-    /// <summary>FunASR 模型名。</summary>
+    /// <summary>FunASR 模型名（官方实时模型为 fun-asr-realtime）。</summary>
     [Required]
-    public string AsrModel { get; set; } = "qwen-fun-asr-streaming";
+    public string AsrModel { get; set; } = "fun-asr-realtime";
 
     /// <summary>
     /// FunASR websocket 停滞超时（秒）：超过该时长未收到任何服务端消息（含等待 task-finished 阶段）
     /// 即视为识别卡死，抛异常使任务 FAILED 可重试，避免任务永久悬挂并占住并发额度。
+    /// 官方说明连接空闲超过 60s 会被服务端断开，故默认 45s 主动失败以留下清晰日志。
     /// </summary>
     [Range(1, 3600)]
-    public int AsrIdleTimeoutSeconds { get; set; } = 60;
+    public int AsrIdleTimeoutSeconds { get; set; } = 45;
 }
 
 public sealed class RecordingServiceOptions

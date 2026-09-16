@@ -15,7 +15,7 @@ public class AliFunAsrOffsetTests
         FunAsrProtocolAccessor.TryParseAction(json, out var action) ? action! : string.Empty;
 
     private static string ResultJson(long begin, long end, string text, bool sentenceEnd) =>
-        "{\"header\":{\"action\":\"result-generated\"},\"payload\":{\"output\":{\"sentence\":{\"begin_time\":" +
+        "{\"header\":{\"event\":\"result-generated\"},\"payload\":{\"output\":{\"sentence\":{\"begin_time\":" +
         begin + ",\"end_time\":" + end + ",\"text\":\"" + text + "\",\"sentence_end\":" +
         (sentenceEnd ? "true" : "false") + "}}}}";
 
@@ -97,6 +97,24 @@ public class AliFunAsrOffsetTests
         var audio = new MemoryStream(new byte[64000]);
 
         await Assert.ThrowsAnyAsync<Exception>(() => CollectAsync(service.TranscribeAsync(audio)));
+    }
+
+    [Fact]
+    public async Task ServerTaskFailed_SurfacesErrorCodeAndMessage()
+    {
+        await using var server = new FakeFunAsrServer();
+        server.Connection.FailOnRunTaskJson =
+            """{"header":{"event":"task-failed","error_code":"InvalidParameter","error_message":"model not exist"}}""";
+        var logger = new ListLogger<AliFunAsrService>();
+        var service = CreateService(server.Url, 0, logger: logger);
+        var audio = new MemoryStream(new byte[100]);
+
+        var ex = await Assert.ThrowsAnyAsync<InvalidOperationException>(
+            () => CollectAsync(service.TranscribeAsync(audio)));
+
+        Assert.Contains("model not exist", ex.Message);
+        Assert.Contains("InvalidParameter", ex.Message);
+        Assert.Contains(logger.Entries, e => e.Message.Contains("task-failed") && e.Message.Contains("model not exist"));
     }
 
     [Fact]
@@ -208,6 +226,9 @@ public class AliFunAsrOffsetTests
         /// <summary>收到 finish-task 后不回 task-finished 且不关闭连接，用于验证停滞超时。</summary>
         public bool SilentOnFinish { get; set; }
 
+        /// <summary>收到 run-task 后立即下发该 task-failed 事件并关闭连接（模拟模型/参数无效）。</summary>
+        public string? FailOnRunTaskJson { get; set; }
+
         public async Task AttachAsync(TcpClient client)
         {
             _client = client;
@@ -263,7 +284,15 @@ public class AliFunAsrOffsetTests
                 var action = ActionOf(json);
                 if (action == "run-task")
                 {
-                    await SendTextAsync(socket, """{"header":{"action":"task-started"}}""");
+                    if (FailOnRunTaskJson is not null)
+                    {
+                        await SendTextAsync(socket, FailOnRunTaskJson);
+                        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "failed", CancellationToken.None);
+                        return;
+                    }
+
+                    // 服务端事件使用 header.event（官方协议）
+                    await SendTextAsync(socket, """{"header":{"event":"task-started"}}""");
                 }
                 else if (action == "finish-task")
                 {
@@ -278,7 +307,7 @@ public class AliFunAsrOffsetTests
                         await SendTextAsync(socket, payload);
                     }
 
-                    await SendTextAsync(socket, """{"header":{"action":"task-finished"}}""");
+                    await SendTextAsync(socket, """{"header":{"event":"task-finished"}}""");
                     await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
                     return;
                 }

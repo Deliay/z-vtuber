@@ -14,7 +14,7 @@ type: Permanent
 
 ### 1.1 背景
 
-依据 PRD「直播录播语音转写」，在既有录播能力（`servers/recording`，ffmpeg 多输出落盘 flv + 实时音频流出口）之上增加语音转写链路：直播场次结构化归档、**开播即自动开始实时识别**（识别源为直播实时音频）、手动对录播文件离线识别、任务队列断点续跑、流式 ASR（qwen-fun-asr-streaming）识别、实时 Segments 推送与页面管理。
+依据 PRD「直播录播语音转写」，在既有录播能力（`servers/recording`，ffmpeg 多输出落盘 flv + 实时音频流出口）之上增加语音转写链路：直播场次结构化归档、**开播即自动开始实时识别**（识别源为直播实时音频）、手动对录播文件离线识别、任务队列断点续跑、流式 ASR（fun-asr-realtime，官方 FunASR realtime）识别、实时 Segments 推送与页面管理。
 
 现状勘察结论（均经读码确认）：
 
@@ -53,7 +53,7 @@ graph TD
     CONS -->|读写 tasks/segments| M
     CONS -->|"实时任务: ffmpeg 拉直播音频流 /api/{roomId}/stream/audio"| REC
     CONS -->|"离线任务: ffmpeg -ss 拉录播文件(内网 URL)"| REC
-    CONS -->|websocket| ASR[阿里云 FunASR<br/>qwen-fun-asr-streaming]
+    CONS -->|websocket| ASR[阿里云 FunASR<br/>fun-asr-realtime]
     TAPI --> M
     TAPI -->|"sub transcript-segment:{taskId}"| R
     Common[servers/common] -.被引用.-> REC
@@ -147,7 +147,7 @@ graph TD
       "title": "晚间歌回",
       "startedAt": "...",
       "endedAt": "...",
-      "tasks": [{ "taskId": "...", "modelId": "...", "modelName": "qwen-fun-asr", "status": "RUNNING", "position": 123000, "source": "auto", "updatedAt": "..." }]
+      "tasks": [{ "taskId": "...", "modelId": "...", "modelName": "fun-asr-realtime", "status": "RUNNING", "position": 123000, "source": "auto", "updatedAt": "..." }]
     }
   ]
 }
@@ -387,11 +387,12 @@ public interface IStreamingAsrService
 #### 实现点 5: AliFunAsrService（FunASR realtime websocket）
 
 - 单任务一条 websocket 连接（文档：<https://platform.qianwenai.com/docs/api-reference/speech-recognition/fun-asr-realtime/websocket-api.md>）；
-- 握手带 API Key（服务端持有，不外泄）；按协议发送 run-task/音频帧/finish-task；
+- 握手带 API Key（服务端持有，不外泄）；按协议发送 run-task/音频帧/finish-task；模型默认 `fun-asr-realtime`；
+- **事件字段**：客户端→服务端**指令**用 `header.action`（run-task/finish-task）；服务端→客户端**事件**用 `header.event`（task-started/result-generated/task-finished/task-failed），与官方示例一致；`task-failed` 解析 `header.error_code`/`error_message` 入日志；连接关闭记录 `CloseStatus`/`CloseStatusDescription`；
 - 背压：识别慢于喂入时，1 秒缓冲队列有界（上限 60s 音频），满则暂停读 ffmpeg stdout（OS pipe 背压自然生效）。离线任务不丢音频；**实时任务**上背压会传导至 recording 的 `AudioStreamHub`（慢订阅者 DropOldest），表现为识别落后实时、极端情况丢段——以模型并发上限与监控兜底，见 §6.1；
 - 连接中断：抛出异常使任务 FAILED（断点已落库，retry/接管后从句尾续跑重连）；
 - **可观测性**：连接/run-task/task-started/finish-task/task-finished/关闭等关键节点 Info 日志（含 taskId/offset），成句进度节流（每 N 句）避免刷屏；
-- **停滞超时**：`TranscriptConsumer:AsrIdleTimeoutSeconds`（默认 60s）内未收到任何服务端消息（含等待 task-finished 阶段）即抛 TimeoutException 使任务 FAILED 可重试，避免永久悬挂占住并发额度。
+- **停滞超时**：`TranscriptConsumer:AsrIdleTimeoutSeconds`（默认 45s，官方说明连接空闲 60s 服务端会断开）内未收到任何服务端消息（含等待 task-finished 阶段）即抛 TimeoutException 使任务 FAILED 可重试，避免永久悬挂占住并发额度。
 
 #### 实现点 6: SSE 实时推送
 
@@ -427,7 +428,7 @@ public interface IStreamingAsrService
 | 类型 | 内容 | 说明 |
 |------|------|------|
 | 依赖 | 部署镜像含 ffmpeg（consumer） | 与 recording 镜像同安装方式 |
-| 依赖 | 阿里云 FunASR API Key 与外网访问 | qwen-fun-asr-streaming websocket |
+| 依赖 | 阿里云 FunASR API Key 与外网访问 | fun-asr-realtime websocket |
 | 约束 | 同录播+同模型唯一任务（唯一索引硬约束） | enqueue 409 幂等 |
 | 约束 | .NET 10、契约式开发、TDD、覆盖率 ≥80% | 项目既有规范 |
 
