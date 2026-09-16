@@ -9,7 +9,7 @@ namespace Z.Vtuber.RecordingTranscript.Consumer.Tasks;
 
 /// <summary>
 /// 单任务编排：按 Mode 选择音源（live 探测 200 接流 / 404 转 file 从 position seek 补尾），
-/// ffmpeg stdout → ASR 流式识别 → 事务落库 segment + position → Redis pub；
+/// ffmpeg stdout → ASR 流式识别 → 顺序落库 segment + position（唯一索引幂等）→ Redis pub；
 /// 每轮 fencing 校验，失锁即终止；EOF → DONE，异常 → FAILED；finally 释放锁。
 /// </summary>
 public interface ITranscriptTaskRunner

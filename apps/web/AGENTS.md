@@ -42,9 +42,9 @@ src/
 │       └── RecordingStatusPage.test.tsx # 录制状态页测试
 │   └── transcripts/
 │       ├── TranscriptsPage.tsx          # 语音转写页（「任务列表」/「设置」两 Tab 切换）
-│       ├── TaskListTab.tsx              # 任务列表 Tab（任务状态/场次/模型/进度 + 选中任务 segments，EventSource 实时追加、断开自动重连）
+│       ├── TaskListTab.tsx              # 任务列表 Tab（任务状态/场次/模型/进度 + 选中任务 segments，EventSource 实时追加、断开自动重连；手动发起识别：选场次+模型 enqueue 后刷新任务；场次任务：按主播查看场次/任务 + 失败重试）
 │       ├── TaskListTab.test.tsx         # 任务列表 Tab 测试
-│       ├── SettingsTab.tsx              # 设置 Tab（识别设置：主播开关 + 手动 enqueue + 按主播查看场次任务/失败重试；模型设置：增删改/启停/设默认/并发）
+│       ├── SettingsTab.tsx              # 设置 Tab（识别设置：主播开关 + 添加自动识别（房间号校验/默认模型提示）；模型设置：增删改/启停/设默认/并发）
 │       ├── SettingsTab.test.tsx         # 设置 Tab 测试
 │       └── TranscriptsPage.test.tsx     # 语音转写页测试
 ├── test/
@@ -64,7 +64,7 @@ src/
 - 后台聚合：订阅管理页使用 `listBackstageSubscriptions` 聚合接口展示主播昵称列
 - 订阅管理页（`SubscriptionPage.tsx`）：新增订阅表单含平台选择（B站/微博）；选微博时仅填 uid；B 站订阅类型含 `录播`；列表含平台标识列，存量条目默认 B站；取消/创建按平台调用对应接口
 - 录制状态页（`RecordingStatusPage.tsx`）：按录播订阅展示三态（未开播/录制中/录制出错）、录制实例 hostname、场次名与文件名；周期轮询刷新；录制中提供实时音频入口，文件提供下载链接；历史录播列表经 `listRecordings` 展示文件名与格式化大小（不含录制中文件）
-- 语音转写页（`TranscriptsPage.tsx`）：「任务列表」Tab 经 `listTranscriptTasks`/`getTranscriptTask` 展示任务与 segments，选中任务用 `openTranscriptStream`（原生 `EventSource`，本仓库首个前端 SSE 用法，断开自动重连）实时追加；「设置」Tab 经 `getTranscriptSettings`/`setRoomAutoEnqueue` 管理自动识别开关与 `listTranscriptRecordings`+`enqueueTranscript` 手动发起，模型经 `listTranscriptModels`/`createTranscriptModel`/`updateTranscriptModel` 管理（apiKey 不回显）
+- 语音转写页（`TranscriptsPage.tsx`）：「任务列表」Tab 经 `listTranscriptTasks`/`getTranscriptTask` 展示任务与 segments，选中任务用 `openTranscriptStream`（原生 `EventSource`，本仓库首个前端 SSE 用法，断开自动重连）实时追加，并经 `listTranscriptRecordings`+`enqueueTranscript` 手动发起、`getRoomTranscripts`/`retryTranscriptTask` 查看场次任务与失败重试；「设置」Tab 经 `getTranscriptSettings`/`setRoomAutoEnqueue` 管理自动识别开关与新增房间，模型经 `listTranscriptModels`/`createTranscriptModel`/`updateTranscriptModel` 管理（apiKey 不回显）
 - 参考：`docs/engineering/common-rules.md`
 
 ## 常用命令

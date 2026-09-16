@@ -123,29 +123,35 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
     }
 
     [Fact]
-    public async Task TransactionFailure_LeavesNoHalfState()
+    public async Task SegmentWrittenButPositionNotAdvanced_RecoversByIdempotency()
     {
         var modelId = await InsertModelAsync();
         var recordingId = await InsertRecordingAsync(101);
         var taskId = await InsertTaskAsync(recordingId, modelId, mode: TranscriptTaskModes.File, position: 0);
 
-        var persister = CreatePersister();
-        persister.AfterSegmentInsertHook = _ => throw new InvalidOperationException("boom");
+        // 模拟「segment 已写入但 position 未推进」的崩溃缝隙（顺序写、非事务）：
+        // 重跑时同句撞 (TaskId, StartTime) 唯一索引应幂等忽略，position 仍推进、不重复发布。
+        await Segments.InsertAsync(new TranscriptSegmentRecord
+        {
+            TaskId = taskId, StartTime = 0, EndTime = 500, Text = "a",
+        });
 
+        var publisher = new FakeTranscriptSegmentPublisher();
         var asrFactory = new FakeStreamingAsrServiceFactory
         {
             Provider = _ => new FakeStreamingAsrService([new StreamingAsrSegment(0, 500, "a")]),
         };
         var runner = CreateRunner(
             new FakeRecordingServiceClient { LiveAvailable = false },
-            new FakeAudioSourceFactory(), asrFactory, persister, new FakeTranscriptSegmentPublisher());
+            new FakeAudioSourceFactory(), asrFactory, CreatePersister(), publisher);
 
         await runner.RunAsync(await Tasks.GetByIdAsync(taskId));
 
         var task = await Tasks.GetByIdAsync(taskId);
-        Assert.Equal(TranscriptTaskStatus.Failed, task!.Status);
-        Assert.Equal(0, task.Position);
-        Assert.Empty(await Segments.ListByTaskAsync(taskId));
+        Assert.Equal(TranscriptTaskStatus.Done, task!.Status);
+        Assert.Equal(500, task.Position);
+        Assert.Single(await Segments.ListByTaskAsync(taskId));
+        Assert.Empty(publisher.Published);
     }
 
     [Fact]
@@ -376,6 +382,13 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
 
         try
         {
+            // RunDetachedAsync 在线程池上执行，Gate 注册可能滞后；等待避免并发负载下索引越界
+            var gateDeadline = DateTime.UtcNow.AddSeconds(5);
+            while (fakeRunner.Gates.Count == 0 && DateTime.UtcNow < gateDeadline)
+            {
+                await Task.Delay(10);
+            }
+
             fakeRunner.Gates[0].SetResult();
             await Task.Delay(200);
             Assert.Equal(TranscriptTaskStatus.Pending, (await Tasks.GetByIdAsync(second))!.Status);

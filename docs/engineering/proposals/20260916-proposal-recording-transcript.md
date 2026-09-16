@@ -329,7 +329,7 @@ sequenceDiagram
             C->>A: 建连，TranscribeAsync(stream, 初始position)
             loop 每成句(sentence_end=true)
                 A-->>C: yield segment(start+offset, end+offset, text)
-                C->>M: 事务：insert segment + 更新 position=end
+                C->>M: 顺序写：insert segment 后更新 position=end
                 C->>R: pub transcript-segment:{taskId}
             end
             C->>M: 直播音频流 EOF / 文件识别完 → status=DONE；异常 → FAILED
@@ -380,8 +380,8 @@ public interface IStreamingAsrService
 ```
 
 - `AliFunAsrService`：构造传入**初始 position（offset）**；websocket 逐帧发送音频，仅在 `sentence_end=true` 时把该句 yield 出去，时间 = 返回时间 + offset；
-- 每个 yield 立刻在一个 **Mongo 事务**中：insert segment + 更新 task.Position=segment.End——保证「片段入库」与「断点推进」原子一致；`(TaskId, StartTime)` 唯一索引兜底幂等；
-- 事务要求 Mongo replica set，见 §9 部署变更。
+- 每个 yield 立即**顺序写**：先 insert segment，再更新 task.Position=segment.End（非事务）；`(TaskId, StartTime)` 唯一索引保证重复写入冲突可识别忽略，配合幂等重跑达到最终一致（内部系统可接受）；
+- 不依赖 Mongo 事务，无 replica set 前置要求（见 §9 部署方案）。
 
 #### 实现点 5: AliFunAsrService（FunASR realtime websocket）
 
@@ -414,7 +414,7 @@ public interface IStreamingAsrService
 | 事件可靠性 | 仅 pub/sub | pub/sub + 对账补建 | B | 既有 pub/sub 全为 fire-and-forget，对账以唯一索引幂等兜底不丢场次 |
 | 任务锁 | 复用 common `IDistributedLockProvider` | 仿 `RecordingLock` 自实现 | B | 需要续期+fencing，common 契约无此语义；同 recording 决策 |
 | 音频获取 | consumer 挂载录播卷直读文件 | 经 recording 内网 HTTP（实时流 + 文件 URL） | B | 实时音频已有 `/stream/audio` 出口零改动复用；无需共享卷；ffmpeg 支持 http+Range Seek |
-| 断点一致性 | 顺序写两次 | Mongo 事务 + 唯一索引兜底 | B | 需求明确事务；单写者由锁保证，唯一索引兜幂等 |
+| 断点一致性 | 顺序写两次 | 顺序写 + 唯一索引幂等 | A | 下游决策：非事务顺序写（先 insert segment 再推进 position），`(TaskId, StartTime)` 唯一索引 + 幂等重跑达到最终一致；内部系统无需为事务切换 Mongo 部署 |
 | 模型配置 | 配置文件/appsettings | Mongo `transcript_models` + 页面管理 | B | 需求要求页面增删改、设默认、并发上限 |
 | web 实时更新 | 轮询 | SSE (EventSource) | B | 需求明确 SSE 端点；服务端有先例 |
 | web 访问路径 | nginx 新增 location 直连 | api 服务代理（同 recording） | B | 沿用 recording 先例，web 只认 `/api`，零 nginx 改动 |
@@ -425,7 +425,6 @@ public interface IStreamingAsrService
 |------|------|------|
 | 依赖 | 部署镜像含 ffmpeg（consumer） | 与 recording 镜像同安装方式 |
 | 依赖 | 阿里云 FunASR API Key 与外网访问 | qwen-fun-asr-streaming websocket |
-| 依赖 | MongoDB replica set | 事务前置条件，见 §9 |
 | 约束 | 同录播+同模型唯一任务（唯一索引硬约束） | enqueue 409 幂等 |
 | 约束 | .NET 10、契约式开发、TDD、覆盖率 ≥80% | 项目既有规范 |
 
@@ -494,7 +493,7 @@ tests/Z.Vtuber.Tests/（新增）
 ├── RecordingStartedSubscriberTests.cs          # 开播事件→live 任务/未启用不建/幂等
 ├── AliFunAsrOffsetTests.cs                     # offset 相加/sentence_end 过滤（假 websocket）
 ├── FfmpegAudioStreamTests.cs                   # lavfi 源 seek/pcm 格式/实时流跟随
-├── TranscriptTaskRunnerTests.cs                # 断点续跑/事务一致/终态流转/live 接管补尾（404→file 模式）
+├── TranscriptTaskRunnerTests.cs                # 断点续跑/唯一索引幂等/终态流转/live 接管补尾（404→file 模式）
 ├── TranscriptReconcilerTests.cs                # 开播中漏建/结束后漏建/历史不补/幂等
 ├── RecordingBackfillMigrationTests.cs          # 文件名↔场次匹配/幂等
 └── TranscriptApiTests.cs                       # 端点/SSE/retry 409
@@ -509,7 +508,7 @@ tests/Z.Vtuber.Tests/（新增）
 ### 8.2 测试类型
 
 - **单元测试**：segment offset 计算；sentence_end 过滤；任务扫描查询构造；retry 状态机；文件名↔场次匹配纯函数；live 接管时 offset 起点推算；
-- **集成测试（Testcontainers MongoDB + Redis）**：enqueue 唯一约束与 409；锁互斥/续期/TTL 接管；断点续跑（预置 position 与 segments，断言不重不漏）；segment+position 事务原子性；开播/结束事件消费建任务；对账补建幂等；SSE replay+实时；
+- **集成测试（Testcontainers MongoDB + Redis）**：enqueue 唯一约束与 409；锁互斥/续期/TTL 接管；断点续跑（预置 position 与 segments，断言不重不漏）；segment 重跑/并发重复写入的唯一索引幂等（position 不回退）；开播/结束事件消费建任务；对账补建幂等；SSE replay+实时；
 - **ffmpeg 进程测试**：lavfi 生成测试音频，断言 `-ss` seek 后输出起点与 pcm 参数；以本地 chunked HTTP 流模拟 `/stream/audio`，断言实时跟随与 EOF 收尾；
 - **ASR 契约测试**：以本地假 websocket server 模拟 FunASR 协议（run-task/句子结果/finish），断言 yield 时机与 offset；
 - **web**：Vitest + RTL 覆盖两个 Tab 渲染、FAILED 重试交互、EventSource mock 的实时追加。
@@ -517,8 +516,7 @@ tests/Z.Vtuber.Tests/（新增）
 ## 9. 部署方案
 
 - AppHost 增加两服务：`WithReference(mongo/messaging)`、consumer 增 `RecordingService:BaseUrl`、api 增 `TranscriptService:BaseUrl`、健康检查 `/health`；
-- **MongoDB 调整为单节点 replica set**（事务前置）：AppHost mongo 资源加 `--replSet rs0` 初始化；Testcontainers `MongoDbFixture` 同步改 replica set 模式；连接串对客户端透明（`directConnection=true`）；
-  - 复用旧数据卷注意：`rs.initiate` 由 `mongo/rs-init.js`（`WithInitFiles`）在数据目录【为空】的首次启动时执行；复用旧版 AppHost 的 standalone 数据卷时脚本不会运行，副本集无 primary、事务永久失败且无明显报错。首次以 replica set 运行前必须删除/重建该卷（或手动执行 `rs.initiate`），详见 `infra/apphost/AppHost.cs`；
+- MongoDB 保持 standalone（非事务顺序写 + 唯一索引幂等，无需 replica set）；AppHost mongo 资源与测试 `MongoDbFixture` 均维持现状；
 - Dockerfile：transcript-api 照 api 纯净模式；consumer 照 recording 模式（装 ffmpeg）；各加镜像 CI workflow；
 - 副本数：consumer 可多副本（锁保证单任务单节点）；transcript-api 无状态多副本；
 - 配置：`TranscriptConsumer:ScanIntervalSeconds`(10)、`TranscriptConsumer:LockTtlSeconds`(30)、`TranscriptConsumer:AudioBufferSeconds`(60)、`TranscriptConsumer:ReconcileIntervalSeconds`(300)、`RecordingService:BaseUrl`、`TranscriptService:BaseUrl`。
@@ -532,7 +530,7 @@ tests/Z.Vtuber.Tests/（新增）
 - [ ] consumer 宕机期间的开播/结束经对账补建；live 任务接管时直播已结束则从断点补尾至 DONE
 - [ ] 手动 enqueue 幂等（同录播同模型 409）；retry 后从断点续跑
 - [ ] 多副本下同一任务仅一个节点执行；杀进程后任务被接管续跑，segments 不重复
-- [ ] segment 与 position 事务一致；SSE 实时可见且不丢不重
+- [ ] segment 顺序落库且 `(TaskId, StartTime)` 唯一索引保证重跑幂等、position 不回退；SSE 实时可见且不丢不重
 - [ ] 模型页面管理（增/禁/默认/并发）生效，API Key 不回传
 - [ ] 单测 + 集成测试通过，核心覆盖率 ≥ 80%
 

@@ -8,7 +8,8 @@ namespace Z.Vtuber.RecordingTranscript.Consumer.Tasks;
 public interface ITranscriptSegmentPersister
 {
     /// <summary>
-    /// 在一个 Mongo 事务中 insert segment + 推进 task.Position；重复 (TaskId, StartTime) 唯一索引冲突时忽略并返回 false。
+    /// 顺序写入 segment 后推进 task.Position（非事务，内部系统最终一致即可）；
+    /// 重复 (TaskId, StartTime) 唯一索引冲突时幂等忽略并返回 false（不重复发布）。
     /// </summary>
     Task<bool> PersistAsync(ObjectId taskId, long start, long end, string text, CancellationToken ct = default);
 }
@@ -17,55 +18,42 @@ public sealed class MongoTranscriptSegmentPersister : ITranscriptSegmentPersiste
 {
     private readonly IMongoCollection<TranscriptSegmentRecord> _segments;
     private readonly IMongoCollection<TranscriptTaskRecord> _tasks;
-    private readonly IMongoClient _client;
 
     public MongoTranscriptSegmentPersister(IMongoDatabase database)
     {
         _segments = database.GetCollection<TranscriptSegmentRecord>(MongoCollectionNames.TranscriptSegments);
         _tasks = database.GetCollection<TranscriptTaskRecord>(MongoCollectionNames.TranscriptTasks);
-        _client = database.Client;
     }
-
-    /// <summary>测试钩子：在 segment 写入后、position 更新前触发，用于验证事务回滚。</summary>
-    internal Func<CancellationToken, Task>? AfterSegmentInsertHook { get; set; }
 
     public async Task<bool> PersistAsync(
         ObjectId taskId, long start, long end, string text, CancellationToken ct = default)
     {
-        using var session = await _client.StartSessionAsync(cancellationToken: ct);
-        session.StartTransaction();
         try
         {
             await _segments.InsertOneAsync(
-                session,
                 new TranscriptSegmentRecord { TaskId = taskId, StartTime = start, EndTime = end, Text = text },
                 cancellationToken: ct);
-
-            if (AfterSegmentInsertHook is not null)
-            {
-                await AfterSegmentInsertHook(ct);
-            }
-
-            await _tasks.UpdateOneAsync(
-                session,
-                Builders<TranscriptTaskRecord>.Filter.Eq(t => t.Id, taskId),
-                Builders<TranscriptTaskRecord>.Update
-                    .Set(t => t.Position, end)
-                    .Set(t => t.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: ct);
-
-            await session.CommitTransactionAsync(ct);
-            return true;
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            await session.AbortTransactionAsync(ct);
+            // 撞 (TaskId, StartTime) 唯一索引：重跑/并发重复句，幂等忽略；position 仍尽力推进
+            await AdvancePositionAsync(taskId, end, ct);
             return false;
         }
-        catch
-        {
-            await session.AbortTransactionAsync(ct);
-            throw;
-        }
+
+        await AdvancePositionAsync(taskId, end, ct);
+        return true;
+    }
+
+    /// <summary>仅向前推进 position，避免重复句（更小的 end）回退断点；segment 与 position 非原子，靠唯一索引+幂等重跑兜底。</summary>
+    private Task AdvancePositionAsync(ObjectId taskId, long end, CancellationToken ct)
+    {
+        var filter = Builders<TranscriptTaskRecord>.Filter.And(
+            Builders<TranscriptTaskRecord>.Filter.Eq(t => t.Id, taskId),
+            Builders<TranscriptTaskRecord>.Filter.Lt(t => t.Position, end));
+        var update = Builders<TranscriptTaskRecord>.Update
+            .Set(t => t.Position, end)
+            .Set(t => t.UpdatedAt, DateTime.UtcNow);
+        return _tasks.UpdateOneAsync(filter, update, cancellationToken: ct);
     }
 }

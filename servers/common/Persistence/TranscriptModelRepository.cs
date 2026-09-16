@@ -77,33 +77,22 @@ public sealed class TranscriptModelRepository(IMongoDatabase database)
     }
 
     /// <summary>
-    /// 原子切换默认位：在同一事务内清除其他模型的 IsDefault 并置位当前模型。
+    /// 切换默认位（非事务）：先清除其他模型的 IsDefault，再置位当前模型。
+    /// 顺序先清后置可避免部分唯一索引瞬时出现两个默认位；中途崩溃最多导致暂无默认位，可重设。
     /// </summary>
     public async Task SetDefaultAsync(ObjectId id, CancellationToken ct = default)
     {
-        using var session = await _collection.Database.Client.StartSessionAsync(cancellationToken: ct);
-        session.StartTransaction();
-        try
-        {
-            var clearFilter = Builders<TranscriptModelRecord>.Filter.And(
-                Builders<TranscriptModelRecord>.Filter.Eq(m => m.IsDefault, true),
-                Builders<TranscriptModelRecord>.Filter.Ne(m => m.Id, id));
-            await _collection.UpdateManyAsync(
-                session, clearFilter,
-                Builders<TranscriptModelRecord>.Update.Set(m => m.IsDefault, false),
-                cancellationToken: ct);
+        var clearFilter = Builders<TranscriptModelRecord>.Filter.And(
+            Builders<TranscriptModelRecord>.Filter.Eq(m => m.IsDefault, true),
+            Builders<TranscriptModelRecord>.Filter.Ne(m => m.Id, id));
+        await _collection.UpdateManyAsync(
+            clearFilter,
+            Builders<TranscriptModelRecord>.Update.Set(m => m.IsDefault, false),
+            cancellationToken: ct);
 
-            await _collection.UpdateOneAsync(
-                session, Builders<TranscriptModelRecord>.Filter.Eq(m => m.Id, id),
-                Builders<TranscriptModelRecord>.Update.Set(m => m.IsDefault, true),
-                cancellationToken: ct);
-
-            await session.CommitTransactionAsync(ct);
-        }
-        catch
-        {
-            await session.AbortTransactionAsync(ct);
-            throw;
-        }
+        await _collection.UpdateOneAsync(
+            Builders<TranscriptModelRecord>.Filter.Eq(m => m.Id, id),
+            Builders<TranscriptModelRecord>.Update.Set(m => m.IsDefault, true),
+            cancellationToken: ct);
     }
 }

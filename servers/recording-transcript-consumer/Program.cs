@@ -73,9 +73,6 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var mongoClient = scope.ServiceProvider.GetRequiredService<IMongoClient>();
-    await EnsureReplicaSetAsync(mongoClient, app.Logger);
-
     var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
     await initializer.EnsureIndexesAsync();
 }
@@ -83,42 +80,3 @@ using (var scope = app.Services.CreateScope())
 app.MapHealthChecks("/health");
 
 app.Run();
-
-// 事务前置校验：MongoDB 必须是 replica set（否则 segment+position 事务永久失败且无显式报错）。
-// 复用旧 standalone 数据卷时 rs-init.js 不会执行，副本集无 primary；这里给出清晰错误而非静默失败。
-static async Task EnsureReplicaSetAsync(IMongoClient client, ILogger logger)
-{
-    var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
-    Exception? lastError = null;
-
-    while (true)
-    {
-        try
-        {
-            var hello = await client.GetDatabase("admin")
-                .RunCommandAsync<BsonDocument>(new BsonDocument("hello", 1));
-            if (hello.Contains("setName"))
-            {
-                return;
-            }
-
-            lastError = new InvalidOperationException("MongoDB is running as a standalone server.");
-        }
-        catch (Exception ex)
-        {
-            lastError = ex;
-        }
-
-        if (DateTime.UtcNow >= deadline)
-        {
-            logger.LogCritical(lastError,
-                "MongoDB 不是 replica set，事务不可用。最可能原因：复用了旧版 AppHost 的 standalone 数据卷，"
-                + "rs-init.js 仅在数据目录为空时执行，副本集始终没有 primary。"
-                + "请删除/重建 Mongo 数据卷（或手动执行 rs.initiate）后重启；详见 infra/apphost/AppHost.cs。");
-            throw new InvalidOperationException(
-                "MongoDB replica set check failed; transactions are unavailable.", lastError);
-        }
-
-        await Task.Delay(TimeSpan.FromSeconds(1));
-    }
-}

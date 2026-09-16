@@ -2,11 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   getTranscriptSettings,
   setRoomAutoEnqueue,
-  listTranscriptRecordings,
   listTranscriptModels,
-  getRoomTranscripts,
-  enqueueTranscript,
-  retryTranscriptTask,
   createTranscriptModel,
   updateTranscriptModel,
 } from '../../api/client'
@@ -14,25 +10,6 @@ import type { components as transcriptComponents } from '../../api/schema-record
 
 type TranscriptSettingsItem = transcriptComponents['schemas']['TranscriptSettingsItem']
 type TranscriptModel = transcriptComponents['schemas']['TranscriptModel']
-type TranscriptRecordingItem = transcriptComponents['schemas']['RecordingItem']
-type RoomTranscriptView = transcriptComponents['schemas']['RoomTranscriptView']
-
-const STATUS_LABELS: Record<string, string> = {
-  PENDING: '等待中',
-  RUNNING: '识别中',
-  DONE: '已完成',
-  FAILED: '失败',
-}
-
-function formatPosition(position?: number | null): string {
-  if (position === undefined || position === null) {
-    return '-'
-  }
-  const totalSeconds = Math.floor(position / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${minutes}:${String(seconds).padStart(2, '0')}`
-}
 
 const inputStyle: React.CSSProperties = {
   padding: '0.5rem',
@@ -50,36 +27,17 @@ function normalizeConcurrency(value: string | number | null | undefined): number
   return Math.floor(parsed)
 }
 
-function parseExistingTaskId(error: unknown): string | undefined {
-  const apiError = error as { status?: number; serverMessage?: string }
-  if (apiError.status !== 409) {
-    return undefined
-  }
-  try {
-    const body = JSON.parse(apiError.serverMessage ?? '') as { taskId?: string }
-    return body.taskId
-  } catch {
-    return undefined
-  }
-}
-
 export function SettingsTab() {
   const [settings, setSettings] = useState<TranscriptSettingsItem[]>([])
   const [models, setModels] = useState<TranscriptModel[]>([])
-  const [recordings, setRecordings] = useState<TranscriptRecordingItem[]>([])
   const [loading, setLoading] = useState(true)
   const [initialized, setInitialized] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null)
 
-  const [enqueueRecordingId, setEnqueueRecordingId] = useState('')
-  const [enqueueModelId, setEnqueueModelId] = useState('')
-  const [enqueueMessage, setEnqueueMessage] = useState<string | null>(null)
-  const [enqueueError, setEnqueueError] = useState<string | null>(null)
-
-  const [selectedRoomId, setSelectedRoomId] = useState('')
-  const [roomView, setRoomView] = useState<RoomTranscriptView | null>(null)
-  const [roomError, setRoomError] = useState<string | null>(null)
+  const [newRoomId, setNewRoomId] = useState('')
+  const [addMessage, setAddMessage] = useState<string | null>(null)
+  const [addError, setAddError] = useState<string | null>(null)
 
   const [modelName, setModelName] = useState('')
   const [modelApiKey, setModelApiKey] = useState('')
@@ -95,14 +53,12 @@ export function SettingsTab() {
       setError(null)
       setRetryAction(null)
       setLoading(true)
-      const [settingsData, modelsData, recordingsData] = await Promise.all([
+      const [settingsData, modelsData] = await Promise.all([
         getTranscriptSettings(),
         listTranscriptModels(),
-        listTranscriptRecordings(),
       ])
       setSettings(settingsData)
       setModels(modelsData)
-      setRecordings(recordingsData)
     } catch {
       setError('服务不可用')
       setRetryAction(null)
@@ -116,31 +72,10 @@ export function SettingsTab() {
     fetchAll()
   }, [fetchAll])
 
-  const enabledModels = useMemo(
-    () => models.filter((model) => model.enabled !== false),
+  const hasDefaultModel = useMemo(
+    () => models.some((model) => model.isDefault === true),
     [models],
   )
-
-  const roomOptions = useMemo(() => {
-    const options: { roomId: number; label: string }[] = []
-    const seen = new Set<number>()
-    for (const item of settings) {
-      if (typeof item.roomId === 'number' && !seen.has(item.roomId)) {
-        seen.add(item.roomId)
-        options.push({
-          roomId: item.roomId,
-          label: item.anchorName ? `${item.anchorName}（${item.roomId}）` : String(item.roomId),
-        })
-      }
-    }
-    for (const recording of recordings) {
-      if (typeof recording.roomId === 'number' && !seen.has(recording.roomId)) {
-        seen.add(recording.roomId)
-        options.push({ roomId: recording.roomId, label: String(recording.roomId) })
-      }
-    }
-    return options
-  }, [settings, recordings])
 
   const handleToggleAuto = async (item: TranscriptSettingsItem) => {
     if (typeof item.roomId !== 'number') {
@@ -159,64 +94,38 @@ export function SettingsTab() {
     }
   }
 
+  const handleAddAuto = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setAddError(null)
+    setAddMessage(null)
+
+    const roomId = Number(newRoomId)
+    if (!Number.isInteger(roomId) || roomId <= 0) {
+      setAddError('请输入有效的直播间号')
+      return
+    }
+
+    const submit = async () => {
+      try {
+        setError(null)
+        setRetryAction(null)
+        await setRoomAutoEnqueue(roomId, true)
+        setNewRoomId('')
+        setAddMessage('已添加自动识别')
+        await fetchAll()
+      } catch {
+        setError('添加自动识别失败')
+        setRetryAction(() => submit)
+      }
+    }
+    await submit()
+  }
+
   const retryFailedAction = () => {
     const action = retryAction ?? fetchAll
     setError(null)
     setRetryAction(null)
     void action()
-  }
-
-  const handleEnqueue = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setEnqueueMessage(null)
-    setEnqueueError(null)
-
-    if (!enqueueRecordingId || !enqueueModelId) {
-      setEnqueueError('请选择录播场次与模型')
-      return
-    }
-
-    try {
-      const result = await enqueueTranscript(enqueueRecordingId, enqueueModelId)
-      setEnqueueMessage(`已创建任务 ${result.taskId}`)
-      if (selectedRoomId) {
-        const view = await getRoomTranscripts(Number(selectedRoomId))
-        setRoomView(view)
-      }
-    } catch (err) {
-      const existingTaskId = parseExistingTaskId(err)
-      if (existingTaskId) {
-        setEnqueueMessage(`已有任务 ${existingTaskId}`)
-        return
-      }
-      setEnqueueError('发起识别失败')
-    }
-  }
-
-  const handleQueryRoom = async () => {
-    if (!selectedRoomId) {
-      setRoomError('请选择主播')
-      return
-    }
-    try {
-      setRoomError(null)
-      const view = await getRoomTranscripts(Number(selectedRoomId))
-      setRoomView(view)
-    } catch {
-      setRoomError('场次任务加载失败')
-    }
-  }
-
-  const handleRetry = async (taskId: string) => {
-    try {
-      await retryTranscriptTask(taskId)
-      if (selectedRoomId) {
-        const view = await getRoomTranscripts(Number(selectedRoomId))
-        setRoomView(view)
-      }
-    } catch {
-      setRoomError('重试失败')
-    }
   }
 
   const handleCreateModel = async (e: React.FormEvent) => {
@@ -334,102 +243,28 @@ export function SettingsTab() {
           </table>
         )}
 
-        <h4>手动发起识别</h4>
-        <form onSubmit={handleEnqueue} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <select
-            aria-label="录播场次"
-            value={enqueueRecordingId}
-            onChange={(e) => setEnqueueRecordingId(e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">选择录播场次</option>
-            {recordings.map((recording) => (
-              <option key={recording.id} value={recording.id}>
-                {recording.title ?? recording.id}
-              </option>
-            ))}
-          </select>
-
-          <select
-            aria-label="识别模型"
-            value={enqueueModelId}
-            onChange={(e) => setEnqueueModelId(e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">选择模型</option>
-            {enabledModels.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </select>
-
+        <form
+          onSubmit={handleAddAuto}
+          noValidate
+          style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}
+        >
+          <input
+            aria-label="直播间号"
+            placeholder="直播间号"
+            type="number"
+            min={1}
+            value={newRoomId}
+            onChange={(e) => setNewRoomId(e.target.value)}
+            style={{ ...inputStyle, width: '9rem' }}
+          />
           <button type="submit" style={{ padding: '0.5rem 1rem' }}>
-            发起识别
+            添加自动识别
           </button>
         </form>
-        {enqueueMessage && <p style={{ color: '#22c55e' }}>{enqueueMessage}</p>}
-        {enqueueError && <p style={{ color: '#f87171' }}>{enqueueError}</p>}
-
-        <h4>场次任务</h4>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-          <select
-            aria-label="主播"
-            value={selectedRoomId}
-            onChange={(e) => setSelectedRoomId(e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">选择主播</option>
-            {roomOptions.map((option) => (
-              <option key={option.roomId} value={String(option.roomId)}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <button onClick={handleQueryRoom} style={{ padding: '0.5rem 1rem' }}>
-            查询
-          </button>
-        </div>
-        {roomError && <p style={{ color: '#f87171' }}>{roomError}</p>}
-        {roomView && (
-          <div>
-            <p style={{ color: '#94a3b8' }}>
-              自动识别：{roomView.autoEnqueueEnabled ? '已开启' : '已关闭'}
-            </p>
-            {roomView.items.length === 0 ? (
-              <p>暂无场次</p>
-            ) : (
-              roomView.items.map((item) => (
-                <div
-                  key={item.recordingId}
-                  style={{ border: '1px solid #334155', borderRadius: '0.25rem', padding: '0.5rem', marginBottom: '0.5rem' }}
-                >
-                  <div>{item.title ?? item.recordingId}</div>
-                  {item.tasks.length === 0 ? (
-                    <p style={{ margin: 0, color: '#94a3b8' }}>暂无任务</p>
-                  ) : (
-                    <ul style={{ margin: 0, paddingLeft: '1rem' }}>
-                      {item.tasks.map((task) => (
-                        <li key={task.taskId}>
-                          {task.modelName ?? task.modelId} -{' '}
-                          {STATUS_LABELS[task.status ?? ''] ?? task.status} -{' '}
-                          {formatPosition(task.position)}
-                          {task.status === 'FAILED' && (
-                            <button
-                              onClick={() => handleRetry(task.taskId ?? '')}
-                              style={{ marginLeft: '0.5rem', padding: '0.25rem 0.5rem' }}
-                            >
-                              重试
-                            </button>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
+        {addError && <p style={{ color: '#f87171' }}>{addError}</p>}
+        {addMessage && <p style={{ color: '#22c55e' }}>{addMessage}</p>}
+        {!hasDefaultModel && (
+          <p style={{ color: '#fbbf24' }}>未配置默认模型，自动识别需要先设置默认模型</p>
         )}
       </section>
 

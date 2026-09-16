@@ -40,11 +40,21 @@ vi.mock('../../api/client', async (importOriginal) => {
     ...actual,
     listTranscriptTasks: vi.fn(),
     getTranscriptTask: vi.fn(),
+    listTranscriptRecordings: vi.fn(),
+    listTranscriptModels: vi.fn(),
+    getRoomTranscripts: vi.fn(),
+    enqueueTranscript: vi.fn(),
+    retryTranscriptTask: vi.fn(),
   }
 })
 
 const mockListTasks = vi.mocked(client.listTranscriptTasks)
 const mockGetTask = vi.mocked(client.getTranscriptTask)
+const mockListRecordings = vi.mocked(client.listTranscriptRecordings)
+const mockListModels = vi.mocked(client.listTranscriptModels)
+const mockGetRoomTranscripts = vi.mocked(client.getRoomTranscripts)
+const mockEnqueue = vi.mocked(client.enqueueTranscript)
+const mockRetry = vi.mocked(client.retryTranscriptTask)
 
 describe('TaskListTab', () => {
   beforeEach(() => {
@@ -53,6 +63,45 @@ describe('TaskListTab', () => {
     vi.stubGlobal('EventSource', MockEventSource)
     mockListTasks.mockResolvedValue([])
     mockGetTask.mockResolvedValue({ task: {}, segments: [] })
+    mockListRecordings.mockResolvedValue([
+      { id: 'r1', roomId: 101, mid: 1, title: '晚间歌回', files: [], startedAt: '2026-09-16T12:00:00Z' },
+    ])
+    mockListModels.mockResolvedValue([
+      {
+        id: 'm1',
+        name: '默认模型',
+        provider: 'ali-fun-asr',
+        type: 'streaming',
+        enabled: true,
+        isDefault: true,
+        maxConcurrency: 1,
+      },
+    ])
+    mockGetRoomTranscripts.mockResolvedValue({
+      roomId: 101,
+      autoEnqueueEnabled: true,
+      items: [
+        {
+          recordingId: 'r1',
+          title: '晚间歌回',
+          startedAt: '2026-09-16T12:00:00Z',
+          endedAt: null,
+          tasks: [
+            {
+              taskId: 't1',
+              modelId: 'm1',
+              modelName: '默认模型',
+              status: 'FAILED',
+              position: 0,
+              source: 'manual',
+              updatedAt: '2026-09-16T13:00:00Z',
+            },
+          ],
+        },
+      ],
+    })
+    mockEnqueue.mockResolvedValue({ taskId: 't2', status: 'PENDING' })
+    mockRetry.mockResolvedValue({ id: 't1', status: 'RUNNING' })
   })
 
   it('should render task list with in-progress tasks first', async () => {
@@ -168,6 +217,68 @@ describe('TaskListTab', () => {
 
     await waitFor(() => {
       expect(screen.getByText('暂无转写任务')).toBeInTheDocument()
+    })
+  })
+
+  it('should enqueue a manual task and refresh the task list', async () => {
+    mockListTasks
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        { id: 't2', status: 'PENDING', title: '新任务', modelName: '默认模型', createdAt: '2026-09-16T00:00:00Z' },
+      ])
+
+    render(<TaskListTab />)
+
+    await screen.findByText('暂无转写任务')
+
+    fireEvent.change(screen.getByLabelText('录播场次'), { target: { value: 'r1' } })
+    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(screen.getByText('发起识别'))
+
+    await waitFor(() => {
+      expect(mockEnqueue).toHaveBeenCalledWith('r1', 'm1')
+    })
+    expect(await screen.findByText('新任务')).toBeInTheDocument()
+    expect(mockListTasks).toHaveBeenCalledTimes(2)
+  })
+
+  it('should show the existing task id when a manual enqueue returns 409', async () => {
+    mockEnqueue.mockRejectedValue(
+      Object.assign(new Error('conflict'), {
+        status: 409,
+        serverMessage: JSON.stringify({ taskId: 't-existing', status: 'PENDING' }),
+      }),
+    )
+
+    render(<TaskListTab />)
+
+    await screen.findByText('发起识别')
+
+    fireEvent.change(screen.getByLabelText('录播场次'), { target: { value: 'r1' } })
+    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(screen.getByText('发起识别'))
+
+    expect(await screen.findByText('已有任务 t-existing')).toBeInTheDocument()
+    expect(screen.queryByText('发起识别失败')).not.toBeInTheDocument()
+  })
+
+  it('should query a room transcripts and retry a FAILED task', async () => {
+    render(<TaskListTab />)
+
+    await screen.findByText('查询')
+
+    fireEvent.change(screen.getByLabelText('主播'), { target: { value: '101' } })
+    fireEvent.click(screen.getByText('查询'))
+
+    await waitFor(() => {
+      expect(mockGetRoomTranscripts).toHaveBeenCalledWith(101)
+    })
+
+    const retryButton = await screen.findByText('重试')
+    fireEvent.click(retryButton)
+
+    await waitFor(() => {
+      expect(mockRetry).toHaveBeenCalledWith('t1')
     })
   })
 })

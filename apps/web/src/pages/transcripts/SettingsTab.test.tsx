@@ -7,11 +7,7 @@ vi.mock('../../api/client')
 
 const mockGetSettings = vi.mocked(client.getTranscriptSettings)
 const mockSetRoom = vi.mocked(client.setRoomAutoEnqueue)
-const mockListRecordings = vi.mocked(client.listTranscriptRecordings)
 const mockListModels = vi.mocked(client.listTranscriptModels)
-const mockGetRoomTranscripts = vi.mocked(client.getRoomTranscripts)
-const mockEnqueue = vi.mocked(client.enqueueTranscript)
-const mockRetry = vi.mocked(client.retryTranscriptTask)
 const mockCreateModel = vi.mocked(client.createTranscriptModel)
 const mockUpdateModel = vi.mocked(client.updateTranscriptModel)
 
@@ -42,34 +38,6 @@ describe('SettingsTab', () => {
         maxConcurrency: 2,
       },
     ])
-    mockListRecordings.mockResolvedValue([
-      { id: 'r1', roomId: 101, mid: 1, title: '晚间歌回', files: [], startedAt: '2026-09-16T12:00:00Z' },
-    ])
-    mockGetRoomTranscripts.mockResolvedValue({
-      roomId: 101,
-      autoEnqueueEnabled: true,
-      items: [
-        {
-          recordingId: 'r1',
-          title: '晚间歌回',
-          startedAt: '2026-09-16T12:00:00Z',
-          endedAt: null,
-          tasks: [
-            {
-              taskId: 't1',
-              modelId: 'm1',
-              modelName: '默认模型',
-              status: 'FAILED',
-              position: 0,
-              source: 'manual',
-              updatedAt: '2026-09-16T13:00:00Z',
-            },
-          ],
-        },
-      ],
-    })
-    mockEnqueue.mockResolvedValue({ taskId: 't2', status: 'PENDING' })
-    mockRetry.mockResolvedValue({ id: 't1', status: 'RUNNING' })
     mockCreateModel.mockResolvedValue({ id: 'm3', name: '新模型' })
     mockUpdateModel.mockResolvedValue({ id: 'm2' })
     mockSetRoom.mockResolvedValue({ roomId: 101, enabled: false })
@@ -85,39 +53,52 @@ describe('SettingsTab', () => {
     })
   })
 
-  it('should enqueue a manual transcript task with recording and model', async () => {
+  it('should add auto recognition for a valid room and refresh the settings list', async () => {
     render(<SettingsTab />)
 
-    await screen.findByText('发起识别')
+    await screen.findByRole('button', { name: '添加自动识别' })
 
-    fireEvent.change(screen.getByLabelText('录播场次'), { target: { value: 'r1' } })
-    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'm1' } })
-    fireEvent.click(screen.getByText('发起识别'))
+    fireEvent.change(screen.getByLabelText('直播间号'), { target: { value: '202' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加自动识别' }))
 
     await waitFor(() => {
-      expect(mockEnqueue).toHaveBeenCalledWith('r1', 'm1')
+      expect(mockSetRoom).toHaveBeenCalledWith(202, true)
     })
-    expect(await screen.findByText(/已创建任务 t2/)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockGetSettings).toHaveBeenCalledTimes(2)
+    })
   })
 
-  it('should query a room transcripts and retry a FAILED task', async () => {
+  it('should show a validation error for an invalid room id and not call the api', async () => {
     render(<SettingsTab />)
 
-    await screen.findByText('查询')
+    await screen.findByRole('button', { name: '添加自动识别' })
 
-    fireEvent.change(screen.getByLabelText('主播'), { target: { value: '101' } })
-    fireEvent.click(screen.getByText('查询'))
+    fireEvent.change(screen.getByLabelText('直播间号'), { target: { value: '0' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加自动识别' }))
 
-    await waitFor(() => {
-      expect(mockGetRoomTranscripts).toHaveBeenCalledWith(101)
-    })
+    expect(await screen.findByText('请输入有效的直播间号')).toBeInTheDocument()
+    expect(mockSetRoom).not.toHaveBeenCalled()
+  })
 
-    const retryButton = await screen.findByText('重试')
-    fireEvent.click(retryButton)
+  it('should hint that a default model is required for auto recognition', async () => {
+    mockListModels.mockResolvedValue([
+      {
+        id: 'm1',
+        name: '非默认模型',
+        provider: 'ali-fun-asr',
+        type: 'streaming',
+        enabled: true,
+        isDefault: false,
+        maxConcurrency: 1,
+      },
+    ])
 
-    await waitFor(() => {
-      expect(mockRetry).toHaveBeenCalledWith('t1')
-    })
+    render(<SettingsTab />)
+
+    expect(
+      await screen.findByText('未配置默认模型，自动识别需要先设置默认模型'),
+    ).toBeInTheDocument()
   })
 
   it('should add a model without echoing the api key afterwards', async () => {
@@ -188,7 +169,7 @@ describe('SettingsTab', () => {
 
     expect(await screen.findByText('自动识别设置更新失败')).toBeInTheDocument()
     expect(screen.getByText('识别设置')).toBeInTheDocument()
-    expect(screen.getByText('发起识别')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '添加自动识别' })).toBeInTheDocument()
 
     mockSetRoom.mockResolvedValueOnce({ roomId: 101, enabled: false })
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
@@ -199,26 +180,6 @@ describe('SettingsTab', () => {
     await waitFor(() => {
       expect(screen.queryByText('自动识别设置更新失败')).not.toBeInTheDocument()
     })
-  })
-
-  it('should show the existing task id when enqueue returns 409', async () => {
-    mockEnqueue.mockRejectedValue(
-      Object.assign(new Error('conflict'), {
-        status: 409,
-        serverMessage: JSON.stringify({ taskId: 't-existing', status: 'PENDING' }),
-      }),
-    )
-
-    render(<SettingsTab />)
-
-    await screen.findByText('发起识别')
-
-    fireEvent.change(screen.getByLabelText('录播场次'), { target: { value: 'r1' } })
-    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'm1' } })
-    fireEvent.click(screen.getByText('发起识别'))
-
-    expect(await screen.findByText('已有任务 t-existing')).toBeInTheDocument()
-    expect(screen.queryByText('发起识别失败')).not.toBeInTheDocument()
   })
 
   it('should clamp a negative max concurrency to 1 on create and update', async () => {
