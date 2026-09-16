@@ -99,6 +99,34 @@ public sealed class LiveSessionRepository(IMongoDatabase database)
         await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
     }
 
+    /// <summary>
+    /// 按 RoomId + 时间点匹配场次：优先返回 StartDate &lt;= t &lt;= (StopDate ?? now) 的场次；
+    /// 无包含窗口时回退返回 StartDate &lt;= t 中最近的一场（供存量文件按创建时间归档匹配）。
+    /// </summary>
+    public async Task<LiveSessionRecord?> GetByRoomIdAndTimeWindowAsync(
+        long roomId, DateTime t, CancellationToken ct = default)
+    {
+        var baseFilter = Builders<LiveSessionRecord>.Filter.And(
+            Builders<LiveSessionRecord>.Filter.Eq(r => r.RoomId, roomId),
+            Builders<LiveSessionRecord>.Filter.Lte(r => r.StartDate, t));
+
+        var inWindowFilter = Builders<LiveSessionRecord>.Filter.Or(
+            Builders<LiveSessionRecord>.Filter.Eq(r => r.StopDate, null),
+            Builders<LiveSessionRecord>.Filter.Gte(r => r.StopDate, t));
+
+        var inWindow = await _collection.Find(baseFilter & inWindowFilter)
+            .SortByDescending(r => r.StartDate)
+            .FirstOrDefaultAsync(ct);
+        if (inWindow is not null)
+        {
+            return inWindow;
+        }
+
+        return await _collection.Find(baseFilter)
+            .SortByDescending(r => r.StartDate)
+            .FirstOrDefaultAsync(ct);
+    }
+
     public async Task<IReadOnlyList<LiveSessionRecord>> FindMergeCandidatesAsync(
         long roomId, DateTime startDate, TimeSpan tolerance, CancellationToken ct = default)
     {
