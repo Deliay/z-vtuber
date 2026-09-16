@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Pipelines;
 using Z.Vtuber.RecordingTranscript.Consumer.Configuration;
 
@@ -20,7 +21,9 @@ public static class FfmpegAudioArgs
         var args = new List<string> { "-hide_banner", "-loglevel", "warning" };
         if (!live)
         {
-            args.AddRange(["-ss", $"{positionMs / 1000.0}s"]);
+            // InvariantCulture：避免区域性小数点（如逗号）产生非法 ffmpeg 参数
+            var seconds = (positionMs / 1000.0).ToString("0.###", CultureInfo.InvariantCulture);
+            args.AddRange(["-ss", $"{seconds}s"]);
         }
 
         args.AddRange([

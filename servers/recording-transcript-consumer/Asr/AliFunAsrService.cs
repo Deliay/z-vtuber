@@ -71,6 +71,20 @@ public sealed class AliFunAsrService : IStreamingAsrService
         var sendTask = Task.Run(
             () => SendAudioLoopAsync(socket, stream, taskId, started.Task, linkedCts.Token), linkedCts.Token);
 
+        // send/receive 任一任务异常（如无 task-started 超时、websocket 异常关闭）都必须让主枚举
+        // 观测到，否则 channel 永不完成会导致任务永久悬挂并持续续期占住并发额度。
+        _ = Task.WhenAll(receiveTask, sendTask).ContinueWith(
+            t =>
+            {
+                if (t.IsFaulted && t.Exception is not null)
+                {
+                    channel.Writer.TryComplete(t.Exception.GetBaseException());
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
         try
         {
             await foreach (var segment in channel.Reader.ReadAllAsync(ct))
@@ -99,6 +113,7 @@ public sealed class AliFunAsrService : IStreamingAsrService
         CancellationToken ct)
     {
         var buffer = new byte[64 * 1024];
+        var finishedNormally = false;
         try
         {
             while (socket.State == WebSocketState.Open)
@@ -110,7 +125,10 @@ public sealed class AliFunAsrService : IStreamingAsrService
                     result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        writer.TryComplete();
+                        // 未收到 task-finished 的关闭属于异常终止，不得当作识别完成
+                        writer.TryComplete(finishedNormally
+                            ? null
+                            : new IOException("FunASR connection closed before task-finished"));
                         return;
                     }
 
@@ -141,6 +159,7 @@ public sealed class AliFunAsrService : IStreamingAsrService
                         }
                         break;
                     case FunAsrProtocol.ActionTaskFinished:
+                        finishedNormally = true;
                         writer.TryComplete();
                         return;
                     case FunAsrProtocol.ActionTaskFailed:
@@ -149,7 +168,9 @@ public sealed class AliFunAsrService : IStreamingAsrService
                 }
             }
 
-            writer.TryComplete();
+            writer.TryComplete(finishedNormally
+                ? null
+                : new IOException("FunASR connection ended before task-finished"));
         }
         catch (OperationCanceledException)
         {
@@ -162,7 +183,10 @@ public sealed class AliFunAsrService : IStreamingAsrService
         }
         finally
         {
-            started.TrySetException(new IOException("FunASR connection closed before task-started"));
+            if (!finishedNormally)
+            {
+                started.TrySetException(new IOException("FunASR connection closed before task-started"));
+            }
         }
     }
 

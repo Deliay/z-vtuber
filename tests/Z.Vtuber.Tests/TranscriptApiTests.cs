@@ -2,12 +2,15 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using StackExchange.Redis;
 using Z.Vtuber.Common.Live;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.RecordingTranscript.Api.Configuration;
 using Z.Vtuber.RecordingTranscript.Api.Contracts;
 using Z.Vtuber.RecordingTranscript.Api.Controllers;
 using Z.Vtuber.RecordingTranscript.Api.Sse;
@@ -29,11 +32,18 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     private TranscriptAutoEnqueueRepository AutoEnqueue => new(mongo.Database);
     private AccountBasicInfoRepository AccountInfo => new(mongo.Database);
 
-    private RecordingsArchiveController CreateArchiveController() =>
-        WithContext(new RecordingsArchiveController(Recordings, Tasks, Models, AutoEnqueue));
+    private static readonly IOptions<TranscriptApiOptions> DefaultOptions =
+        Options.Create(new TranscriptApiOptions());
 
-    private TranscriptTasksController CreateTasksController() =>
+    private RecordingsArchiveController CreateArchiveController(
+        IOptions<TranscriptApiOptions>? options = null) =>
+        WithContext(new RecordingsArchiveController(
+            options ?? DefaultOptions, Recordings, Tasks, Models, AutoEnqueue));
+
+    private TranscriptTasksController CreateTasksController(
+        IOptions<TranscriptApiOptions>? options = null) =>
         WithContext(new TranscriptTasksController(
+            options ?? DefaultOptions,
             Recordings,
             Tasks,
             Segments,
@@ -68,6 +78,15 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
             CreatedAt = DateTime.UtcNow,
         };
         await Recordings.InsertAsync(record);
+        return record;
+    }
+
+    private async Task<RecordingRecord> SeedEndedRecordingAsync(
+        long roomId, long mid, string title, params string[] files)
+    {
+        var record = await SeedRecordingAsync(roomId, mid, title, files);
+        record.EndedAt = DateTime.UtcNow;
+        await Recordings.SetEndedAtAsync(record.Id, record.EndedAt.Value);
         return record;
     }
 
@@ -132,6 +151,18 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     }
 
     [Fact]
+    public async Task ListRecordings_ClampsRequestedLimitToConfiguredMaxPageSize()
+    {
+        await SeedRecordingAsync(700003, 111, "场次一", "[RAW] a.flv");
+        await SeedRecordingAsync(700004, 111, "场次二", "[RAW] b.flv");
+
+        var options = Options.Create(new TranscriptApiOptions { MaxPageSize = 1 });
+        var json = Ok(await CreateArchiveController(options).ListRecordings(roomId: 700003, limit: 200));
+
+        Assert.Single(json.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
     public async Task GetRoomTranscripts_ReturnsTasksAndAutoEnqueueFlag()
     {
         var recording = await SeedRecordingAsync(700010, 333, "晚间歌回", "[RAW] a.flv");
@@ -178,7 +209,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
         Assert.IsType<NotFoundObjectResult>(
             await controller.Enqueue(new EnqueueRequest(missing, missing)));
 
-        var recording = await SeedRecordingAsync(700030, 555, "场次", "[RAW] a.flv");
+        var recording = await SeedEndedRecordingAsync(700030, 555, "场次", "[RAW] a.flv");
         Assert.IsType<NotFoundObjectResult>(
             await controller.Enqueue(new EnqueueRequest(recording.Id.ToString(), missing)));
     }
@@ -186,7 +217,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     [Fact]
     public async Task Enqueue_DisabledModel_Returns404()
     {
-        var recording = await SeedRecordingAsync(700031, 555, "场次", "[RAW] a.flv");
+        var recording = await SeedEndedRecordingAsync(700031, 555, "场次", "[RAW] a.flv");
         var model = await SeedModelAsync(enabled: false);
 
         var result = await CreateTasksController()
@@ -196,9 +227,25 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     }
 
     [Fact]
+    public async Task Enqueue_NotEndedRecording_Returns400()
+    {
+        var recording = await SeedRecordingAsync(700034, 555, "进行中场次", "[RAW] a.flv");
+        var model = await SeedModelAsync();
+
+        var result = await CreateTasksController()
+            .Enqueue(new EnqueueRequest(recording.Id.ToString(), model.Id.ToString()));
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var json = JsonSerializer.SerializeToElement(badRequest.Value);
+        Assert.Equal("recording has not ended", json.GetProperty("error").GetString());
+
+        Assert.Empty(await Tasks.ListAsync(recording.Id, null, null, 10));
+    }
+
+    [Fact]
     public async Task Enqueue_CreatesPendingFileTaskPreferringRaw()
     {
-        var recording = await SeedRecordingAsync(700032, 555, "场次", "[AV1] a.flv", "[RAW] a.flv");
+        var recording = await SeedEndedRecordingAsync(700032, 555, "场次", "[AV1] a.flv", "[RAW] a.flv");
         var model = await SeedModelAsync();
 
         var json = Ok(await CreateTasksController()
@@ -217,7 +264,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     [Fact]
     public async Task Enqueue_Duplicate_Returns409WithExistingTaskId()
     {
-        var recording = await SeedRecordingAsync(700033, 555, "场次", "[RAW] a.flv");
+        var recording = await SeedEndedRecordingAsync(700033, 555, "场次", "[RAW] a.flv");
         var model = await SeedModelAsync();
         var controller = CreateTasksController();
 
@@ -466,6 +513,59 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     }
 
     [Fact]
+    public async Task Sse_SubscribesBeforeReplay_SegmentPublishedDuringReplayIsDeliveredOnce()
+    {
+        var recording = await SeedRecordingAsync(700082, 555, "场次", "[RAW] a.flv");
+        var model = await SeedModelAsync();
+        var task = await SeedTaskAsync(recording.Id, model.Id, 700082, TranscriptTaskStatus.Running);
+        await Segments.InsertAsync(new TranscriptSegmentRecord
+        {
+            TaskId = task.Id,
+            StartTime = 1000,
+            EndTime = 1500,
+            Text = "replay-segment",
+        });
+
+        var stream = new PublishesDuringReplayStream(
+            Segments,
+            Tasks,
+            redis.Connection,
+            NullLogger<TranscriptSegmentStream>.Instance,
+            new TranscriptSegmentEvent(task.Id.ToString(), 4000, 4500, "during-replay"));
+
+        using var body = new MemoryStream();
+        var context = new DefaultHttpContext { Response = { Body = body } };
+
+        var originalInterval = TranscriptSegmentStream.HeartbeatInterval;
+        TranscriptSegmentStream.HeartbeatInterval = TimeSpan.FromMilliseconds(100);
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var streamTask = stream.StreamAsync(context.Response, task.Id, cts.Token);
+
+            await Task.Delay(400);
+            await Tasks.SetStatusAsync(task.Id, TranscriptTaskStatus.Done);
+
+            var completed = await Task.WhenAny(streamTask, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(streamTask, completed);
+            await streamTask;
+        }
+        finally
+        {
+            TranscriptSegmentStream.HeartbeatInterval = originalInterval;
+        }
+
+        body.Position = 0;
+        using var reader = new StreamReader(body, Encoding.UTF8);
+        var content = await reader.ReadToEndAsync();
+
+        Assert.Contains("replay-segment", content);
+        Assert.Contains("during-replay", content);
+        Assert.Equal(1, CountOccurrences(content, "\"start\":4000"));
+        Assert.Contains("event: done", content);
+    }
+
+    [Fact]
     public async Task Sse_AlreadyTerminalTask_ReplaysThenDone()
     {
         var recording = await SeedRecordingAsync(700081, 555, "场次", "[RAW] a.flv");
@@ -499,6 +599,34 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     {
         var result = await CreateTasksController().StreamTask(ObjectId.GenerateNewId().ToString(), CancellationToken.None);
         Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    private sealed class PublishesDuringReplayStream : TranscriptSegmentStream
+    {
+        private readonly IConnectionMultiplexer _redis;
+        private readonly TranscriptSegmentEvent _concurrent;
+
+        public PublishesDuringReplayStream(
+            TranscriptSegmentRepository segments,
+            TranscriptTaskRepository tasks,
+            IConnectionMultiplexer redis,
+            ILogger<TranscriptSegmentStream> logger,
+            TranscriptSegmentEvent concurrent)
+            : base(segments, tasks, redis, logger)
+        {
+            _redis = redis;
+            _concurrent = concurrent;
+        }
+
+        protected override async Task<IReadOnlyList<TranscriptSegmentRecord>> ReplaySegmentsAsync(
+            ObjectId taskId, CancellationToken ct)
+        {
+            var channel = new RedisChannel(
+                RecordingEventChannels.SegmentChannel(taskId.ToString()),
+                RedisChannel.PatternMode.Literal);
+            await _redis.GetSubscriber().PublishAsync(channel, JsonSerializer.Serialize(_concurrent));
+            return await base.ReplaySegmentsAsync(taskId, ct);
+        }
     }
 
     private static int CountOccurrences(string text, string value)

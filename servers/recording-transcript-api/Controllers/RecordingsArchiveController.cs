@@ -1,19 +1,21 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.RecordingTranscript.Api.Configuration;
 using Z.Vtuber.RecordingTranscript.Api.Contracts;
 
 namespace Z.Vtuber.RecordingTranscript.Api.Controllers;
 
 [ApiController]
 public class RecordingsArchiveController(
+    IOptions<TranscriptApiOptions> options,
     RecordingRepository recordings,
     TranscriptTaskRepository tasks,
     TranscriptModelRepository models,
     TranscriptAutoEnqueueRepository autoEnqueue) : ControllerBase
 {
     internal const int DefaultLimit = 50;
-    internal const int MaxLimit = 200;
 
     [HttpGet("api/recordings")]
     public async Task<IActionResult> ListRecordings(
@@ -22,7 +24,7 @@ public class RecordingsArchiveController(
         [FromQuery] DateTime? before = null,
         CancellationToken ct = default)
     {
-        limit = Math.Clamp(limit, 1, MaxLimit);
+        limit = Math.Clamp(limit, 1, options.Value.MaxPageSize);
         var items = await recordings.ListAsync(roomId, limit, before, ct);
         return Ok(new { items = items.Select(TranscriptMapping.ToRecordingItem).ToList() });
     }
@@ -40,7 +42,7 @@ public class RecordingsArchiveController(
 
         foreach (var recording in recordingList)
         {
-            var taskList = await tasks.ListAsync(recording.Id, null, null, MaxLimit, ct);
+            var taskList = await tasks.ListAsync(recording.Id, null, null, options.Value.MaxPageSize, ct);
             var taskRefs = taskList.Select(t => new RoomTranscriptTaskRefDto(
                 t.Id.ToString(),
                 t.ModelId.ToString(),

@@ -109,6 +109,75 @@ public class RecordingBackfillMigrationTests(MongoDbFixture fixture) : IClassFix
     }
 
     [Fact]
+    public async Task SessionOutsideWindow_FallsBackToLiveStatus()
+    {
+        const long roomId = 810005L;
+        var storageDir = NewStorageDir();
+        var path = WriteFlv(storageDir, roomId, FileName(roomId, "RAW", "窗口外"));
+        var created = CreatedAtUtc(path);
+
+        // 旧场次已结束且不覆盖文件创建时间：不得回退取「最近一场」，应落到 live_status 兜底
+        await new LiveSessionRepository(fixture.Database).UpsertAsync(new LiveSessionRecord
+        {
+            LiveId = "old-810005",
+            RoomId = roomId,
+            Title = "旧场次",
+            StartDate = created.AddHours(-5),
+            StopDate = created.AddHours(-4),
+            IsFinish = true,
+            FetchedAt = created.AddHours(-5),
+        });
+        await new LiveStatusRepository(fixture.Database).InsertAsync(new LiveStatusRecord
+        {
+            Id = ObjectId.GenerateNewId(),
+            RoomId = roomId,
+            Title = "状态兜底",
+            LiveStatus = true,
+            CreatedAt = created,
+        });
+
+        await CreateMigration(storageDir).RunAsync();
+
+        var record = Assert.Single(await Recordings.ListAsync(roomId, 10, null));
+        Assert.Equal(TruncateToMs(created), record.StartedAt);
+        Assert.Equal("窗口外", record.Title);
+    }
+
+    [Fact]
+    public async Task StaleOpenSession_DoesNotSwallowFarFutureFile_FallsBackToStatus()
+    {
+        const long roomId = 810006L;
+        var storageDir = NewStorageDir();
+        var path = WriteFlv(storageDir, roomId, FileName(roomId, "RAW", "远期"));
+        var created = CreatedAtUtc(path);
+
+        // StopDate=null 的陈旧场次（10 天前）：不得吞并文件
+        await new LiveSessionRepository(fixture.Database).UpsertAsync(new LiveSessionRecord
+        {
+            LiveId = "stale-810006",
+            RoomId = roomId,
+            Title = "陈旧未结束",
+            StartDate = created.AddDays(-10),
+            StopDate = null,
+            IsFinish = false,
+            FetchedAt = created.AddDays(-10),
+        });
+        await new LiveStatusRepository(fixture.Database).InsertAsync(new LiveStatusRecord
+        {
+            Id = ObjectId.GenerateNewId(),
+            RoomId = roomId,
+            Title = "状态兜底",
+            LiveStatus = true,
+            CreatedAt = created,
+        });
+
+        await CreateMigration(storageDir).RunAsync();
+
+        var record = Assert.Single(await Recordings.ListAsync(roomId, 10, null));
+        Assert.Equal(TruncateToMs(created), record.StartedAt);
+    }
+
+    [Fact]
     public async Task ReRun_IsIdempotent()
     {
         const long roomId = 810003L;

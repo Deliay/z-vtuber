@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.RecordingTranscript.Api.Configuration;
 using Z.Vtuber.RecordingTranscript.Api.Contracts;
 using Z.Vtuber.RecordingTranscript.Api.Sse;
 
@@ -10,6 +12,7 @@ namespace Z.Vtuber.RecordingTranscript.Api.Controllers;
 
 [ApiController]
 public class TranscriptTasksController(
+    IOptions<TranscriptApiOptions> options,
     RecordingRepository recordings,
     TranscriptTaskRepository tasks,
     TranscriptSegmentRepository segments,
@@ -17,7 +20,6 @@ public class TranscriptTasksController(
     TranscriptSegmentStream segmentStream) : ControllerBase
 {
     internal const int DefaultLimit = 50;
-    internal const int MaxLimit = 200;
 
     [HttpPost("api/transcripts/enqueue")]
     public async Task<IActionResult> Enqueue([FromBody] EnqueueRequest? request, CancellationToken ct = default)
@@ -33,6 +35,11 @@ public class TranscriptTasksController(
         if (recording is null)
         {
             return NotFound(new ErrorResponse("recording or model not found"));
+        }
+
+        if (recording.EndedAt is null)
+        {
+            return BadRequest(new ErrorResponse("recording has not ended"));
         }
 
         var model = await models.GetByIdAsync(modelId, ct);
@@ -88,7 +95,7 @@ public class TranscriptTasksController(
         [FromQuery] int limit = DefaultLimit,
         CancellationToken ct = default)
     {
-        limit = Math.Clamp(limit, 1, MaxLimit);
+        limit = Math.Clamp(limit, 1, options.Value.MaxPageSize);
 
         ObjectId? recordingObjectId = null;
         if (!string.IsNullOrWhiteSpace(recordingId))

@@ -24,6 +24,7 @@ public sealed class RecordingBackfillMigration(
     private readonly RecordingRepository _recordings = new(database);
     private readonly LiveSessionRepository _sessions = new(database);
     private readonly LiveStatusRepository _statuses = new(database);
+    private readonly AccountBasicInfoRepository _accounts = new(database);
     private readonly IMongoCollection<MetaRecord> _meta =
         database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
 
@@ -91,7 +92,9 @@ public sealed class RecordingBackfillMigration(
 
                 if (!groups.TryGetValue(groupKey, out var group))
                 {
-                    group = new BackfillGroup(roomId, startedAt, title, session?.StopDate);
+                    // 补 roomId→mid 映射（bilibili_account_basic_info），取不到时按 0 兜底
+                    var mid = await _accounts.GetLatestMidByRoomIdAsync(roomId, ct) ?? 0;
+                    group = new BackfillGroup(roomId, mid, startedAt, title, session?.StopDate);
                     groups[groupKey] = group;
                 }
 
@@ -114,7 +117,7 @@ public sealed class RecordingBackfillMigration(
                     await _recordings.InsertAsync(new RecordingRecord
                     {
                         RoomId = group.RoomId,
-                        Mid = 0,
+                        Mid = group.Mid,
                         Title = group.Title,
                         Files = [.. group.Files],
                         StartedAt = group.StartedAt,
@@ -240,9 +243,10 @@ public sealed class RecordingBackfillMigration(
     private static string? NullIfWhiteSpace(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
 
-    private sealed class BackfillGroup(long roomId, DateTime startedAt, string title, DateTime? endedAt)
+    private sealed class BackfillGroup(long roomId, long mid, DateTime startedAt, string title, DateTime? endedAt)
     {
         public long RoomId { get; } = roomId;
+        public long Mid { get; } = mid;
         public DateTime StartedAt { get; } = startedAt;
         public string Title { get; } = title;
         public DateTime? EndedAt { get; } = endedAt;

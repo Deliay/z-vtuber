@@ -110,7 +110,10 @@ public sealed class FakeAudioSource : IAudioSource
     public Stream Audio { get; } = new MemoryStream();
     public bool Disposed { get; private set; }
 
-    public Task<int> WaitForExitAsync(CancellationToken ct) => Task.FromResult(0);
+    /// <summary>ffmpeg 退出码：0=正常结束，非 0=音源失败（应 FAILED）。</summary>
+    public int ExitCode { get; set; }
+
+    public Task<int> WaitForExitAsync(CancellationToken ct) => Task.FromResult(ExitCode);
 
     public ValueTask DisposeAsync()
     {
@@ -125,18 +128,24 @@ public sealed class FakeAudioSourceFactory : IAudioSourceFactory
     public List<(string Url, long Position)> FileCalls { get; } = [];
     public List<FakeAudioSource> Sources { get; } = [];
 
+    /// <summary>创建的音频源退出码（非 0 模拟 ffmpeg 失败）。</summary>
+    public int ExitCode { get; set; }
+
     public IAudioSource CreateLive(string liveUrl, long offsetMs)
     {
         LiveCalls.Add((liveUrl, offsetMs));
-        var source = new FakeAudioSource();
-        Sources.Add(source);
-        return source;
+        return Track(new FakeAudioSource());
     }
 
     public IAudioSource CreateFile(string fileUrl, long positionMs)
     {
         FileCalls.Add((fileUrl, positionMs));
-        var source = new FakeAudioSource();
+        return Track(new FakeAudioSource());
+    }
+
+    private FakeAudioSource Track(FakeAudioSource source)
+    {
+        source.ExitCode = ExitCode;
         Sources.Add(source);
         return source;
     }
@@ -144,7 +153,15 @@ public sealed class FakeAudioSourceFactory : IAudioSourceFactory
 
 public sealed class FakeRecordingServiceClient : IRecordingServiceClient
 {
-    public bool LiveAvailable { get; set; }
+    public LiveAudioProbe ProbeResult { get; set; } = LiveAudioProbe.NotLive;
+
+    /// <summary>兼容既有测试：true→Live，false→NotLive。</summary>
+    public bool LiveAvailable
+    {
+        get => ProbeResult == LiveAudioProbe.Live;
+        set => ProbeResult = value ? LiveAudioProbe.Live : LiveAudioProbe.NotLive;
+    }
+
     public string LiveUrlBase { get; set; } = "http://recording/api/stream/audio";
     public string FileUrlBase { get; set; } = "http://recording/api/file";
 
@@ -152,8 +169,8 @@ public sealed class FakeRecordingServiceClient : IRecordingServiceClient
 
     public string BuildFileUrl(long roomId, string fileName) => $"{FileUrlBase}/{fileName}";
 
-    public Task<bool> IsLiveStreamAvailableAsync(long roomId, CancellationToken ct = default) =>
-        Task.FromResult(LiveAvailable);
+    public Task<LiveAudioProbe> ProbeLiveAudioAsync(long roomId, CancellationToken ct = default) =>
+        Task.FromResult(ProbeResult);
 }
 
 public sealed class FakeTranscriptSegmentPublisher : ITranscriptSegmentPublisher

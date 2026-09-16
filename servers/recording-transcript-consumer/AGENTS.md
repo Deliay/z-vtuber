@@ -58,6 +58,7 @@ graph LR
 
 - runtime 镜像含 ffmpeg（Dockerfile 已装）；可多副本部署——Redis 任务锁保证同一任务单节点执行，宕机后锁 TTL 过期由他节点接管续跑
 - MongoDB 需单节点 replica set（segment+position 事务前置；AppHost/测试 fixture 均为单节点 replica set + `directConnection=true`）
+- 复用旧 Mongo 数据卷注意：AppHost 通过 `mongo/rs-init.js`（`WithInitFiles`）执行 `rs.initiate`，而该脚本仅在数据目录为空的首次启动时运行；若复用旧版 AppHost 的 standalone 数据卷，mongod 会以 `--replSet rs0` 启动但副本集无 primary，事务永久失败且无显式报错。首次以 replica set 运行前必须先删除/重建该数据卷（或手动进容器执行 `rs.initiate`），详见 `infra/apphost/AppHost.cs`
 - FunASR API Key 由 `transcript_models` 页面配置注入，本服务按任务的模型读取，不经配置项下发
 
 ## 开发流程

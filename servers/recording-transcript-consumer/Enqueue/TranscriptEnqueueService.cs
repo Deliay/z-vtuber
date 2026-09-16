@@ -171,7 +171,10 @@ public sealed class TranscriptEnqueueService(
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             var winner = await tasks.GetByRecordingAndModelAsync(recording.Id, model.Id, ct);
-            return winner?.Id ?? record.Id;
+            // 不得回退返回未持久化的 record.Id（幻影 taskId）：唯一索引刚冲突却查不到视为异常
+            return winner?.Id
+                ?? throw new InvalidOperationException(
+                    $"transcript task for recording {recording.Id} / model {model.Id} conflicted on insert but could not be reloaded");
         }
     }
 

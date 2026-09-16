@@ -82,13 +82,28 @@ public sealed class TranscriptTaskScanner(
                 continue;
             }
 
-            await tasks.SetStatusAsync(task.Id, TranscriptTaskStatus.Running, null, ct);
-            _ = RunDetachedAsync(task, handle, model.Id, ct);
+            try
+            {
+                await tasks.SetStatusAsync(task.Id, TranscriptTaskStatus.Running, null, ct);
+            }
+            catch (Exception ex)
+            {
+                // 置 RUNNING 失败：释放内存预留 + 锁，避免并发额度泄漏与僵尸锁
+                logger.LogWarning(ex, "Failed to mark transcript task {TaskId} as RUNNING", task.Id);
+                ReleaseConcurrency(model.Id);
+                await SafeReleaseLockAsync(handle, task.Id);
+                continue;
+            }
+
+            // DB 已反映 RUNNING（CountByModelAndStatus 会计入），释放内存预留避免同一任务被重复计数，
+            // 否则 MaxConcurrency=2 时实际只跑 1 个。
+            ReleaseConcurrency(model.Id);
+            _ = RunDetachedAsync(task, handle, ct);
         }
     }
 
     private async Task RunDetachedAsync(
-        TranscriptTaskRecord task, ITranscriptTaskLock handle, ObjectId modelId, CancellationToken ct)
+        TranscriptTaskRecord task, ITranscriptTaskLock handle, CancellationToken ct)
     {
         try
         {
@@ -98,9 +113,26 @@ public sealed class TranscriptTaskScanner(
         {
             logger.LogWarning(ex, "Transcript task runner for {TaskId} threw", task.Id);
         }
-        finally
+    }
+
+    private async Task SafeReleaseLockAsync(ITranscriptTaskLock handle, ObjectId taskId)
+    {
+        try
         {
-            ReleaseConcurrency(modelId);
+            await handle.ReleaseAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to release lock for transcript task {TaskId}", taskId);
+        }
+
+        try
+        {
+            await handle.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to dispose lock for transcript task {TaskId}", taskId);
         }
     }
 

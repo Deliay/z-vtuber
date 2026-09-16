@@ -176,5 +176,71 @@ describe('SettingsTab', () => {
     await waitFor(() => {
       expect(screen.getByText('服务不可用')).toBeInTheDocument()
     })
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+  })
+
+  it('should keep settings usable and offer retry after an operation failure', async () => {
+    mockSetRoom.mockRejectedValueOnce(new Error('network error'))
+
+    render(<SettingsTab />)
+
+    fireEvent.click(await screen.findByText('关闭'))
+
+    expect(await screen.findByText('自动识别设置更新失败')).toBeInTheDocument()
+    expect(screen.getByText('识别设置')).toBeInTheDocument()
+    expect(screen.getByText('发起识别')).toBeInTheDocument()
+
+    mockSetRoom.mockResolvedValueOnce({ roomId: 101, enabled: false })
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    await waitFor(() => {
+      expect(mockSetRoom).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('自动识别设置更新失败')).not.toBeInTheDocument()
+    })
+  })
+
+  it('should show the existing task id when enqueue returns 409', async () => {
+    mockEnqueue.mockRejectedValue(
+      Object.assign(new Error('conflict'), {
+        status: 409,
+        serverMessage: JSON.stringify({ taskId: 't-existing', status: 'PENDING' }),
+      }),
+    )
+
+    render(<SettingsTab />)
+
+    await screen.findByText('发起识别')
+
+    fireEvent.change(screen.getByLabelText('录播场次'), { target: { value: 'r1' } })
+    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(screen.getByText('发起识别'))
+
+    expect(await screen.findByText('已有任务 t-existing')).toBeInTheDocument()
+    expect(screen.queryByText('发起识别失败')).not.toBeInTheDocument()
+  })
+
+  it('should clamp a negative max concurrency to 1 on create and update', async () => {
+    render(<SettingsTab />)
+
+    await screen.findByText('添加模型')
+
+    fireEvent.change(screen.getByLabelText('最大并发-备用模型'), { target: { value: '-3' } })
+    fireEvent.click(screen.getAllByRole('button', { name: '保存' })[1])
+    await waitFor(() => {
+      expect(mockUpdateModel).toHaveBeenCalledWith('m2', { maxConcurrency: 1 })
+    })
+
+    fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: '负并发模型' } })
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'secret' } })
+    fireEvent.change(screen.getByLabelText('最大并发数'), { target: { value: '-5' } })
+    const createForm = screen.getByText('添加').closest('form')
+    fireEvent.submit(createForm as HTMLFormElement)
+
+    await waitFor(() => {
+      expect(mockCreateModel).toHaveBeenCalledTimes(1)
+    })
+    expect(mockCreateModel.mock.calls[0][0].maxConcurrency).toBe(1)
   })
 })

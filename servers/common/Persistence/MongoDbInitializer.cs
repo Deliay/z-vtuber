@@ -930,12 +930,22 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
     private async Task EnsureTranscriptIndexesAsync(CancellationToken ct)
     {
         var recordings = database.GetCollection<RecordingRecord>(MongoCollectionNames.Recordings);
-        var recordingKeys = Builders<RecordingRecord>.IndexKeys
+        // 幂等键 RoomId+StartedAt 唯一索引：存量清洗/滚动更新双实例并发插入时兜底，DuplicateKey 才算已存在
+        await DropIndexIfExistsAsync(recordings, "RoomId_1_StartedAt_-1", ct);
+        var recordingIdempotencyKeys = Builders<RecordingRecord>.IndexKeys
+            .Ascending(r => r.RoomId)
+            .Ascending(r => r.StartedAt);
+        await recordings.Indexes.CreateOneAsync(
+            new CreateIndexModel<RecordingRecord>(
+                recordingIdempotencyKeys, new CreateIndexOptions { Unique = true, Name = "RoomId_1_StartedAt_1" }),
+            cancellationToken: ct);
+
+        var recordingListKeys = Builders<RecordingRecord>.IndexKeys
             .Ascending(r => r.RoomId)
             .Descending(r => r.StartedAt);
         await recordings.Indexes.CreateOneAsync(
             new CreateIndexModel<RecordingRecord>(
-                recordingKeys, new CreateIndexOptions { Name = "RoomId_1_StartedAt_-1" }),
+                recordingListKeys, new CreateIndexOptions { Name = "RoomId_1_StartedAt_-1" }),
             cancellationToken: ct);
 
         var tasks = database.GetCollection<TranscriptTaskRecord>(MongoCollectionNames.TranscriptTasks);

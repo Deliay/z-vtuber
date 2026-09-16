@@ -117,6 +117,31 @@ describe('TaskListTab', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(4)
   })
 
+  it('should re-fetch the selected task when the refresh button is clicked', async () => {
+    mockListTasks.mockResolvedValue([
+      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },
+    ])
+    mockGetTask.mockResolvedValue({
+      task: { id: 't1' },
+      segments: [{ start: 0, end: 1000, text: '第一句' }],
+    })
+
+    render(<TaskListTab />)
+
+    fireEvent.click(await screen.findByText('查看'))
+
+    await waitFor(() => {
+      expect(mockGetTask).toHaveBeenCalledTimes(1)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新任务-t1' }))
+
+    await waitFor(() => {
+      expect(mockGetTask).toHaveBeenCalledTimes(2)
+    })
+    expect(mockGetTask).toHaveBeenLastCalledWith('t1')
+  })
+
   it('should close the EventSource on unmount', async () => {
     mockListTasks.mockResolvedValue([
       { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },

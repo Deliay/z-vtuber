@@ -392,7 +392,7 @@ public interface IStreamingAsrService
 
 #### 实现点 6: SSE 实时推送
 
-- transcript-api 端点：先查库 replay 全量 segments，再订阅 `transcript-segment:{taskId}` 转发；去重以 `(start)` 为键（replay 与实时可能交叠）；终态推 `done` 关闭；
+- transcript-api 端点：先订阅 `transcript-segment:{taskId}` 转发，再查库 replay 全量 segments；去重以 `(start)` 为键（replay 与实时可能交叠）；订阅先行使「订阅之后发布」的事件全部入队，replay 覆盖订阅前已落库数据，二者合并不丢不重；终态在排空已入队事件后推 `done` 关闭；
 - web 用原生 `EventSource`（项目首个前端 SSE 用法），断开自动重连由 EventSource 自带，重连后 replay 保证不丢。
 
 #### 实现点 7: 对账补建（事件 fire-and-forget 的可靠性兜底）
@@ -518,6 +518,7 @@ tests/Z.Vtuber.Tests/（新增）
 
 - AppHost 增加两服务：`WithReference(mongo/messaging)`、consumer 增 `RecordingService:BaseUrl`、api 增 `TranscriptService:BaseUrl`、健康检查 `/health`；
 - **MongoDB 调整为单节点 replica set**（事务前置）：AppHost mongo 资源加 `--replSet rs0` 初始化；Testcontainers `MongoDbFixture` 同步改 replica set 模式；连接串对客户端透明（`directConnection=true`）；
+  - 复用旧数据卷注意：`rs.initiate` 由 `mongo/rs-init.js`（`WithInitFiles`）在数据目录【为空】的首次启动时执行；复用旧版 AppHost 的 standalone 数据卷时脚本不会运行，副本集无 primary、事务永久失败且无明显报错。首次以 replica set 运行前必须删除/重建该卷（或手动执行 `rs.initiate`），详见 `infra/apphost/AppHost.cs`；
 - Dockerfile：transcript-api 照 api 纯净模式；consumer 照 recording 模式（装 ffmpeg）；各加镜像 CI workflow；
 - 副本数：consumer 可多副本（锁保证单任务单节点）；transcript-api 无状态多副本；
 - 配置：`TranscriptConsumer:ScanIntervalSeconds`(10)、`TranscriptConsumer:LockTtlSeconds`(30)、`TranscriptConsumer:AudioBufferSeconds`(60)、`TranscriptConsumer:ReconcileIntervalSeconds`(300)、`RecordingService:BaseUrl`、`TranscriptService:BaseUrl`。

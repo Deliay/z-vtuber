@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   listTranscriptTasks,
   getTranscriptTask,
@@ -71,6 +71,8 @@ export function TaskListTab() {
   const [error, setError] = useState<string | null>(null)
 
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const loadedTaskIdRef = useRef<string | null>(null)
   const [segments, setSegments] = useState<TranscriptSegment[]>([])
   const [segmentsLoading, setSegmentsLoading] = useState(false)
   const [segmentsError, setSegmentsError] = useState<string | null>(null)
@@ -98,7 +100,10 @@ export function TaskListTab() {
     }
 
     let cancelled = false
-    setSegments([])
+    if (loadedTaskIdRef.current !== selectedTaskId) {
+      setSegments([])
+      loadedTaskIdRef.current = selectedTaskId
+    }
     setSegmentsError(null)
     setSegmentsLoading(true)
 
@@ -142,7 +147,18 @@ export function TaskListTab() {
       source.removeEventListener('done', handleDone)
       source.close()
     }
-  }, [selectedTaskId])
+  }, [selectedTaskId, refreshKey])
+
+  const handleTaskAction = (taskId: string | undefined) => {
+    if (!taskId) {
+      return
+    }
+    if (selectedTaskId === taskId) {
+      setRefreshKey((key) => key + 1)
+    } else {
+      setSelectedTaskId(taskId)
+    }
+  }
 
   return (
     <div>
@@ -185,7 +201,12 @@ export function TaskListTab() {
                   <td style={{ padding: '0.5rem' }}>{formatPosition(task.position)}</td>
                   <td style={{ padding: '0.5rem' }}>
                     <button
-                      onClick={() => setSelectedTaskId(task.id ?? null)}
+                      onClick={() => handleTaskAction(task.id)}
+                      aria-label={
+                        selectedTaskId === task.id
+                          ? `刷新任务-${task.id ?? ''}`
+                          : `查看任务-${task.id ?? ''}`
+                      }
                       style={{ padding: '0.25rem 0.5rem' }}
                     >
                       {selectedTaskId === task.id ? '刷新' : '查看'}

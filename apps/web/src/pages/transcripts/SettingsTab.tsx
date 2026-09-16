@@ -42,12 +42,35 @@ const inputStyle: React.CSSProperties = {
   borderRadius: '0.25rem',
 }
 
+function normalizeConcurrency(value: string | number | null | undefined): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1
+  }
+  return Math.floor(parsed)
+}
+
+function parseExistingTaskId(error: unknown): string | undefined {
+  const apiError = error as { status?: number; serverMessage?: string }
+  if (apiError.status !== 409) {
+    return undefined
+  }
+  try {
+    const body = JSON.parse(apiError.serverMessage ?? '') as { taskId?: string }
+    return body.taskId
+  } catch {
+    return undefined
+  }
+}
+
 export function SettingsTab() {
   const [settings, setSettings] = useState<TranscriptSettingsItem[]>([])
   const [models, setModels] = useState<TranscriptModel[]>([])
   const [recordings, setRecordings] = useState<TranscriptRecordingItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [initialized, setInitialized] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [retryAction, setRetryAction] = useState<(() => void) | null>(null)
 
   const [enqueueRecordingId, setEnqueueRecordingId] = useState('')
   const [enqueueModelId, setEnqueueModelId] = useState('')
@@ -70,6 +93,7 @@ export function SettingsTab() {
   const fetchAll = useCallback(async () => {
     try {
       setError(null)
+      setRetryAction(null)
       setLoading(true)
       const [settingsData, modelsData, recordingsData] = await Promise.all([
         getTranscriptSettings(),
@@ -81,8 +105,10 @@ export function SettingsTab() {
       setRecordings(recordingsData)
     } catch {
       setError('服务不可用')
+      setRetryAction(null)
     } finally {
       setLoading(false)
+      setInitialized(true)
     }
   }, [])
 
@@ -121,11 +147,23 @@ export function SettingsTab() {
       return
     }
     try {
+      setError(null)
+      setRetryAction(null)
       await setRoomAutoEnqueue(item.roomId, !item.enabled)
       await fetchAll()
     } catch {
       setError('自动识别设置更新失败')
+      setRetryAction(() => () => {
+        void handleToggleAuto(item)
+      })
     }
+  }
+
+  const retryFailedAction = () => {
+    const action = retryAction ?? fetchAll
+    setError(null)
+    setRetryAction(null)
+    void action()
   }
 
   const handleEnqueue = async (e: React.FormEvent) => {
@@ -145,7 +183,12 @@ export function SettingsTab() {
         const view = await getRoomTranscripts(Number(selectedRoomId))
         setRoomView(view)
       }
-    } catch {
+    } catch (err) {
+      const existingTaskId = parseExistingTaskId(err)
+      if (existingTaskId) {
+        setEnqueueMessage(`已有任务 ${existingTaskId}`)
+        return
+      }
       setEnqueueError('发起识别失败')
     }
   }
@@ -198,7 +241,7 @@ export function SettingsTab() {
         apiKey: modelApiKey,
         enabled: modelEnabled,
         isDefault: modelIsDefault,
-        maxConcurrency: Number(modelMaxConcurrency) || 1,
+        maxConcurrency: normalizeConcurrency(modelMaxConcurrency),
       })
       setModelName('')
       setModelApiKey('')
@@ -229,16 +272,33 @@ export function SettingsTab() {
     }
   }
 
-  if (loading) {
+  if (loading && !initialized) {
     return <p>加载中...</p>
-  }
-
-  if (error) {
-    return <p style={{ color: '#f87171' }}>{error}</p>
   }
 
   return (
     <div>
+      {error && (
+        <div
+          role="alert"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            border: '1px solid #7f1d1d',
+            backgroundColor: '#450a0a',
+            padding: '0.5rem 0.75rem',
+            borderRadius: '0.25rem',
+            marginBottom: '1rem',
+          }}
+        >
+          <span style={{ color: '#f87171' }}>{error}</span>
+          <button onClick={retryFailedAction} style={{ padding: '0.25rem 0.75rem' }}>
+            重试
+          </button>
+        </div>
+      )}
+
       <section style={{ marginBottom: '2rem' }}>
         <h3>识别设置</h3>
 
@@ -415,8 +475,9 @@ export function SettingsTab() {
                     <button
                       onClick={() =>
                         handleUpdateModel(model, {
-                          maxConcurrency:
-                            Number(concurrencyDrafts[model.id ?? ''] ?? model.maxConcurrency) || 1,
+                          maxConcurrency: normalizeConcurrency(
+                            concurrencyDrafts[model.id ?? ''] ?? model.maxConcurrency,
+                          ),
                         })
                       }
                       style={{ marginLeft: '0.5rem', padding: '0.25rem 0.5rem' }}

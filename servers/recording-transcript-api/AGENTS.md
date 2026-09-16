@@ -65,6 +65,8 @@ graph LR
 - 无状态，可多副本部署
 - 需可读 `recordings`/`transcript_*` 集合、可写任务/模型/设置集合，并订阅 Redis `transcript-segment:*`
 - 与 consumer 共享同一 MongoDB 与 Redis
+- MongoDB 需单节点 replica set（与 consumer 共享，事务前置；AppHost/测试 fixture 均为单节点 replica set + `directConnection=true`）
+- 复用旧 Mongo 数据卷注意：AppHost 通过 `mongo/rs-init.js`（`WithInitFiles`）执行 `rs.initiate`，该脚本仅在数据目录为空的首次启动时运行；复用旧 standalone 数据卷会导致副本集无 primary、事务永久失败且无显式报错。首次以 replica set 运行前必须删除/重建数据卷（或手动执行 `rs.initiate`），详见 `infra/apphost/AppHost.cs`
 
 ## 开发流程
 

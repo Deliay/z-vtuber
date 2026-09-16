@@ -245,6 +245,115 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
     }
 
     [Fact]
+    public async Task AudioSourceFailure_MarksFailed_NotSilentDone()
+    {
+        var modelId = await InsertModelAsync();
+        var recordingId = await InsertRecordingAsync(107);
+        var taskId = await InsertTaskAsync(recordingId, modelId, mode: TranscriptTaskModes.File);
+
+        // ffmpeg 非 0 退出（如录播文件缺失/不可读）：stdout 立即 EOF、ASR 无片段，但不得静默 DONE
+        var audioFactory = new FakeAudioSourceFactory { ExitCode = 1 };
+        var asrFactory = new FakeStreamingAsrServiceFactory
+        {
+            Provider = _ => new FakeStreamingAsrService([]),
+        };
+        var runner = CreateRunner(
+            new FakeRecordingServiceClient { LiveAvailable = false },
+            audioFactory, asrFactory, CreatePersister(), new FakeTranscriptSegmentPublisher());
+
+        await runner.RunAsync(await Tasks.GetByIdAsync(taskId));
+
+        var task = await Tasks.GetByIdAsync(taskId);
+        Assert.Equal(TranscriptTaskStatus.Failed, task!.Status);
+        Assert.Contains("exited with code 1", task.Error);
+    }
+
+    [Fact]
+    public async Task LiveProbeUnknown_MarksFailed_DoesNotReadPossiblyRecordingFile()
+    {
+        var modelId = await InsertModelAsync();
+        var recordingId = await InsertRecordingAsync(108);
+        var taskId = await InsertTaskAsync(
+            recordingId, modelId, mode: TranscriptTaskModes.Live, position: 1000);
+
+        var recordingClient = new FakeRecordingServiceClient { ProbeResult = LiveAudioProbe.Unknown };
+        var audioFactory = new FakeAudioSourceFactory();
+        var asrFactory = new FakeStreamingAsrServiceFactory
+        {
+            Provider = _ => new FakeStreamingAsrService([]),
+        };
+        var runner = CreateRunner(
+            recordingClient, audioFactory, asrFactory, CreatePersister(), new FakeTranscriptSegmentPublisher());
+
+        await runner.RunAsync(await Tasks.GetByIdAsync(taskId));
+
+        var task = await Tasks.GetByIdAsync(taskId);
+        Assert.Equal(TranscriptTaskStatus.Failed, task!.Status);
+        // 传输异常不得转 file：仍可能直播中，读文件会提前 EOF 丢后半场
+        Assert.Empty(audioFactory.FileCalls);
+        Assert.Empty(audioFactory.LiveCalls);
+    }
+
+    [Fact]
+    public async Task Fencing_LostOwnership_DoesNotWriteTerminalStatus()
+    {
+        var modelId = await InsertModelAsync();
+        var recordingId = await InsertRecordingAsync(109);
+        var taskId = await InsertTaskAsync(recordingId, modelId, mode: TranscriptTaskModes.File);
+        var task = (await Tasks.GetByIdAsync(taskId))!;
+
+        // 无片段、exit 0：仅在终态写前 fencing；失锁则不得写 DONE（保留 RUNNING 交新持有者）
+        var handle = new FakeTranscriptTaskLock { TaskId = taskId, OwnershipResult = false };
+        var asrFactory = new FakeStreamingAsrServiceFactory
+        {
+            Provider = _ => new FakeStreamingAsrService([]),
+        };
+        var runner = CreateRunner(
+            new FakeRecordingServiceClient { LiveAvailable = false },
+            new FakeAudioSourceFactory(), asrFactory, CreatePersister(), new FakeTranscriptSegmentPublisher());
+
+        await runner.RunAsync(task, handle);
+
+        Assert.Equal(TranscriptTaskStatus.Running, (await Tasks.GetByIdAsync(taskId))!.Status);
+    }
+
+    [Fact]
+    public async Task Scanner_AllowsTwoConcurrentTasks_WhenMaxConcurrencyIsTwo()
+    {
+        var modelId = await InsertModelAsync(maxConcurrency: 2);
+        var recording1 = await InsertRecordingAsync(110);
+        var first = await InsertTaskAsync(recording1, modelId, roomId: 110);
+        var recording2 = await InsertRecordingAsync(111);
+        var second = await InsertTaskAsync(recording2, modelId, roomId: 111);
+        var recording3 = await InsertRecordingAsync(112);
+        var third = await InsertTaskAsync(recording3, modelId, roomId: 112);
+
+        var fakeRunner = new FakeTranscriptTaskRunner { WaitForGate = true };
+        var lockProvider = new FakeTranscriptTaskLockProvider();
+        var scanner = new TranscriptTaskScanner(
+            Tasks, Models, lockProvider, fakeRunner,
+            new TranscriptConsumerOptions { ScanBatchSize = 10 },
+            NullLogger<TranscriptTaskScanner>.Instance);
+
+        try
+        {
+            await scanner.ScanOnceAsync();
+
+            // 修复前：置 RUNNING 后未释放内存预留导致同一任务双重计数，max=2 实际只跑 1 个
+            Assert.Equal(TranscriptTaskStatus.Running, (await Tasks.GetByIdAsync(first))!.Status);
+            Assert.Equal(TranscriptTaskStatus.Running, (await Tasks.GetByIdAsync(second))!.Status);
+            Assert.Equal(TranscriptTaskStatus.Pending, (await Tasks.GetByIdAsync(third))!.Status);
+        }
+        finally
+        {
+            foreach (var gate in fakeRunner.Gates)
+            {
+                gate.TrySetResult();
+            }
+        }
+    }
+
+    [Fact]
     public async Task Scanner_RespectsModelMaxConcurrency()
     {
         var modelId = await InsertModelAsync(maxConcurrency: 1);

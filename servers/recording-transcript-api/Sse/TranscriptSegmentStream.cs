@@ -10,10 +10,11 @@ using Z.Vtuber.Common.Persistence.Entities;
 namespace Z.Vtuber.RecordingTranscript.Api.Sse;
 
 /// <summary>
-/// 任务实时 segments SSE：先 replay 已入库 segments，再订阅 Redis <c>transcript-segment:{taskId}</c> 转发新句子；
+/// 任务实时 segments SSE：先订阅 Redis <c>transcript-segment:{taskId}</c>，再 replay 已入库 segments；
 /// 以 <c>start</c> 为键去重；15s 心跳注释；任务终态（DONE/FAILED）推送 done 事件并关闭。
+/// 订阅先行保证「publisher 先落库再发布」的语义下，订阅之后发布的事件不会丢失，replay 覆盖订阅前已落库的数据。
 /// </summary>
-public sealed class TranscriptSegmentStream(
+public class TranscriptSegmentStream(
     TranscriptSegmentRepository segmentRepository,
     TranscriptTaskRepository taskRepository,
     IConnectionMultiplexer redis,
@@ -30,24 +31,6 @@ public sealed class TranscriptSegmentStream(
 
         var taskKey = taskId.ToString();
         var seen = new HashSet<long>();
-
-        var existing = await segmentRepository.ListByTaskAsync(taskId, ct);
-        foreach (var segment in existing)
-        {
-            if (!seen.Add(segment.StartTime))
-            {
-                continue;
-            }
-
-            await WriteSegmentAsync(response, segment.StartTime, segment.EndTime, segment.Text, ct);
-        }
-
-        var task = await taskRepository.GetByIdAsync(taskId, ct);
-        if (task is null || IsTerminal(task.Status))
-        {
-            await WriteDoneAsync(response, task?.Status ?? TranscriptTaskStatus.Done, ct);
-            return;
-        }
 
         var channel = new RedisChannel(
             RecordingEventChannels.SegmentChannel(taskKey),
@@ -73,6 +56,27 @@ public sealed class TranscriptSegmentStream(
 
         try
         {
+            var existing = await ReplaySegmentsAsync(taskId, ct);
+            foreach (var segment in existing)
+            {
+                if (!seen.Add(segment.StartTime))
+                {
+                    continue;
+                }
+
+                await WriteSegmentAsync(response, segment.StartTime, segment.EndTime, segment.Text, ct);
+            }
+
+            await DrainAsync(response, queue, seen, taskKey, ct);
+
+            var task = await taskRepository.GetByIdAsync(taskId, ct);
+            if (task is null || IsTerminal(task.Status))
+            {
+                await DrainAsync(response, queue, seen, taskKey, ct);
+                await WriteDoneAsync(response, task?.Status ?? TranscriptTaskStatus.Done, ct);
+                return;
+            }
+
             while (!ct.IsCancellationRequested)
             {
                 var readTask = queue.Reader.WaitToReadAsync(ct).AsTask();
@@ -82,8 +86,10 @@ public sealed class TranscriptSegmentStream(
                 if (completed == delayTask)
                 {
                     await WriteHeartbeatAsync(response, ct);
+                    await DrainAsync(response, queue, seen, taskKey, ct);
                     if (await TryWriteDoneIfTerminalAsync(response, taskId, ct))
                     {
+                        await DrainAsync(response, queue, seen, taskKey, ct);
                         break;
                     }
 
@@ -95,18 +101,11 @@ public sealed class TranscriptSegmentStream(
                     break;
                 }
 
-                while (queue.Reader.TryRead(out var evt))
-                {
-                    if (!string.Equals(evt.TaskId, taskKey, StringComparison.Ordinal) || !seen.Add(evt.Start))
-                    {
-                        continue;
-                    }
-
-                    await WriteSegmentAsync(response, evt.Start, evt.End, evt.Text, ct);
-                }
+                await DrainAsync(response, queue, seen, taskKey, ct);
 
                 if (await TryWriteDoneIfTerminalAsync(response, taskId, ct))
                 {
+                    await DrainAsync(response, queue, seen, taskKey, ct);
                     break;
                 }
             }
@@ -117,8 +116,30 @@ public sealed class TranscriptSegmentStream(
         }
     }
 
+    protected virtual Task<IReadOnlyList<TranscriptSegmentRecord>> ReplaySegmentsAsync(
+        ObjectId taskId, CancellationToken ct) =>
+        segmentRepository.ListByTaskAsync(taskId, ct);
+
     private static bool IsTerminal(string status) =>
         status is TranscriptTaskStatus.Done or TranscriptTaskStatus.Failed;
+
+    private static async Task DrainAsync(
+        HttpResponse response,
+        Channel<TranscriptSegmentEvent> queue,
+        HashSet<long> seen,
+        string taskKey,
+        CancellationToken ct)
+    {
+        while (queue.Reader.TryRead(out var evt))
+        {
+            if (!string.Equals(evt.TaskId, taskKey, StringComparison.Ordinal) || !seen.Add(evt.Start))
+            {
+                continue;
+            }
+
+            await WriteSegmentAsync(response, evt.Start, evt.End, evt.Text, ct);
+        }
+    }
 
     private async Task<bool> TryWriteDoneIfTerminalAsync(
         HttpResponse response, ObjectId taskId, CancellationToken ct)

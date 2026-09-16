@@ -135,4 +135,30 @@ public class TranscriptTaskLockTests(RedisFixture fixture)
         await handle!.ReleaseAsync();
         Assert.False(await provider.IsHeldAsync(taskId));
     }
+
+    [Fact]
+    public async Task RedisUnavailable_OwnershipCheckTreatedAsLost_AndIsHeldAssumesHeld()
+    {
+        // 指向不可达端口：验证 Redis 抖动不得把在跑任务打成 FAILED，而应按失锁处理
+        var config = ConfigurationOptions.Parse("127.0.0.1:1");
+        config.ConnectTimeout = 200;
+        config.ConnectRetry = 1;
+        config.AbortOnConnectFail = false;
+        using var dead = await ConnectionMultiplexer.ConnectAsync(config);
+        var taskId = ObjectId.GenerateNewId();
+
+        var provider = CreateProvider(dead);
+        Assert.True(await provider.IsHeldAsync(taskId));
+
+        var handle = new RedisTranscriptTaskLockProvider.RedisTranscriptTaskLock(
+            dead.GetDatabase(),
+            RedisTranscriptTaskLockProvider.KeyFor(taskId),
+            taskId,
+            "token",
+            new TranscriptConsumerOptions(),
+            NullLogger<RedisTranscriptTaskLockProvider>.Instance);
+
+        Assert.False(await handle.CheckOwnershipAsync());
+        Assert.True(handle.Lost);
+    }
 }

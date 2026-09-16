@@ -416,6 +416,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RecordingTranscriptEnqueueResponse"
+        "400":
+          description: 录播尚未结束（EndedAt 为空），不满足手动发起转写的前置条件
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
         "404":
           description: 录播或模型不存在，或模型已被禁用
           content:
@@ -501,13 +507,13 @@ paths:
   /api/transcripts/task/{taskId}/sse:
     get:
       summary: 订阅任务实时 segments（代理转写服务，SSE）
-      description: 代理 transcript 服务的 text/event-stream；先 replay 已入库 segments，再订阅实时推送；15s 心跳；任务终态（DONE/FAILED）后推送 done 事件并关闭。
+      description: 代理 transcript 服务的 text/event-stream；先订阅 Redis 实时推送，再 replay 已入库 segments，以 start 去重；15s 心跳；任务终态（DONE/FAILED）后推送 done 事件并关闭。
       operationId: streamTranscriptSegments
       parameters:
         - $ref: "#/components/parameters/TranscriptTaskId"
       responses:
         "200":
-          description: text/event-stream，先 replay 已入库 segments，再实时推送新 segment，终态推送 done
+          description: text/event-stream，先订阅实时推送再 replay 已入库 segments，以 start 去重，终态推送 done
           content:
             text/event-stream:
               schema:
@@ -567,6 +573,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RecordingTranscriptSettingsUpdateResponse"
+        "400":
+          description: 参数非法（请求体缺失）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
         "502":
           description: transcript 服务不可达
   /api/transcripts/models:
@@ -626,6 +638,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RecordingTranscriptModel"
+        "400":
+          description: 参数非法（请求体缺失）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
         "404":
           description: 模型不存在
           content:

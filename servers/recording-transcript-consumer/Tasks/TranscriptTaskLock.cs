@@ -54,11 +54,21 @@ public sealed class RedisTranscriptTaskLockProvider(
 
     public async Task<bool> IsHeldAsync(ObjectId taskId, CancellationToken ct = default)
     {
-        var db = redis.GetDatabase();
-        return await db.KeyExistsAsync(KeyFor(taskId));
+        try
+        {
+            var db = redis.GetDatabase();
+            return await db.KeyExistsAsync(KeyFor(taskId));
+        }
+        catch (Exception ex)
+        {
+            // Redis 抖动时无法判定：保守按「仍被持有」处理，避免误抢导致双跑
+            logger.LogWarning(ex, "Failed to check transcript task lock {Key}; assuming held", KeyFor(taskId));
+            return true;
+        }
     }
 
-    private sealed class RedisTranscriptTaskLock(
+    /// <summary>internal 以便测试注入不可用 Redis 验证 fencing 降级；生产仅经 provider 创建。</summary>
+    internal sealed class RedisTranscriptTaskLock(
         IDatabase db,
         string key,
         ObjectId taskId,
@@ -82,7 +92,19 @@ public sealed class RedisTranscriptTaskLockProvider(
 
         public async Task<bool> CheckOwnershipAsync(CancellationToken ct = default)
         {
-            var current = await db.StringGetAsync(key);
+            RedisValue current;
+            try
+            {
+                current = await db.StringGetAsync(key);
+            }
+            catch (Exception ex)
+            {
+                // Redis 抖动不能判定为「任务失败」：按失锁处理，保留 RUNNING 交他节点接管
+                logger.LogWarning(ex, "Transcript task lock {Key} ownership check failed; treating as lost", key);
+                Volatile.Write(ref _lost, 1);
+                return false;
+            }
+
             var owned = current == Token;
             if (!owned)
             {
