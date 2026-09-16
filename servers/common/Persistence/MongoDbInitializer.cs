@@ -24,6 +24,11 @@ public sealed class MongoCollectionNames
     public const string WeiboCookieSessions = "weibo_cookie_sessions";
     public const string NotificationSubscriptions = "notification_subscriptions";
     public const string RecordingStatus = "recording_status";
+    public const string Recordings = "recordings";
+    public const string TranscriptTasks = "transcript_tasks";
+    public const string TranscriptSegments = "transcript_segments";
+    public const string TranscriptModels = "transcript_models";
+    public const string TranscriptAutoEnqueue = "transcript_auto_enqueue";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -49,6 +54,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureWeiboCookieIndexesAsync(ct);
         await EnsureNotificationSubscriptionIndexesAsync(ct);
         await EnsureRecordingStatusIndexesAsync(ct);
+        await EnsureTranscriptIndexesAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -919,6 +925,75 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var keys = Builders<RecordingStatusRecord>.IndexKeys.Ascending(r => r.RoomId);
         var options = new CreateIndexOptions { Unique = true, Name = "RoomId_1" };
         return collection.Indexes.CreateOneAsync(new CreateIndexModel<RecordingStatusRecord>(keys, options), cancellationToken: ct);
+    }
+
+    private async Task EnsureTranscriptIndexesAsync(CancellationToken ct)
+    {
+        var recordings = database.GetCollection<RecordingRecord>(MongoCollectionNames.Recordings);
+        // 幂等键 RoomId+StartedAt 唯一索引：存量清洗/滚动更新双实例并发插入时兜底，DuplicateKey 才算已存在
+        await DropIndexIfExistsAsync(recordings, "RoomId_1_StartedAt_-1", ct);
+        var recordingIdempotencyKeys = Builders<RecordingRecord>.IndexKeys
+            .Ascending(r => r.RoomId)
+            .Ascending(r => r.StartedAt);
+        await recordings.Indexes.CreateOneAsync(
+            new CreateIndexModel<RecordingRecord>(
+                recordingIdempotencyKeys, new CreateIndexOptions { Unique = true, Name = "RoomId_1_StartedAt_1" }),
+            cancellationToken: ct);
+
+        var recordingListKeys = Builders<RecordingRecord>.IndexKeys
+            .Ascending(r => r.RoomId)
+            .Descending(r => r.StartedAt);
+        await recordings.Indexes.CreateOneAsync(
+            new CreateIndexModel<RecordingRecord>(
+                recordingListKeys, new CreateIndexOptions { Name = "RoomId_1_StartedAt_-1" }),
+            cancellationToken: ct);
+
+        var tasks = database.GetCollection<TranscriptTaskRecord>(MongoCollectionNames.TranscriptTasks);
+        var taskUniqueKeys = Builders<TranscriptTaskRecord>.IndexKeys
+            .Ascending(t => t.RecordingId)
+            .Ascending(t => t.ModelId);
+        await tasks.Indexes.CreateOneAsync(
+            new CreateIndexModel<TranscriptTaskRecord>(
+                taskUniqueKeys, new CreateIndexOptions { Unique = true, Name = "RecordingId_1_ModelId_1" }),
+            cancellationToken: ct);
+
+        var taskStatusKeys = Builders<TranscriptTaskRecord>.IndexKeys
+            .Ascending(t => t.Status)
+            .Ascending(t => t.Id);
+        await tasks.Indexes.CreateOneAsync(
+            new CreateIndexModel<TranscriptTaskRecord>(
+                taskStatusKeys, new CreateIndexOptions { Name = "Status_1__id_1" }),
+            cancellationToken: ct);
+
+        var segments = database.GetCollection<TranscriptSegmentRecord>(MongoCollectionNames.TranscriptSegments);
+        var segmentKeys = Builders<TranscriptSegmentRecord>.IndexKeys
+            .Ascending(s => s.TaskId)
+            .Ascending(s => s.StartTime);
+        await segments.Indexes.CreateOneAsync(
+            new CreateIndexModel<TranscriptSegmentRecord>(
+                segmentKeys, new CreateIndexOptions { Unique = true, Name = "TaskId_1_StartTime_1" }),
+            cancellationToken: ct);
+
+        var models = database.GetCollection<TranscriptModelRecord>(MongoCollectionNames.TranscriptModels);
+        var modelKeys = Builders<TranscriptModelRecord>.IndexKeys.Ascending(m => m.IsDefault);
+        var modelOptions = new CreateIndexOptions<TranscriptModelRecord>
+        {
+            Unique = true,
+            Name = "IsDefault_1",
+            PartialFilterExpression = Builders<TranscriptModelRecord>.Filter.Eq(m => m.IsDefault, true),
+        };
+        await models.Indexes.CreateOneAsync(
+            new CreateIndexModel<TranscriptModelRecord>(modelKeys, modelOptions),
+            cancellationToken: ct);
+
+        var autoEnqueue = database.GetCollection<TranscriptAutoEnqueueRecord>(MongoCollectionNames.TranscriptAutoEnqueue);
+        var autoKeys = Builders<TranscriptAutoEnqueueRecord>.IndexKeys.Ascending(a => a.RoomId);
+        await autoEnqueue.Indexes.CreateOneAsync(
+            new CreateIndexModel<TranscriptAutoEnqueueRecord>(
+                autoKeys, new CreateIndexOptions { Unique = true, Name = "RoomId_1" }),
+            cancellationToken: ct);
+
+        logger.LogInformation("Ensured transcript collection indexes.");
     }
 
     private async Task EnsureWeiboCookieIndexesAsync(CancellationToken ct)

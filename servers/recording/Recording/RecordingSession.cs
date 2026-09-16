@@ -1,3 +1,7 @@
+using MongoDB.Bson;
+using Z.Vtuber.Common.Persistence;
+using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.Common.Live;
 using Z.Vtuber.Recording.Audio;
 using Z.Vtuber.Recording.Configuration;
 using Z.Vtuber.Recording.Live;
@@ -9,6 +13,7 @@ public interface IRecordingSessionRunner
 {
     Task RunAsync(
         long roomId,
+        long mid,
         string? anchorName,
         LiveRoomInfo room,
         string cookieId,
@@ -28,6 +33,9 @@ public sealed class RecordingSession(
     IRecordingProcessFactory processes,
     AudioStreamHub audio,
     RecordingStatusReporter reporter,
+    RecordingRepository recordings,
+    IRecordingEventPublisher events,
+    IOrphanRecordingFinalizer orphanFinalizer,
     RecordingOptions options,
     ILogger<RecordingSession> logger) : IRecordingSessionRunner
 {
@@ -38,6 +46,7 @@ public sealed class RecordingSession(
 
     public async Task RunAsync(
         long roomId,
+        long mid,
         string? anchorName,
         LiveRoomInfo room,
         string cookieId,
@@ -55,7 +64,7 @@ public sealed class RecordingSession(
             }
 
             sessionLock.StartRenewal(ct);
-            await RunLockedAsync(roomId, anchorName, room, cookieId, cookie, sessionLock, ct);
+            await RunLockedAsync(roomId, mid, anchorName, room, cookieId, cookie, sessionLock, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -87,6 +96,7 @@ public sealed class RecordingSession(
 
     private async Task RunLockedAsync(
         long roomId,
+        long mid,
         string? anchorName,
         LiveRoomInfo room,
         string cookieId,
@@ -94,6 +104,10 @@ public sealed class RecordingSession(
         IRecordingLock sessionLock,
         CancellationToken ct)
     {
+        // 新场次接管同房间前，先幂等收尾该房间遗留的未结束场次（上次异常退出/被接管），
+        // 否则孤儿 recordings 永远 EndedAt=null，手动 enqueue 与 file 自动识别均无法建任务。
+        await orphanFinalizer.FinalizeRoomAsync(roomId, ct);
+
         var candidates = await bili.GetStreamCandidatesAsync(cookie, roomId, ct);
         var stream = StreamResolver.Pick(candidates);
         if (stream is null)
@@ -153,6 +167,46 @@ public sealed class RecordingSession(
         }
 
         audio.MarkStreaming(roomId);
+
+        // 归档场次并发布 recording-started：失败仅记日志，不阻断录制。
+        // 先归档/发布再上报 recording，保证外部观察到 recording 态时场次已归档且事件已发出。
+        var startedAt = DateTime.UtcNow;
+        ObjectId? recordingId = null;
+        try
+        {
+            recordingId = await recordings.InsertAsync(new RecordingRecord
+            {
+                RoomId = roomId,
+                Mid = mid,
+                Title = room.Title,
+                Files = [.. files],
+                StartedAt = startedAt,
+                CreatedAt = startedAt,
+            }, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to archive recording for room {RoomId}; continuing.", roomId);
+        }
+
+        if (recordingId is not null)
+        {
+            try
+            {
+                await events.PublishStartedAsync(new RecordingStartedEvent(
+                    recordingId.Value.ToString(),
+                    roomId,
+                    mid,
+                    room.Title,
+                    BuildLiveAudioUrl(roomId),
+                    startedAt), ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to publish recording-started for room {RoomId}; continuing.", roomId);
+            }
+        }
+
         await reporter.ReportRecordingAsync(roomId, room.Title, files, ct);
 
         using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -223,18 +277,68 @@ public sealed class RecordingSession(
         }
         else if (ct.IsCancellationRequested)
         {
-            // 优雅停机：落终态，避免重启期间残留 recording 状态（新实例接管后会重新上报 recording）
+            // 优雅停机/取消订阅：落终态，避免重启期间残留 recording 状态（新实例接管后会重新上报 recording）；
+            // 同时幂等收尾本场次（回写 EndedAt + 发布 finished），使旧 recordings 可 enqueue。
             await reporter.ReportNotLiveAsync(roomId);
+            if (recordingId is not null)
+            {
+                try
+                {
+                    await orphanFinalizer.FinalizeAsync(recordingId.Value, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(
+                        ex, "Failed to finalize recording {RecordingId} on shutdown; continuing.", recordingId);
+                }
+            }
         }
         else if (exitCode == 0)
         {
             await reporter.ReportNotLiveAsync(roomId);
+            if (recordingId is not null)
+            {
+                var endedAt = DateTime.UtcNow;
+                try
+                {
+                    await recordings.SetEndedAtAsync(recordingId.Value, endedAt, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to set EndedAt for recording {RecordingId}; continuing.", recordingId);
+                }
+
+                try
+                {
+                    var fileUrls = files
+                        .Select(f => BuildRecordingFileUrl(roomId, f))
+                        .ToArray();
+                    await events.PublishFinishedAsync(new RecordingFinishedEvent(
+                        recordingId.Value.ToString(),
+                        roomId,
+                        mid,
+                        room.Title,
+                        [.. files],
+                        fileUrls,
+                        endedAt), ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to publish recording-finished for room {RoomId}; continuing.", roomId);
+                }
+            }
         }
         else
         {
             await reporter.ReportErrorAsync(roomId, $"ffmpeg exited with code {exitCode}", room.Title, files);
         }
     }
+
+    private string BuildLiveAudioUrl(long roomId) =>
+        $"{options.PublicBaseUrl.TrimEnd('/')}/api/{roomId}/stream/audio";
+
+    private string BuildRecordingFileUrl(long roomId, string fileName) =>
+        $"{options.PublicBaseUrl.TrimEnd('/')}/api/{roomId}/recordings/{Uri.EscapeDataString(fileName)}";
 
     private static async Task<int> ResolveExitCodeAsync(Task<int> exitTask)
     {

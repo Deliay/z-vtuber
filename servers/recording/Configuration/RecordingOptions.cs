@@ -10,6 +10,13 @@ public sealed class RecordingOptions
     [Required]
     public string StorageDir { get; set; } = "/data/recordings";
 
+    /// <summary>
+    /// 本服务可达的基础地址，用于拼接 recording-started/finished 事件中的实时音频与录播文件 URL
+    /// （实时音频 /api/{roomId}/stream/audio、录播文件 /api/{roomId}/recordings/{fileName}）。
+    /// </summary>
+    [Required]
+    public string PublicBaseUrl { get; set; } = "http://recording";
+
     /// <summary>开播轮询间隔（秒）。</summary>
     [Range(1, 3600)]
     public int PollIntervalSeconds { get; set; } = 30;

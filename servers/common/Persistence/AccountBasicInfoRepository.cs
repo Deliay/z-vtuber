@@ -35,6 +35,17 @@ public sealed class AccountBasicInfoRepository(IMongoDatabase database)
         return latest?.RoomId;
     }
 
+    /// <summary>按 RoomId 反查最近一次采集到的主播 Mid（存量清洗补 recordings.Mid 用）。</summary>
+    public async Task<long?> GetLatestMidByRoomIdAsync(long roomId, CancellationToken ct = default)
+    {
+        var projection = Builders<AccountBasicInfoRecord>.Projection.Include(a => a.Mid);
+        var latest = await _collection.Find(a => a.RoomId == roomId)
+            .SortByDescending(a => a.FetchedAt)
+            .Project<AccountBasicInfoRecord>(projection)
+            .FirstOrDefaultAsync(ct);
+        return latest?.Mid;
+    }
+
     public async Task<Dictionary<long, AccountBasicInfoRecord>> GetLatestByMidsAsync(
         IReadOnlyCollection<long> mids, CancellationToken ct = default)
     {

@@ -169,4 +169,63 @@ public class LiveSessionRepositoryTests(MongoDbFixture fixture) : IClassFixture<
         Assert.Contains("finished-near", ids);
         Assert.DoesNotContain("finished-far", ids);
     }
+
+    private async Task<LiveSessionRepository> SeedSessionAsync(
+        string liveId, DateTime startDate, DateTime? stopDate)
+    {
+        var repository = new LiveSessionRepository(fixture.Database);
+        var record = Record(liveId, startDate);
+        record.StopDate = stopDate;
+        record.IsFinish = stopDate.HasValue;
+        await repository.UpsertAsync(record);
+        return repository;
+    }
+
+    [Fact]
+    public async Task GetByRoomIdAndTimeWindow_MatchesClosedWindow()
+    {
+        var baseDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+        var repository = await SeedSessionAsync("closed", baseDate, baseDate.AddHours(2));
+
+        var match = await repository.GetByRoomIdAndTimeWindowAsync(123456, baseDate.AddHours(1));
+
+        Assert.NotNull(match);
+        Assert.Equal("closed", match!.LiveId);
+    }
+
+    [Fact]
+    public async Task GetByRoomIdAndTimeWindow_FileOutsideWindow_ReturnsNullForStatusFallback()
+    {
+        var baseDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+        var repository = await SeedSessionAsync("closed", baseDate, baseDate.AddHours(2));
+
+        // 文件创建时间远晚于窗口：不得回退取「最近一场」，应返回 null 交 bilibili_live_status 兜底
+        var match = await repository.GetByRoomIdAndTimeWindowAsync(123456, baseDate.AddHours(10));
+
+        Assert.Null(match);
+    }
+
+    [Fact]
+    public async Task GetByRoomIdAndTimeWindow_OngoingSession_MatchesWithinMaxOpenDuration()
+    {
+        var start = DateTime.UtcNow.AddHours(-1);
+        var repository = await SeedSessionAsync("ongoing", start, stopDate: null);
+
+        var match = await repository.GetByRoomIdAndTimeWindowAsync(123456, DateTime.UtcNow);
+
+        Assert.NotNull(match);
+        Assert.Equal("ongoing", match!.LiveId);
+    }
+
+    [Fact]
+    public async Task GetByRoomIdAndTimeWindow_StaleOpenSession_DoesNotSwallowFarFutureFiles()
+    {
+        // 陈旧未结束场次（10 天前开播、StopDate 为 null）不得吞并之后的文件
+        var start = DateTime.UtcNow.AddDays(-10);
+        var repository = await SeedSessionAsync("stale", start, stopDate: null);
+
+        var match = await repository.GetByRoomIdAndTimeWindowAsync(123456, DateTime.UtcNow);
+
+        Assert.Null(match);
+    }
 }
