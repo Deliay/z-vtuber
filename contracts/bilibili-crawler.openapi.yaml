@@ -381,6 +381,277 @@ paths:
           description: 该房间当前未在录制
         "502":
           description: recording 服务不可达
+  /api/recordings:
+    get:
+      summary: 查询录播场次归档列表（代理转写服务）
+      description: 代理 recording-transcript-api，供「识别设置」的场次选择器使用，按 StartedAt 倒序返回。
+      operationId: listTranscriptRecordings
+      parameters:
+        - $ref: "#/components/parameters/TranscriptRoomIdQuery"
+        - $ref: "#/components/parameters/TranscriptLimit"
+        - $ref: "#/components/parameters/TranscriptBefore"
+      responses:
+        "200":
+          description: 录播场次归档列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptRecordingList"
+        "502":
+          description: transcript 服务不可达
+  /api/transcripts/enqueue:
+    post:
+      summary: 手动发起转写任务（代理转写服务）
+      operationId: enqueueTranscriptTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingTranscriptEnqueueRequest"
+      responses:
+        "200":
+          description: 任务已创建（或幂等返回已有任务）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptEnqueueResponse"
+        "400":
+          description: 录播尚未结束（EndedAt 为空），不满足手动发起转写的前置条件
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "404":
+          description: 录播或模型不存在，或模型已被禁用
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "409":
+          description: 同录播 + 同模型已存在任务，返回已有 taskId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptEnqueueResponse"
+        "502":
+          description: transcript 服务不可达
+  /api/transcripts/task:
+    get:
+      summary: 查询转写任务列表（代理转写服务）
+      description: 默认按创建时间倒序；进行中优先由 status 过滤支持。
+      operationId: listTranscriptTasks
+      parameters:
+        - $ref: "#/components/parameters/TranscriptRecordingIdQuery"
+        - $ref: "#/components/parameters/TranscriptRoomIdQuery"
+        - $ref: "#/components/parameters/TranscriptTaskStatusQuery"
+        - $ref: "#/components/parameters/TranscriptLimit"
+      responses:
+        "200":
+          description: 转写任务列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptTaskList"
+        "502":
+          description: transcript 服务不可达
+  /api/transcripts/task/{taskId}:
+    get:
+      summary: 查询转写任务详情与全量 segments（代理转写服务）
+      operationId: getTranscriptTask
+      parameters:
+        - $ref: "#/components/parameters/TranscriptTaskId"
+      responses:
+        "200":
+          description: 任务详情（segments 按 start 升序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptTaskDetail"
+        "404":
+          description: 任务不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "502":
+          description: transcript 服务不可达
+  /api/transcripts/task/{taskId}/retry:
+    post:
+      summary: 重试失败任务（代理转写服务）
+      description: 仅 FAILED 可重试；将 status 置为 RUNNING（不持锁，由扫描器按「RUNNING 无锁」规则接管，从 position 断点续跑），清空 error。
+      operationId: retryTranscriptTask
+      parameters:
+        - $ref: "#/components/parameters/TranscriptTaskId"
+      responses:
+        "200":
+          description: 重试成功，返回更新后的任务
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptTask"
+        "404":
+          description: 任务不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "409":
+          description: 任务状态不允许重试（非 FAILED）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "502":
+          description: transcript 服务不可达
+  /api/transcripts/task/{taskId}/sse:
+    get:
+      summary: 订阅任务实时 segments（代理转写服务，SSE）
+      description: 代理 transcript 服务的 text/event-stream；先订阅 Redis 实时推送，再 replay 已入库 segments，以 start 去重；15s 心跳；任务终态（DONE/FAILED）后推送 done 事件并关闭。
+      operationId: streamTranscriptSegments
+      parameters:
+        - $ref: "#/components/parameters/TranscriptTaskId"
+      responses:
+        "200":
+          description: text/event-stream，先订阅实时推送再 replay 已入库 segments，以 start 去重，终态推送 done
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "404":
+          description: 任务不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "502":
+          description: transcript 服务不可达
+  /api/transcripts/settings:
+    get:
+      summary: 查询自动识别设置全量列表（代理转写服务）
+      operationId: listTranscriptSettings
+      responses:
+        "200":
+          description: 自动识别设置全量列表（关联主播资料补 anchorName）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptSettingsList"
+        "502":
+          description: transcript 服务不可达
+  /api/recordings/{roomId}/transcripts:
+    get:
+      summary: 按主播查询录播场次及转写任务（代理转写服务）
+      operationId: getRoomTranscripts
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "200":
+          description: 该主播的录播场次及各场次 transcript 任务（含当前自动识别开关状态）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptRoomView"
+        "502":
+          description: transcript 服务不可达
+  /api/recordings/{roomId}/transcripts/settings:
+    post:
+      summary: 设置指定主播的自动识别开关（代理转写服务）
+      operationId: updateTranscriptSettings
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingTranscriptSettingsUpdateRequest"
+      responses:
+        "200":
+          description: 设置成功（upsert）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptSettingsUpdateResponse"
+        "400":
+          description: 参数非法（请求体缺失）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "502":
+          description: transcript 服务不可达
+  /api/transcripts/models:
+    get:
+      summary: 查询转写模型列表（代理转写服务）
+      operationId: listTranscriptModels
+      responses:
+        "200":
+          description: 模型列表（不回传 apiKey）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptModelList"
+        "502":
+          description: transcript 服务不可达
+    post:
+      summary: 添加转写模型（代理转写服务）
+      operationId: createTranscriptModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingTranscriptModelCreateRequest"
+      responses:
+        "200":
+          description: 创建成功（isDefault=true 时原子清除其他模型默认位；不回传 apiKey）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptModel"
+        "400":
+          description: 参数非法
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "502":
+          description: transcript 服务不可达
+  /api/transcripts/models/{modelId}:
+    put:
+      summary: 更新转写模型（代理转写服务）
+      description: 更新启用/禁用、默认位、最大并发、API Key（可选，不传则不改）；被禁用模型进行中的任务继续跑完。
+      operationId: updateTranscriptModel
+      parameters:
+        - $ref: "#/components/parameters/TranscriptModelId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingTranscriptModelUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功（不回传 apiKey）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptModel"
+        "400":
+          description: 参数非法（请求体缺失）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "404":
+          description: 模型不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
+        "502":
+          description: transcript 服务不可达
 components:
   parameters:
     Mid:
@@ -497,6 +768,55 @@ components:
         type: string
         enum: [any, all]
         default: any
+    TranscriptRoomIdQuery:
+      name: roomId
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int64
+    TranscriptRecordingIdQuery:
+      name: recordingId
+      in: query
+      required: false
+      description: 按录播场次过滤
+      schema:
+        type: string
+    TranscriptTaskStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: 按任务状态过滤
+      schema:
+        $ref: "#/components/schemas/RecordingTranscriptTaskStatus"
+    TranscriptTaskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+    TranscriptModelId:
+      name: modelId
+      in: path
+      required: true
+      schema:
+        type: string
+    TranscriptLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 50
+    TranscriptBefore:
+      name: before
+      in: query
+      required: false
+      description: 分页游标（StartedAt 倒序），传入后返回早于该时刻的记录
+      schema:
+        type: string
+        format: date-time
   schemas:
     CookieAddRequest:
       type: object
@@ -849,3 +1169,305 @@ components:
           type: string
           format: date-time
           description: 文件创建时间（UTC）
+    RecordingTranscriptErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    RecordingTranscriptEnqueueRequest:
+      type: object
+      required: [recordingId, modelId]
+      properties:
+        recordingId:
+          type: string
+        modelId:
+          type: string
+    RecordingTranscriptEnqueueResponse:
+      type: object
+      required: [taskId, status]
+      properties:
+        taskId:
+          type: string
+        status:
+          type: string
+          description: 新建任务固定为 PENDING
+          example: PENDING
+    RecordingTranscriptTaskStatus:
+      type: string
+      enum: [PENDING, RUNNING, DONE, FAILED]
+    RecordingTranscriptTaskMode:
+      type: string
+      enum: [live, file]
+      description: live=开播自动创建，实时音频流为源；file=手动发起，录播文件为源
+    RecordingTranscriptTaskSource:
+      type: string
+      enum: [auto, manual]
+    RecordingTranscriptTaskType:
+      type: string
+      enum: [recording]
+      description: 音源类型，当前固定 recording（预留扩展）
+    RecordingTranscriptTask:
+      type: object
+      properties:
+        id:
+          type: string
+        recordingId:
+          type: string
+        roomId:
+          type: integer
+          format: int64
+        title:
+          type: string
+          nullable: true
+        file:
+          type: string
+          nullable: true
+          description: 识别所用录播文件（优先 RAW，缺失回退首个）
+        modelId:
+          type: string
+        modelName:
+          type: string
+          nullable: true
+        type:
+          $ref: "#/components/schemas/RecordingTranscriptTaskType"
+        mode:
+          $ref: "#/components/schemas/RecordingTranscriptTaskMode"
+        source:
+          $ref: "#/components/schemas/RecordingTranscriptTaskSource"
+        status:
+          $ref: "#/components/schemas/RecordingTranscriptTaskStatus"
+        position:
+          type: integer
+          format: int64
+          description: 断点位置（毫秒），始终为句尾
+        error:
+          type: string
+          nullable: true
+          description: FAILED 原因
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RecordingTranscriptTaskList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingTranscriptTask"
+    RecordingTranscriptSegment:
+      type: object
+      required: [start, end, text]
+      properties:
+        start:
+          type: integer
+          format: int64
+          description: 整场录播时间轴上的句首（毫秒，含续跑 offset）
+        end:
+          type: integer
+          format: int64
+          description: 整场录播时间轴上的句尾（毫秒）
+        text:
+          type: string
+    RecordingTranscriptTaskDetail:
+      type: object
+      required: [task, segments]
+      properties:
+        task:
+          $ref: "#/components/schemas/RecordingTranscriptTask"
+        segments:
+          type: array
+          description: 全量 segments（按 start 升序）
+          items:
+            $ref: "#/components/schemas/RecordingTranscriptSegment"
+    RecordingTranscriptSettingsItem:
+      type: object
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        mid:
+          type: integer
+          format: int64
+          nullable: true
+        anchorName:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+    RecordingTranscriptSettingsList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingTranscriptSettingsItem"
+    RecordingTranscriptSettingsUpdateRequest:
+      type: object
+      required: [enable]
+      properties:
+        enable:
+          type: boolean
+    RecordingTranscriptSettingsUpdateResponse:
+      type: object
+      required: [roomId, enabled]
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        enabled:
+          type: boolean
+    RecordingTranscriptRecordingItem:
+      type: object
+      properties:
+        id:
+          type: string
+        roomId:
+          type: integer
+          format: int64
+        mid:
+          type: integer
+          format: int64
+        title:
+          type: string
+          nullable: true
+        files:
+          type: array
+          items:
+            type: string
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
+    RecordingTranscriptRecordingList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingTranscriptRecordingItem"
+    RecordingTranscriptRoomTaskRef:
+      type: object
+      properties:
+        taskId:
+          type: string
+        modelId:
+          type: string
+        modelName:
+          type: string
+          nullable: true
+        status:
+          $ref: "#/components/schemas/RecordingTranscriptTaskStatus"
+        position:
+          type: integer
+          format: int64
+        source:
+          $ref: "#/components/schemas/RecordingTranscriptTaskSource"
+        updatedAt:
+          type: string
+          format: date-time
+    RecordingTranscriptRoomRecording:
+      type: object
+      properties:
+        recordingId:
+          type: string
+        title:
+          type: string
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingTranscriptRoomTaskRef"
+    RecordingTranscriptRoomView:
+      type: object
+      required: [roomId, autoEnqueueEnabled, items]
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        autoEnqueueEnabled:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingTranscriptRoomRecording"
+    RecordingTranscriptModel:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+          enum: [ali-fun-asr]
+        type:
+          type: string
+          enum: [streaming]
+        enabled:
+          type: boolean
+        isDefault:
+          type: boolean
+        maxConcurrency:
+          type: integer
+          format: int32
+        createdAt:
+          type: string
+          format: date-time
+    RecordingTranscriptModelList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingTranscriptModel"
+    RecordingTranscriptModelCreateRequest:
+      type: object
+      required: [name, provider, type, apiKey]
+      properties:
+        name:
+          type: string
+        provider:
+          type: string
+          enum: [ali-fun-asr]
+        type:
+          type: string
+          enum: [streaming]
+        apiKey:
+          type: string
+        enabled:
+          type: boolean
+          default: true
+        isDefault:
+          type: boolean
+          default: false
+        maxConcurrency:
+          type: integer
+          format: int32
+          default: 1
+    RecordingTranscriptModelUpdateRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        isDefault:
+          type: boolean
+        maxConcurrency:
+          type: integer
+          format: int32
+        apiKey:
+          type: string
+          description: 可选，不传则不改

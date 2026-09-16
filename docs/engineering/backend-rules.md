@@ -19,7 +19,7 @@ dotnet new webapi -n Z.Vtuber -o servers/api --no-https --use-controllers
 
 ```
 servers/
-├── Z.Vtuber.slnx                # 解决方案：api/common/crawler + tests + apphost
+├── Z.Vtuber.slnx                # 解决方案：api/common/crawler/cookie/recording/recording-transcript-* + tests + apphost
 ├── api/                         # 纯 API 服务（Z.Vtuber）
 │   ├── Controllers/             # API 控制器
 │   ├── Live/LiveEventBus.cs     # SSE 订阅门控（Redis pub/sub 驱动，按需订阅/退订）
@@ -40,16 +40,34 @@ servers/
     ├── Dockerfile
     └── Z.Vtuber.Crawler.csproj  # 引用 common + 抓取库 + 消息客户端
 ├── cookie/                      # Cookie 管理服务（Z.Vtuber.Cookie，扫码登录/池调度）
-└── recording/                   # 录播服务（Z.Vtuber.Recording）
-    ├── Subscriptions/           # （订阅读取内联于 LiveStatusPoller）
-    ├── Live/                    # 开播轮询/playurl 选流/直播 API 客户端
-    ├── Recording/               # ffmpeg 多输出编排/文件名/分布式锁/状态上报
-    ├── Audio/                   # 实时音频 Hub（有界缓冲丢弃广播）
-    ├── Controllers/             # stream/audio、recordings、recording/status
-    ├── Configuration/           # RecordingOptions
+├── recording/                   # 录播服务（Z.Vtuber.Recording）
+│   ├── Subscriptions/           # （订阅读取内联于 LiveStatusPoller）
+│   ├── Live/                    # 开播轮询/playurl 选流/直播 API 客户端
+│   ├── Recording/               # ffmpeg 多输出编排/文件名/分布式锁/状态上报/场次归档事件/存量清洗
+│   ├── Audio/                   # 实时音频 Hub（有界缓冲丢弃广播）
+│   ├── Controllers/             # stream/audio、recordings、recording/status
+│   ├── Configuration/           # RecordingOptions
+│   ├── Program.cs               # Web 宿主 + /health 健康检查
+│   ├── Dockerfile               # aspnet 运行时 + ffmpeg
+│   └── Z.Vtuber.Recording.csproj
+├── recording-transcript-consumer/ # 转写消费服务（Z.Vtuber.RecordingTranscript.Consumer，本地 8085）
+│   ├── Events/                  # 订阅 recording-started/finished 做幂等 enqueue
+│   ├── Enqueue/                 # 幂等建任务（事件/对账/手动共用）
+│   ├── Reconcile/               # 周期性对账补建漏建场次
+│   ├── Tasks/                   # 扫描器/Redis 任务锁/执行器/segment 落库与发布
+│   ├── Asr/                     # IStreamingAsrService 抽象 + FunASR websocket 实现
+│   ├── Audio/                   # ffmpeg 双音源（实时流/文件 seek）s16le pipe
+│   ├── Services/                # RecordingServiceClient
+│   ├── Configuration/           # TranscriptConsumerOptions / RecordingServiceOptions
+│   ├── Program.cs               # Web 宿主 + /health 健康检查
+│   └── Z.Vtuber.RecordingTranscript.Consumer.csproj
+└── recording-transcript-api/    # 转写查询服务（Z.Vtuber.RecordingTranscript.Api，本地 8084）
+    ├── Controllers/             # recordings/tasks/settings/models
+    ├── Sse/TranscriptSegmentStream.cs # replay + Redis 订阅 + 去重
+    ├── Contracts/               # Dtos/TranscriptMapping
+    ├── Configuration/           # TranscriptApiOptions
     ├── Program.cs               # Web 宿主 + /health 健康检查
-    ├── Dockerfile               # aspnet 运行时 + ffmpeg
-    └── Z.Vtuber.Recording.csproj
+    └── Z.Vtuber.RecordingTranscript.Api.csproj
 ```
 
 > 归属约定：仅被一方使用的代码归该方；被双方使用的代码入 `common`。抓取专用在 `servers/crawler`，对外接口与 SSE 在 `servers/api`。`ICookieNavProbeService` 契约在 common，具体实现（依赖抓取通道）在 crawler。

@@ -75,6 +75,7 @@ public class LiveStatusPollerTests(MongoDbFixture fixture) : IClassFixture<Mongo
         await poller.RunOnceAsync(CancellationToken.None);
 
         Assert.Contains(800002L, runner.StartedRooms);
+        Assert.Contains(2L, runner.StartedMids);
     }
 
     [Fact]
@@ -101,7 +102,7 @@ public class LiveStatusPollerTests(MongoDbFixture fixture) : IClassFixture<Mongo
         var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var runner = new FakeRecordingSessionRunner
         {
-            RunFunc = (_, _, _, _, _, ct) =>
+            RunFunc = (_, _, _, _, _, _, ct) =>
             {
                 ct.Register(() => cancelled.TrySetResult(true));
                 return Task.Delay(Timeout.Infinite, ct);

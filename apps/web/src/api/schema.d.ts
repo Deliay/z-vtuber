@@ -317,7 +317,7 @@ export interface paths {
         };
         /**
          * 下载房间录播文件
-         * @description 代理 recording 服务，流式转发录播文件二进制内容；文件不存在返回 404，文件名非法或文件正在录制中返回 400。
+         * @description 代理 recording 服务，流式转发录播文件二进制内容；支持 Range 分段下载（206）与 If-Range 条件请求，越界区间返回 416；文件不存在返回 404，文件名非法或文件正在录制中返回 400。
          */
         get: operations["downloadRoomRecording"];
         put?: never;
@@ -341,6 +341,209 @@ export interface paths {
          */
         get: operations["proxyLiveAudio"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recordings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询录播场次归档列表（代理转写服务）
+         * @description 代理 recording-transcript-api，供「识别设置」的场次选择器使用，按 StartedAt 倒序返回。
+         */
+        get: operations["listTranscriptRecordings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transcripts/enqueue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 手动发起转写任务（代理转写服务） */
+        post: operations["enqueueTranscriptTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transcripts/task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询转写任务列表（代理转写服务）
+         * @description 默认按创建时间倒序；进行中优先由 status 过滤支持。
+         */
+        get: operations["listTranscriptTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transcripts/task/{taskId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询转写任务详情与全量 segments（代理转写服务） */
+        get: operations["getTranscriptTask"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transcripts/task/{taskId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重试失败任务（代理转写服务）
+         * @description 仅 FAILED 可重试；将 status 置为 RUNNING（不持锁，由扫描器按「RUNNING 无锁」规则接管，从 position 断点续跑），清空 error。
+         */
+        post: operations["retryTranscriptTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transcripts/task/{taskId}/sse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 订阅任务实时 segments（代理转写服务，SSE）
+         * @description 代理 transcript 服务的 text/event-stream；先 replay 已入库 segments，再订阅实时推送；15s 心跳；任务终态（DONE/FAILED）后推送 done 事件并关闭。
+         */
+        get: operations["streamTranscriptSegments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transcripts/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询自动识别设置全量列表（代理转写服务） */
+        get: operations["listTranscriptSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recordings/{roomId}/transcripts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按主播查询录播场次及转写任务（代理转写服务） */
+        get: operations["getRoomTranscripts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recordings/{roomId}/transcripts/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 设置指定主播的自动识别开关（代理转写服务） */
+        post: operations["updateTranscriptSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transcripts/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询转写模型列表（代理转写服务） */
+        get: operations["listTranscriptModels"];
+        put?: never;
+        /** 添加转写模型（代理转写服务） */
+        post: operations["createTranscriptModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transcripts/models/{modelId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 更新转写模型（代理转写服务）
+         * @description 更新启用/禁用、默认位、最大并发、API Key（可选，不传则不改）；被禁用模型进行中的任务继续跑完。
+         */
+        put: operations["updateTranscriptModel"];
         post?: never;
         delete?: never;
         options?: never;
@@ -551,11 +754,194 @@ export interface components {
              */
             createdAt: string;
         };
+        RecordingTranscriptErrorResponse: {
+            error: string;
+        };
+        RecordingTranscriptEnqueueRequest: {
+            recordingId: string;
+            modelId: string;
+        };
+        RecordingTranscriptEnqueueResponse: {
+            taskId: string;
+            /**
+             * @description 新建任务固定为 PENDING
+             * @example PENDING
+             */
+            status: string;
+        };
+        /** @enum {string} */
+        RecordingTranscriptTaskStatus: "PENDING" | "RUNNING" | "DONE" | "FAILED";
+        /**
+         * @description live=开播自动创建，实时音频流为源；file=手动发起，录播文件为源
+         * @enum {string}
+         */
+        RecordingTranscriptTaskMode: "live" | "file";
+        /** @enum {string} */
+        RecordingTranscriptTaskSource: "auto" | "manual";
+        /**
+         * @description 音源类型，当前固定 recording（预留扩展）
+         * @enum {string}
+         */
+        RecordingTranscriptTaskType: "recording";
+        RecordingTranscriptTask: {
+            id?: string;
+            recordingId?: string;
+            /** Format: int64 */
+            roomId?: number;
+            title?: string | null;
+            /** @description 识别所用录播文件（优先 RAW，缺失回退首个） */
+            file?: string | null;
+            modelId?: string;
+            modelName?: string | null;
+            type?: components["schemas"]["RecordingTranscriptTaskType"];
+            mode?: components["schemas"]["RecordingTranscriptTaskMode"];
+            source?: components["schemas"]["RecordingTranscriptTaskSource"];
+            status?: components["schemas"]["RecordingTranscriptTaskStatus"];
+            /**
+             * Format: int64
+             * @description 断点位置（毫秒），始终为句尾
+             */
+            position?: number;
+            /** @description FAILED 原因 */
+            error?: string | null;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        RecordingTranscriptTaskList: {
+            items?: components["schemas"]["RecordingTranscriptTask"][];
+        };
+        RecordingTranscriptSegment: {
+            /**
+             * Format: int64
+             * @description 整场录播时间轴上的句首（毫秒，含续跑 offset）
+             */
+            start: number;
+            /**
+             * Format: int64
+             * @description 整场录播时间轴上的句尾（毫秒）
+             */
+            end: number;
+            text: string;
+        };
+        RecordingTranscriptTaskDetail: {
+            task: components["schemas"]["RecordingTranscriptTask"];
+            /** @description 全量 segments（按 start 升序） */
+            segments: components["schemas"]["RecordingTranscriptSegment"][];
+        };
+        RecordingTranscriptSettingsItem: {
+            /** Format: int64 */
+            roomId?: number;
+            /** Format: int64 */
+            mid?: number | null;
+            anchorName?: string | null;
+            enabled?: boolean;
+        };
+        RecordingTranscriptSettingsList: {
+            items?: components["schemas"]["RecordingTranscriptSettingsItem"][];
+        };
+        RecordingTranscriptSettingsUpdateRequest: {
+            enable: boolean;
+        };
+        RecordingTranscriptSettingsUpdateResponse: {
+            /** Format: int64 */
+            roomId: number;
+            enabled: boolean;
+        };
+        RecordingTranscriptRecordingItem: {
+            id?: string;
+            /** Format: int64 */
+            roomId?: number;
+            /** Format: int64 */
+            mid?: number;
+            title?: string | null;
+            files?: string[];
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            endedAt?: string | null;
+        };
+        RecordingTranscriptRecordingList: {
+            items?: components["schemas"]["RecordingTranscriptRecordingItem"][];
+        };
+        RecordingTranscriptRoomTaskRef: {
+            taskId?: string;
+            modelId?: string;
+            modelName?: string | null;
+            status?: components["schemas"]["RecordingTranscriptTaskStatus"];
+            /** Format: int64 */
+            position?: number;
+            source?: components["schemas"]["RecordingTranscriptTaskSource"];
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        RecordingTranscriptRoomRecording: {
+            recordingId?: string;
+            title?: string | null;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            endedAt?: string | null;
+            tasks?: components["schemas"]["RecordingTranscriptRoomTaskRef"][];
+        };
+        RecordingTranscriptRoomView: {
+            /** Format: int64 */
+            roomId: number;
+            autoEnqueueEnabled: boolean;
+            items: components["schemas"]["RecordingTranscriptRoomRecording"][];
+        };
+        RecordingTranscriptModel: {
+            id?: string;
+            name?: string;
+            /** @enum {string} */
+            provider?: "ali-fun-asr";
+            /** @enum {string} */
+            type?: "streaming";
+            enabled?: boolean;
+            isDefault?: boolean;
+            /** Format: int32 */
+            maxConcurrency?: number;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        RecordingTranscriptModelList: {
+            items?: components["schemas"]["RecordingTranscriptModel"][];
+        };
+        RecordingTranscriptModelCreateRequest: {
+            name: string;
+            /** @enum {string} */
+            provider: "ali-fun-asr";
+            /** @enum {string} */
+            type: "streaming";
+            apiKey: string;
+            /** @default true */
+            enabled: boolean;
+            /** @default false */
+            isDefault: boolean;
+            /**
+             * Format: int32
+             * @default 1
+             */
+            maxConcurrency: number;
+        };
+        RecordingTranscriptModelUpdateRequest: {
+            enabled?: boolean;
+            isDefault?: boolean;
+            /** Format: int32 */
+            maxConcurrency?: number;
+            /** @description 可选，不传则不改 */
+            apiKey?: string;
+        };
     };
     responses: never;
     parameters: {
         Mid: number;
         RoomId: number;
+        /** @description 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整文件 */
+        Range: string;
+        /** @description 条件 Range，校验失败（值与当前文件不匹配）时回退为 200 返回完整文件 */
+        IfRange: string;
         Page: number;
         PageSize: number;
         /** @description 事件类型筛选，可重复传入（如 type=danmaku&type=gift），多值为合集，不传返回全部类型。 */
@@ -574,6 +960,16 @@ export interface components {
         EndedDate: string;
         /** @description 统计口径：any=范围内任意一天在舰即计入（默认），all=范围内每一天都在舰才计入。 */
         OnboardMode: "any" | "all";
+        TranscriptRoomIdQuery: number;
+        /** @description 按录播场次过滤 */
+        TranscriptRecordingIdQuery: string;
+        /** @description 按任务状态过滤 */
+        TranscriptTaskStatusQuery: components["schemas"]["RecordingTranscriptTaskStatus"];
+        TranscriptTaskId: string;
+        TranscriptModelId: string;
+        TranscriptLimit: number;
+        /** @description 分页游标（StartedAt 倒序），传入后返回早于该时刻的记录 */
+        TranscriptBefore: string;
     };
     requestBodies: never;
     headers: never;
@@ -1092,7 +1488,12 @@ export interface operations {
     downloadRoomRecording: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整文件 */
+                Range?: components["parameters"]["Range"];
+                /** @description 条件 Range，校验失败（值与当前文件不匹配）时回退为 200 返回完整文件 */
+                "If-Range"?: components["parameters"]["IfRange"];
+            };
             path: {
                 roomId: components["parameters"]["RoomId"];
                 fileName: string;
@@ -1101,9 +1502,24 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 录播文件二进制内容 */
+            /** @description 录播文件二进制内容（未携带 Range 或 Range 不被支持时返回完整文件） */
             200: {
                 headers: {
+                    /** @description 服务端支持的分段单位，固定为 bytes */
+                    "Accept-Ranges"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description 单区间分段内容 */
+            206: {
+                headers: {
+                    /** @description 当前返回的字节区间及文件总大小，如 bytes 0-1023/20480 */
+                    "Content-Range"?: string;
+                    /** @description 服务端支持的分段单位，固定为 bytes */
+                    "Accept-Ranges"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -1124,6 +1540,15 @@ export interface operations {
             /** @description 文件不存在 */
             404: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求区间越界（起始位置不小于文件大小） */
+            416: {
+                headers: {
+                    /** @description 未满足的区间及文件总大小，如 bytes *\/20480 */
+                    "Content-Range"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -1165,6 +1590,442 @@ export interface operations {
                 content?: never;
             };
             /** @description recording 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTranscriptRecordings: {
+        parameters: {
+            query?: {
+                roomId?: components["parameters"]["TranscriptRoomIdQuery"];
+                limit?: components["parameters"]["TranscriptLimit"];
+                /** @description 分页游标（StartedAt 倒序），传入后返回早于该时刻的记录 */
+                before?: components["parameters"]["TranscriptBefore"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 录播场次归档列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptRecordingList"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    enqueueTranscriptTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordingTranscriptEnqueueRequest"];
+            };
+        };
+        responses: {
+            /** @description 任务已创建（或幂等返回已有任务） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptEnqueueResponse"];
+                };
+            };
+            /** @description 录播或模型不存在，或模型已被禁用 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
+            /** @description 同录播 + 同模型已存在任务，返回已有 taskId */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptEnqueueResponse"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTranscriptTasks: {
+        parameters: {
+            query?: {
+                /** @description 按录播场次过滤 */
+                recordingId?: components["parameters"]["TranscriptRecordingIdQuery"];
+                roomId?: components["parameters"]["TranscriptRoomIdQuery"];
+                /** @description 按任务状态过滤 */
+                status?: components["parameters"]["TranscriptTaskStatusQuery"];
+                limit?: components["parameters"]["TranscriptLimit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 转写任务列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptTaskList"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getTranscriptTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: components["parameters"]["TranscriptTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务详情（segments 按 start 升序） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptTaskDetail"];
+                };
+            };
+            /** @description 任务不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    retryTranscriptTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: components["parameters"]["TranscriptTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重试成功，返回更新后的任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptTask"];
+                };
+            };
+            /** @description 任务不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
+            /** @description 任务状态不允许重试（非 FAILED） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    streamTranscriptSegments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: components["parameters"]["TranscriptTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream，先 replay 已入库 segments，再实时推送新 segment，终态推送 done */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description 任务不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTranscriptSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 自动识别设置全量列表（关联主播资料补 anchorName） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptSettingsList"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getRoomTranscripts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 该主播的录播场次及各场次 transcript 任务（含当前自动识别开关状态） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptRoomView"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateTranscriptSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordingTranscriptSettingsUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 设置成功（upsert） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptSettingsUpdateResponse"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTranscriptModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 模型列表（不回传 apiKey） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptModelList"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createTranscriptModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordingTranscriptModelCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 创建成功（isDefault=true 时原子清除其他模型默认位；不回传 apiKey） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptModel"];
+                };
+            };
+            /** @description 参数非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateTranscriptModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                modelId: components["parameters"]["TranscriptModelId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordingTranscriptModelUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新成功（不回传 apiKey） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptModel"];
+                };
+            };
+            /** @description 模型不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
+            /** @description transcript 服务不可达 */
             502: {
                 headers: {
                     [name: string]: unknown;

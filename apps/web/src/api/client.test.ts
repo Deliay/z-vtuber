@@ -32,10 +32,26 @@ import {
   checkoutWeiboCookie,
   reportInvalidWeiboCookie,
   cooldownWeiboCookie,
+  listTranscriptRecordings,
+  enqueueTranscript,
+  listTranscriptTasks,
+  getTranscriptTask,
+  retryTranscriptTask,
+  transcriptSseUrl,
+  openTranscriptStream,
+  getTranscriptSettings,
+  setRoomAutoEnqueue,
+  getRoomTranscripts,
+  listTranscriptModels,
+  createTranscriptModel,
+  updateTranscriptModel,
 } from './client'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
+
+const mockEventSource = vi.fn()
+vi.stubGlobal('EventSource', mockEventSource)
 
 describe('API Client', () => {
   beforeEach(() => {
@@ -915,6 +931,202 @@ describe('API Client', () => {
           }),
         )
       })
+    })
+  })
+
+  describe('Transcript', () => {
+    it('listTranscriptRecordings should GET /recordings with filters', async () => {
+      const items = [
+        { id: 'r1', roomId: 101, mid: 1, title: '晚间歌回', files: [], startedAt: '2026-09-16T12:00:00Z' },
+      ]
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ items }) })
+
+      const result = await listTranscriptRecordings({ roomId: 101, limit: 20 })
+
+      const urlArg = mockFetch.mock.calls[0][0] as string
+      expect(urlArg).toContain('/recordings')
+      expect(urlArg).toContain('roomId=101')
+      expect(urlArg).toContain('limit=20')
+      expect(result).toEqual(items)
+    })
+
+    it('enqueueTranscript should POST /transcripts/enqueue with recordingId and modelId', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ taskId: 't1', status: 'PENDING' }),
+      })
+
+      const result = await enqueueTranscript('r1', 'm1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/transcripts/enqueue'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ recordingId: 'r1', modelId: 'm1' }),
+        }),
+      )
+      expect(result).toEqual({ taskId: 't1', status: 'PENDING' })
+    })
+
+    it('listTranscriptTasks should GET /transcripts/task with filters', async () => {
+      const items = [
+        { id: 't1', status: 'RUNNING', roomId: 101, position: 1000 },
+      ]
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ items }) })
+
+      const result = await listTranscriptTasks({ roomId: 101, status: 'RUNNING', limit: 50 })
+
+      const urlArg = mockFetch.mock.calls[0][0] as string
+      expect(urlArg).toContain('/transcripts/task')
+      expect(urlArg).toContain('roomId=101')
+      expect(urlArg).toContain('status=RUNNING')
+      expect(urlArg).toContain('limit=50')
+      expect(result).toEqual(items)
+    })
+
+    it('listTranscriptTasks should return empty array when items undefined', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+
+      expect(await listTranscriptTasks()).toEqual([])
+    })
+
+    it('getTranscriptTask should GET /transcripts/task/{taskId}', async () => {
+      const detail = {
+        task: { id: 't1', status: 'DONE' },
+        segments: [{ start: 0, end: 1000, text: '你好' }],
+      }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(detail) })
+
+      const result = await getTranscriptTask('t1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/transcripts/task/t1'),
+        expect.anything(),
+      )
+      expect(result).toEqual(detail)
+    })
+
+    it('retryTranscriptTask should POST /transcripts/task/{taskId}/retry', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ id: 't1', status: 'RUNNING' }),
+      })
+
+      await retryTranscriptTask('t1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/transcripts/task/t1/retry'),
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+
+    it('transcriptSseUrl should build the SSE endpoint url', () => {
+      expect(transcriptSseUrl('t1')).toBe('/api/transcripts/task/t1/sse')
+    })
+
+    it('openTranscriptStream should create an EventSource at the SSE url', () => {
+      mockEventSource.mockClear()
+
+      openTranscriptStream('t1')
+
+      expect(mockEventSource).toHaveBeenCalledWith('/api/transcripts/task/t1/sse')
+    })
+
+    it('getTranscriptSettings should GET /transcripts/settings', async () => {
+      const items = [{ roomId: 101, mid: 1, anchorName: '主播A', enabled: true }]
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ items }) })
+
+      const result = await getTranscriptSettings()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/transcripts/settings'),
+        expect.anything(),
+      )
+      expect(result).toEqual(items)
+    })
+
+    it('setRoomAutoEnqueue should POST /recordings/{roomId}/transcripts/settings', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ roomId: 101, enabled: true }),
+      })
+
+      await setRoomAutoEnqueue(101, true)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/recordings/101/transcripts/settings'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ enable: true }),
+        }),
+      )
+    })
+
+    it('getRoomTranscripts should GET /recordings/{roomId}/transcripts', async () => {
+      const view = { roomId: 101, autoEnqueueEnabled: true, items: [] }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(view) })
+
+      const result = await getRoomTranscripts(101)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/recordings/101/transcripts'),
+        expect.anything(),
+      )
+      expect(result).toEqual(view)
+    })
+
+    it('listTranscriptModels should GET /transcripts/models', async () => {
+      const items = [{ id: 'm1', name: '默认模型', provider: 'ali-fun-asr', type: 'streaming' }]
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ items }) })
+
+      const result = await listTranscriptModels()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/transcripts/models'),
+        expect.anything(),
+      )
+      expect(result).toEqual(items)
+    })
+
+    it('createTranscriptModel should POST /transcripts/models', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ id: 'm1', name: '默认模型' }),
+      })
+
+      await createTranscriptModel({
+        name: '默认模型',
+        provider: 'ali-fun-asr',
+        type: 'streaming',
+        apiKey: 'secret',
+        enabled: true,
+        isDefault: false,
+        maxConcurrency: 1,
+      })
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string)
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/transcripts/models'),
+        expect.objectContaining({ method: 'POST' }),
+      )
+      expect(body.apiKey).toBe('secret')
+    })
+
+    it('updateTranscriptModel should PUT /transcripts/models/{modelId}', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ id: 'm1', enabled: false }),
+      })
+
+      await updateTranscriptModel('m1', { enabled: false, maxConcurrency: 2 })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/transcripts/models/m1'),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ enabled: false, maxConcurrency: 2 }),
+        }),
+      )
     })
   })
 })

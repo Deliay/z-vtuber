@@ -2,6 +2,7 @@ import type { components } from './schema'
 import type { components as weiboComponents } from './schema-weibo'
 import type { components as notifyComponents } from './schema-notify'
 import type { components as cookieComponents } from './schema-cookie'
+import type { components as transcriptComponents } from './schema-recording-transcript'
 
 const BASE_URL = '/api'
 
@@ -19,6 +20,15 @@ type WeiboSubscribeRequest = weiboComponents['schemas']['WeiboSubscribeRequest']
 type NotifyGroup = notifyComponents['schemas']['NotifyGroup']
 type NotificationSubscription = notifyComponents['schemas']['NotificationSubscription']
 type CreateNotificationSubscriptionRequest = notifyComponents['schemas']['CreateNotificationSubscriptionRequest']
+
+type TranscriptTask = transcriptComponents['schemas']['TranscriptTask']
+type TranscriptTaskDetail = transcriptComponents['schemas']['TranscriptTaskDetail']
+type TranscriptSettingsItem = transcriptComponents['schemas']['TranscriptSettingsItem']
+type TranscriptModel = transcriptComponents['schemas']['TranscriptModel']
+type TranscriptModelCreateRequest = transcriptComponents['schemas']['TranscriptModelCreateRequest']
+type TranscriptModelUpdateRequest = transcriptComponents['schemas']['TranscriptModelUpdateRequest']
+type TranscriptRecordingItem = transcriptComponents['schemas']['RecordingItem']
+type RoomTranscriptView = transcriptComponents['schemas']['RoomTranscriptView']
 
 interface ApiError extends Error {
   status?: number
@@ -302,4 +312,129 @@ export async function reportInvalidCookie(
     method: 'POST',
     body: JSON.stringify({ cookieId }),
   })
+}
+
+export async function listTranscriptRecordings(params: {
+  roomId?: number
+  limit?: number
+  before?: string
+} = {}): Promise<TranscriptRecordingItem[]> {
+  const query = new URLSearchParams()
+  if (params.roomId) query.set('roomId', String(params.roomId))
+  if (params.limit) query.set('limit', String(params.limit))
+  if (params.before) query.set('before', params.before)
+  const qs = query.toString()
+  const data = await request<transcriptComponents['schemas']['RecordingList']>(
+    `/recordings${qs ? `?${qs}` : ''}`,
+  )
+  return data.items ?? []
+}
+
+export async function enqueueTranscript(
+  recordingId: string,
+  modelId: string,
+): Promise<transcriptComponents['schemas']['EnqueueResponse']> {
+  return request<transcriptComponents['schemas']['EnqueueResponse']>(
+    '/transcripts/enqueue',
+    {
+      method: 'POST',
+      body: JSON.stringify({ recordingId, modelId }),
+    },
+  )
+}
+
+export async function listTranscriptTasks(params: {
+  recordingId?: string
+  roomId?: number
+  status?: TranscriptTask['status']
+  limit?: number
+} = {}): Promise<TranscriptTask[]> {
+  const query = new URLSearchParams()
+  if (params.recordingId) query.set('recordingId', params.recordingId)
+  if (params.roomId) query.set('roomId', String(params.roomId))
+  if (params.status) query.set('status', params.status)
+  if (params.limit) query.set('limit', String(params.limit))
+  const qs = query.toString()
+  const data = await request<transcriptComponents['schemas']['TranscriptTaskList']>(
+    `/transcripts/task${qs ? `?${qs}` : ''}`,
+  )
+  return data.items ?? []
+}
+
+export async function getTranscriptTask(
+  taskId: string,
+): Promise<TranscriptTaskDetail> {
+  return request<TranscriptTaskDetail>(
+    `/transcripts/task/${encodeURIComponent(taskId)}`,
+  )
+}
+
+export async function retryTranscriptTask(taskId: string): Promise<TranscriptTask> {
+  return request<TranscriptTask>(
+    `/transcripts/task/${encodeURIComponent(taskId)}/retry`,
+    { method: 'POST' },
+  )
+}
+
+export function transcriptSseUrl(taskId: string): string {
+  return `${BASE_URL}/transcripts/task/${encodeURIComponent(taskId)}/sse`
+}
+
+export function openTranscriptStream(taskId: string): EventSource {
+  return new EventSource(transcriptSseUrl(taskId))
+}
+
+export async function getTranscriptSettings(): Promise<TranscriptSettingsItem[]> {
+  const data = await request<transcriptComponents['schemas']['TranscriptSettingsList']>(
+    '/transcripts/settings',
+  )
+  return data.items ?? []
+}
+
+export async function setRoomAutoEnqueue(
+  roomId: number,
+  enable: boolean,
+): Promise<transcriptComponents['schemas']['TranscriptSettingsUpdateResponse']> {
+  return request<transcriptComponents['schemas']['TranscriptSettingsUpdateResponse']>(
+    `/recordings/${roomId}/transcripts/settings`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ enable }),
+    },
+  )
+}
+
+export async function getRoomTranscripts(
+  roomId: number,
+): Promise<RoomTranscriptView> {
+  return request<RoomTranscriptView>(`/recordings/${roomId}/transcripts`)
+}
+
+export async function listTranscriptModels(): Promise<TranscriptModel[]> {
+  const data = await request<transcriptComponents['schemas']['TranscriptModelList']>(
+    '/transcripts/models',
+  )
+  return data.items ?? []
+}
+
+export async function createTranscriptModel(
+  params: TranscriptModelCreateRequest,
+): Promise<TranscriptModel> {
+  return request<TranscriptModel>('/transcripts/models', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function updateTranscriptModel(
+  modelId: string,
+  params: TranscriptModelUpdateRequest,
+): Promise<TranscriptModel> {
+  return request<TranscriptModel>(
+    `/transcripts/models/${encodeURIComponent(modelId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(params),
+    },
+  )
 }
