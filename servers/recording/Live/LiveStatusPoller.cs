@@ -120,7 +120,7 @@ public sealed class LiveStatusPoller(
                 return;
             }
 
-            _ = RunSessionAsync(roomId, anchorName, room, checkout.CookieId, checkout.Cookie, sessionCts);
+            _ = RunSessionAsync(mid, roomId, anchorName, room, checkout.CookieId, checkout.Cookie, sessionCts);
         }
         catch (NoAvailableCookieException)
         {
@@ -169,6 +169,7 @@ public sealed class LiveStatusPoller(
     }
 
     private async Task RunSessionAsync(
+        long mid,
         long roomId,
         string? anchorName,
         LiveRoomInfo room,
@@ -178,7 +179,7 @@ public sealed class LiveStatusPoller(
     {
         try
         {
-            await sessionRunner.RunAsync(roomId, anchorName, room, cookieId, cookie, cts.Token);
+            await sessionRunner.RunAsync(roomId, mid, anchorName, room, cookieId, cookie, cts.Token);
         }
         catch (OperationCanceledException)
         {
