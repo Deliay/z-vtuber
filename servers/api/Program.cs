@@ -51,6 +51,11 @@ builder.Services.AddHttpClient(Z.Vtuber.Controllers.BilibiliLiveRecordingControl
     client.BaseAddress = new Uri(builder.Configuration["RecordingService:BaseUrl"] ?? "http://recording");
 });
 
+builder.Services.AddHttpClient(Z.Vtuber.Controllers.RecordingTranscriptProxyController.TranscriptClientName, client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["TranscriptService:BaseUrl"] ?? "http://recording-transcript-api");
+});
+
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
