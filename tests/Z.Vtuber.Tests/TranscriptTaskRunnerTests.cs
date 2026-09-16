@@ -38,13 +38,17 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
             CreatedAt = DateTime.UtcNow,
         });
 
-    private async Task<ObjectId> InsertRecordingAsync(long roomId, DateTime? startedAt = null, DateTime? endedAt = null) =>
+    private async Task<ObjectId> InsertRecordingAsync(
+        long roomId,
+        DateTime? startedAt = null,
+        DateTime? endedAt = null,
+        IReadOnlyList<string>? files = null) =>
         await Recordings.InsertAsync(new RecordingRecord
         {
             RoomId = roomId,
             Mid = roomId + 1,
             Title = "title",
-            Files = ["[RAW]a.flv"],
+            Files = [.. files ?? ["[RAW]a.flv"]],
             StartedAt = startedAt ?? DateTime.UtcNow.AddMinutes(-1),
             EndedAt = endedAt,
             CreatedAt = DateTime.UtcNow.AddMinutes(-1),
@@ -56,12 +60,13 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
         string mode = TranscriptTaskModes.File,
         long position = 0,
         string status = TranscriptTaskStatus.Pending,
-        long roomId = 100) =>
+        long roomId = 100,
+        string file = "[RAW]a.flv") =>
         await Tasks.InsertAsync(new TranscriptTaskRecord
         {
             RecordingId = recordingId,
             RoomId = roomId,
-            File = "[RAW]a.flv",
+            File = file,
             ModelId = modelId,
             Type = TranscriptTaskTypes.Recording,
             Mode = mode,
@@ -182,8 +187,9 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
         var modelId = await InsertModelAsync();
         var startedAt = DateTime.UtcNow.AddSeconds(-10);
         var recordingId = await InsertRecordingAsync(103, startedAt: startedAt);
+        // 只有 Position==0 的 live 任务才允许接实时流
         var taskId = await InsertTaskAsync(
-            recordingId, modelId, mode: TranscriptTaskModes.Live, position: 8000);
+            recordingId, modelId, mode: TranscriptTaskModes.Live, position: 0);
 
         var recordingClient = new FakeRecordingServiceClient { LiveAvailable = true };
         var asrFactory = new FakeStreamingAsrServiceFactory
@@ -205,7 +211,8 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
     public async Task LiveMode_StreamUnavailable_SwitchesToFileFromPosition()
     {
         var modelId = await InsertModelAsync();
-        var recordingId = await InsertRecordingAsync(104);
+        // live 已有进度：需等场次结束（文件就绪）后转 file 从 position 补尾
+        var recordingId = await InsertRecordingAsync(104, endedAt: DateTime.UtcNow);
         var taskId = await InsertTaskAsync(recordingId, modelId, mode: TranscriptTaskModes.Live, position: 5000);
 
         var recordingClient = new FakeRecordingServiceClient { LiveAvailable = false };
@@ -223,6 +230,95 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
         Assert.Equal(5000, fileCall.Position);
         Assert.Empty(audioFactory.LiveCalls);
         Assert.Equal(TranscriptTaskStatus.Done, (await Tasks.GetByIdAsync(taskId))!.Status);
+    }
+
+    [Fact]
+    public async Task LiveTaskWithProgress_DoesNotReattachLive_WaitsForFileReady()
+    {
+        var modelId = await InsertModelAsync();
+        // 仍在直播（EndedAt=null）且已有进度：不得再接实时流（会永久丢失 Position→现在 的音频）
+        var recordingId = await InsertRecordingAsync(120, endedAt: null);
+        var taskId = await InsertTaskAsync(
+            recordingId, modelId, mode: TranscriptTaskModes.Live, position: 5000);
+        var audioFactory = new FakeAudioSourceFactory();
+        var runner = CreateRunner(
+            new FakeRecordingServiceClient { LiveAvailable = true },
+            audioFactory, new FakeStreamingAsrServiceFactory(), CreatePersister(), new FakeTranscriptSegmentPublisher());
+
+        await runner.RunAsync(await Tasks.GetByIdAsync(taskId));
+
+        Assert.Empty(audioFactory.LiveCalls);
+        Assert.Empty(audioFactory.FileCalls);
+        Assert.Equal(TranscriptTaskStatus.Pending, (await Tasks.GetByIdAsync(taskId))!.Status);
+    }
+
+    [Fact]
+    public async Task LiveTaskWithProgress_AfterRecordingEnded_ResumesFromFilePosition()
+    {
+        var modelId = await InsertModelAsync();
+        var recordingId = await InsertRecordingAsync(121, endedAt: DateTime.UtcNow);
+        var taskId = await InsertTaskAsync(
+            recordingId, modelId, mode: TranscriptTaskModes.Live, position: 5000);
+        var asrFactory = new FakeStreamingAsrServiceFactory
+        {
+            Provider = _ => new FakeStreamingAsrService([new StreamingAsrSegment(5000, 6000, "tail")]),
+        };
+        var audioFactory = new FakeAudioSourceFactory();
+        var runner = CreateRunner(
+            new FakeRecordingServiceClient { LiveAvailable = false },
+            audioFactory, asrFactory, CreatePersister(), new FakeTranscriptSegmentPublisher());
+
+        await runner.RunAsync(await Tasks.GetByIdAsync(taskId));
+
+        Assert.Empty(audioFactory.LiveCalls);
+        var fileCall = Assert.Single(audioFactory.FileCalls);
+        Assert.Equal(5000, fileCall.Position);
+        Assert.Equal(TranscriptTaskStatus.Done, (await Tasks.GetByIdAsync(taskId))!.Status);
+    }
+
+    [Fact]
+    public async Task LiveTaskEmptyFile_AfterRecordingEnded_ResolvesRealFileAndCompletes()
+    {
+        var modelId = await InsertModelAsync();
+        // 开播时 Files 为空 → task.File=""；结束后以运行时 recording.Files 重新选取
+        var recordingId = await InsertRecordingAsync(122, endedAt: DateTime.UtcNow, files: ["[RAW]real.flv"]);
+        var taskId = await InsertTaskAsync(
+            recordingId, modelId, mode: TranscriptTaskModes.Live, position: 0, file: "");
+        var asrFactory = new FakeStreamingAsrServiceFactory
+        {
+            Provider = _ => new FakeStreamingAsrService([new StreamingAsrSegment(0, 500, "head")]),
+        };
+        var audioFactory = new FakeAudioSourceFactory();
+        var runner = CreateRunner(
+            new FakeRecordingServiceClient { LiveAvailable = false },
+            audioFactory, asrFactory, CreatePersister(), new FakeTranscriptSegmentPublisher());
+
+        await runner.RunAsync(await Tasks.GetByIdAsync(taskId));
+
+        var fileCall = Assert.Single(audioFactory.FileCalls);
+        Assert.Contains("real.flv", fileCall.Url);
+        Assert.Equal(TranscriptTaskStatus.Done, (await Tasks.GetByIdAsync(taskId))!.Status);
+        Assert.Equal("[RAW]real.flv", (await Tasks.GetByIdAsync(taskId))!.File);
+    }
+
+    [Fact]
+    public async Task LiveTaskEmptyFile_RecordingNotReady_DefersWithoutEmptyRequest()
+    {
+        var modelId = await InsertModelAsync();
+        // 文件未就绪（Files 为空且未结束）：不得携空文件名请求、不得 DONE/FAILED，保持可重试
+        var recordingId = await InsertRecordingAsync(123, endedAt: null, files: []);
+        var taskId = await InsertTaskAsync(
+            recordingId, modelId, mode: TranscriptTaskModes.Live, position: 0, file: "");
+        var audioFactory = new FakeAudioSourceFactory();
+        var runner = CreateRunner(
+            new FakeRecordingServiceClient { LiveAvailable = false },
+            audioFactory, new FakeStreamingAsrServiceFactory(), CreatePersister(), new FakeTranscriptSegmentPublisher());
+
+        await runner.RunAsync(await Tasks.GetByIdAsync(taskId));
+
+        Assert.Empty(audioFactory.FileCalls);
+        Assert.Empty(audioFactory.LiveCalls);
+        Assert.Equal(TranscriptTaskStatus.Pending, (await Tasks.GetByIdAsync(taskId))!.Status);
     }
 
     [Fact]
@@ -279,8 +375,9 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
     {
         var modelId = await InsertModelAsync();
         var recordingId = await InsertRecordingAsync(108);
+        // 探测路径仅对 Position==0 的 live 任务生效
         var taskId = await InsertTaskAsync(
-            recordingId, modelId, mode: TranscriptTaskModes.Live, position: 1000);
+            recordingId, modelId, mode: TranscriptTaskModes.Live, position: 0);
 
         var recordingClient = new FakeRecordingServiceClient { ProbeResult = LiveAudioProbe.Unknown };
         var audioFactory = new FakeAudioSourceFactory();
@@ -363,9 +460,11 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
     public async Task Scanner_RespectsModelMaxConcurrency()
     {
         var modelId = await InsertModelAsync(maxConcurrency: 1);
-        var recordingId = await InsertRecordingAsync(106);
+        var baseStart = DateTime.UtcNow.AddMinutes(-2);
+        var recordingId = await InsertRecordingAsync(106, startedAt: baseStart);
         var first = await InsertTaskAsync(recordingId, modelId, roomId: 106);
-        var secondRecording = await InsertRecordingAsync(106);
+        // 同房间两场需不同 StartedAt（recordings 唯一索引 RoomId+StartedAt 幂等键）
+        var secondRecording = await InsertRecordingAsync(106, startedAt: baseStart.AddMinutes(1));
         var second = await InsertTaskAsync(secondRecording, modelId, roomId: 106);
 
         var fakeRunner = new FakeTranscriptTaskRunner { WaitForGate = true };

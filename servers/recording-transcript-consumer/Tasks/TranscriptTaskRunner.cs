@@ -3,12 +3,21 @@ using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.RecordingTranscript.Consumer.Asr;
 using Z.Vtuber.RecordingTranscript.Consumer.Audio;
+using Z.Vtuber.RecordingTranscript.Consumer.Enqueue;
 using Z.Vtuber.RecordingTranscript.Consumer.Services;
 
 namespace Z.Vtuber.RecordingTranscript.Consumer.Tasks;
 
 /// <summary>
-/// 单任务编排：按 Mode 选择音源（live 探测 200 接流 / 404 转 file 从 position seek 补尾），
+/// 任务暂缓（可重试等待）：音频源尚未就绪（如 live 任务已有进度但录播文件仍在写/未归档）。
+/// 不置 FAILED，置回 PENDING 由扫描器稍后重试，避免携空文件名/未就绪文件发起识别。
+/// </summary>
+public sealed class TranscriptTaskDeferredException(string message) : Exception(message);
+
+/// <summary>
+/// 单任务编排：按 Mode 选择音源——
+/// 仅 Position==0 的 live 任务接实时流；已有进度的任务一律转 file 从 position 断点续跑（缺口不回溯）；
+/// 文件未就绪时暂缓为 PENDING 等待，不失败也不 DONE。
 /// ffmpeg stdout → ASR 流式识别 → 顺序落库 segment + position（唯一索引幂等）→ Redis pub；
 /// 每轮 fencing 校验，失锁即终止；EOF → DONE，异常 → FAILED；finally 释放锁。
 /// </summary>
@@ -41,20 +50,26 @@ public sealed class TranscriptTaskRunner(
                 ?? throw new InvalidOperationException($"Transcript model {task.ModelId} not found");
             var recording = await recordings.GetByIdAsync(task.RecordingId, ct);
 
-            long offset = task.Position;
-            var useFile = true;
-            if (string.Equals(task.Mode, TranscriptTaskModes.Live, StringComparison.Ordinal))
+            // 运行时以最新 recording.Files 重新选取识别文件（开播建任务时文件列表为空，结束事件不会回填既有任务）
+            var resolvedFile = ResolveRecordingFile(recording, task);
+
+            long offset;
+            var canAttachLive = string.Equals(task.Mode, TranscriptTaskModes.Live, StringComparison.Ordinal)
+                && task.Position == 0;
+            if (canAttachLive)
             {
+                // 从未产出片段：允许接实时流（首发/开播初）。已有进度再接实时流会永久丢失 Position→现在 之间的音频。
                 var probe = await recordingClient.ProbeLiveAudioAsync(task.RoomId, ct);
                 switch (probe)
                 {
                     case LiveAudioProbe.Live:
                         offset = ComputeLiveOffset(recording, task);
                         source = audioFactory.CreateLive(recordingClient.BuildLiveAudioUrl(task.RoomId), offset);
-                        useFile = false;
                         break;
                     case LiveAudioProbe.NotLive:
-                        // 直播确已结束：转 file 模式从 position 断点补尾（缺失窗口不回溯）
+                        // 直播确已结束：转 file 从 position 断点补尾（缺失窗口不回溯）
+                        offset = task.Position;
+                        source = await CreateFileSourceAsync(resolvedFile, task, ct);
                         break;
                     default:
                         // 传输异常/未知状态不得当作已结束：抛出让任务 FAILED，retry/接管后重试
@@ -62,11 +77,19 @@ public sealed class TranscriptTaskRunner(
                             $"live audio probe for room {task.RoomId} was inconclusive; refusing to read a possibly still-recording file");
                 }
             }
-
-            if (useFile)
+            else
             {
+                // 手动/自动 file 任务，或已有进度的 live 任务重试：只能从录播文件断点续跑。
+                // live 已有进度时必须等场次结束（文件写完）再读，否则读到当前 EOF 提前 DONE、后半场永久缺失。
+                if (string.Equals(task.Mode, TranscriptTaskModes.Live, StringComparison.Ordinal)
+                    && (recording is null || recording.EndedAt is null))
+                {
+                    throw new TranscriptTaskDeferredException(
+                        "live task already has transcript progress; waiting for the recording file to be finalized");
+                }
+
                 offset = task.Position;
-                source = audioFactory.CreateFile(recordingClient.BuildFileUrl(task.RoomId, task.File), offset);
+                source = await CreateFileSourceAsync(resolvedFile, task, ct);
             }
 
             var asr = asrFactory.Create(offset, model.ApiKey);
@@ -100,6 +123,22 @@ public sealed class TranscriptTaskRunner(
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             logger.LogInformation("Transcript task {TaskId} cancelled", task.Id);
+        }
+        catch (TranscriptTaskDeferredException ex)
+        {
+            // 音频源未就绪：置回 PENDING 等扫描器稍后重试（既不 DONE 也不 FAILED）
+            logger.LogInformation("Transcript task {TaskId} deferred (retryable): {Reason}", task.Id, ex.Message);
+            try
+            {
+                if (await OwnsLockAsync(handle, task, CancellationToken.None))
+                {
+                    await tasks.SetStatusAsync(task.Id, TranscriptTaskStatus.Pending, null, CancellationToken.None);
+                }
+            }
+            catch (Exception deferEx)
+            {
+                logger.LogWarning(deferEx, "Failed to defer transcript task {TaskId}", task.Id);
+            }
         }
         catch (Exception ex)
         {
@@ -184,6 +223,46 @@ public sealed class TranscriptTaskRunner(
         }
 
         await tasks.SetStatusAsync(task.Id, status, error, ct);
+    }
+
+    /// <summary>以运行时最新 recording.Files 选取文件（优先 [RAW]），缺失回退任务已存文件名。</summary>
+    private static string ResolveRecordingFile(RecordingRecord? recording, TranscriptTaskRecord task)
+    {
+        var fromRecording = recording is not null
+            ? TranscriptEnqueueService.PickFile(recording.Files)
+            : string.Empty;
+        return !string.IsNullOrEmpty(fromRecording) ? fromRecording : task.File;
+    }
+
+    /// <summary>创建 file 音源；文件名解析为空（录播未就绪/仍在写）时暂缓重试，绝不携空文件名发起请求。</summary>
+    private async Task<IAudioSource> CreateFileSourceAsync(
+        string resolvedFile, TranscriptTaskRecord task, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(resolvedFile))
+        {
+            throw new TranscriptTaskDeferredException("recording file is not available yet");
+        }
+
+        await PersistResolvedFileAsync(task, resolvedFile, ct);
+        return audioFactory.CreateFile(recordingClient.BuildFileUrl(task.RoomId, resolvedFile), task.Position);
+    }
+
+    private async Task PersistResolvedFileAsync(TranscriptTaskRecord task, string resolvedFile, CancellationToken ct)
+    {
+        if (string.Equals(task.File, resolvedFile, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            await tasks.UpdateFileAsync(task.Id, resolvedFile, ct);
+            task.File = resolvedFile;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to persist resolved file for transcript task {TaskId}", task.Id);
+        }
     }
 
     private static long ComputeLiveOffset(RecordingRecord? recording, TranscriptTaskRecord task)

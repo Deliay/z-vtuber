@@ -368,7 +368,8 @@ sequenceDiagram
 
 - **实时任务（mode=live）**：`ffmpeg -hide_banner -loglevel warning -i "{liveAudioUrl}" -vn -ac 1 -ar 16000 -f s16le pipe:1`，输入为 recording 服务的 `GET /api/{roomId}/stream/audio`（flv 音频封装 chunked 流）。ffmpeg 跟随直播速度输出，stdout 按 1 秒缓冲（32000B）喂入 `TranscribeAsync` 的入参 Stream（`System.IO.Pipelines` 桥接）；下播后流 EOF → 任务 DONE；
 - **离线任务（mode=file）**：`ffmpeg ... -ss {position/1000}s -i "{fileUrl}" -vn -ac 1 -ar 16000 -f s16le pipe:1`，输入为录播文件内网 URL（Range 支持使 `-ss` seek 高效）；文件读完 → 任务 DONE；
-- **live 任务的接管/迟到兜底**：实时任务被扫描器接管（或排队到开播后才执行）时先探测实时音频端点——200 则接流继续识别（**中断窗口的直播内容不回溯**，position 语义退化为「已识别时长坐标」，新句时间以接管时刻的录制时长为 offset 起点，由 recording 状态/归档 `StartedAt` 推算）；404（直播已结束）则按 file 模式从 `position` seek 录播文件补齐剩余部分后 DONE，保证整场覆盖；
+- **live 任务音源选择（关键）**：**仅从未产出任何片段（Position==0）的 live 任务允许接实时流**（首发/开播初；新句时间以录制时长为 offset 起点，由归档 `StartedAt` 推算，中断窗口不回溯）。**已有进度（Position>0）的任务一律不再接实时流**——否则 Position→现在 之间的直播音频会永久丢失；此时须等该场次结束/文件就绪后按 file 模式从 `position` seek 补尾。若文件尚未就绪（`recording.Files` 为空或场次未结束），任务置回 PENDING 等待重试（既不 DONE 也不 FAILED，扫描器下一轮重试），**绝不携空文件名发起请求**；
+- **识别文件运行时解析**：开播事件建任务时 `recording.Files` 尚为空（task.File=""），结束事件对既有任务幂等返回不会回填；因此转 file 模式时以**运行时最新 `recording.Files` 重新选取**（优先 `[RAW]`），并把结果回写任务 File 便于观测；
 - `IStreamingAsrService` 抽象（consumer 内 `Asr/`）：
 
 ```csharp

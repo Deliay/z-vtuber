@@ -69,6 +69,14 @@ public sealed class TranscriptTaskRepository(IMongoDatabase database)
         return _collection.UpdateOneAsync(t => t.Id == id, update, cancellationToken: ct);
     }
 
+    public Task UpdateFileAsync(ObjectId id, string file, CancellationToken ct = default)
+    {
+        var update = Builders<TranscriptTaskRecord>.Update
+            .Set(t => t.File, file)
+            .Set(t => t.UpdatedAt, DateTime.UtcNow);
+        return _collection.UpdateOneAsync(t => t.Id == id, update, cancellationToken: ct);
+    }
+
     public Task UpdatePositionAsync(ObjectId id, long position, CancellationToken ct = default)
     {
         var update = Builders<TranscriptTaskRecord>.Update
