@@ -21,7 +21,7 @@ graph LR
 
 无状态转写查询服务：录播场次归档查询、任务/segments 查询、手动 enqueue、retry、SSE 实时推送、自动识别设置与模型管理。web 一律经 `servers/api` 代理访问，不直连本服务。
 
-- `Controllers/`：`RecordingsArchiveController`（`GET /api/recordings`、`GET /api/recordings/{roomId}/transcripts`、`POST /api/recordings/{roomId}/transcripts/settings`）、`TranscriptTasksController`（`POST /api/transcripts/enqueue`、`GET /api/transcripts/task`、`GET /api/transcripts/task/{taskId}`、`POST /api/transcripts/task/{taskId}/retry`（仅 FAILED 可重试，置 RUNNING 清 error，409 否则）、`GET /api/transcripts/task/{taskId}/sse`）、`TranscriptSettingsController`（`GET /api/transcripts/settings` 全量列表，关联 `AccountBasicInfoRepository` 补 anchorName）、`TranscriptModelsController`（`GET/POST /api/transcripts/models`、`PUT /api/transcripts/models/{modelId}`，响应剔除 apiKey，isDefault 原子切换）
+- `Controllers/`：`RecordingsArchiveController`（`GET /api/recordings`、`GET /api/recordings/{roomId}/transcripts`、`POST /api/recordings/{roomId}/transcripts/settings`（`enable=true` 时强制 `modelId`，须为存在且启用的模型，否则 400））、`TranscriptTasksController`（`POST /api/transcripts/enqueue`、`GET /api/transcripts/task`、`GET /api/transcripts/task/{taskId}`、`POST /api/transcripts/task/{taskId}/retry`（仅 FAILED 可重试，置 RUNNING 清 error，409 否则）、`GET /api/transcripts/task/{taskId}/sse`）、`TranscriptSettingsController`（`GET /api/transcripts/settings` 全量列表，关联 `AccountBasicInfoRepository` 补 anchorName、关联 `TranscriptModelRepository` 补 modelName）、`TranscriptModelsController`（`GET/POST /api/transcripts/models`、`PUT /api/transcripts/models/{modelId}`，`model` 必填，响应剔除 apiKey、无 isDefault）
 - `Sse/`：`TranscriptSegmentStream`（先 replay 全量 segments，再订阅 Redis `transcript-segment:{taskId}` 转发；以 `start` 去重；15s 心跳注释；任务终态推 `done` 事件并关闭）
 - `Contracts/`：`Dtos.cs`（请求/响应 record，字段 JSON 名小驼峰）、`TranscriptMapping.cs`（实体 → DTO 映射）
 - `Configuration/`：`TranscriptApiOptions`（节 `TranscriptApi`，`MaxPageSize`(200)）
@@ -40,16 +40,16 @@ graph LR
 | GET | `/health` | 进程存活 + MongoDB 连通性 |
 | GET | `/api/recordings` | 录播场次归档列表（query `roomId?`/`limit?`/`before?`，StartedAt 倒序） |
 | GET | `/api/recordings/{roomId}/transcripts` | roomId 视角场次及各场次任务（含 `autoEnqueueEnabled`） |
-| POST | `/api/recordings/{roomId}/transcripts/settings` | 设置自动识别开关（body `{enable}`，upsert） |
+| POST | `/api/recordings/{roomId}/transcripts/settings` | 设置自动识别开关（body `{enable, modelId?}`；`enable=true` 时 `modelId` 必填且须为已启用模型，否则 400；upsert） |
 | POST | `/api/transcripts/enqueue` | 手动 enqueue（body `recordingId`/`modelId`；404 录播或模型不存在/被禁用；409 返回已有 taskId） |
 | GET | `/api/transcripts/task` | 任务列表（query `recordingId?`/`roomId?`/`status?`/`limit?`） |
 | GET | `/api/transcripts/task/{taskId}` | 任务详情 + 全量 segments |
 | POST | `/api/transcripts/task/{taskId}/retry` | 重试 FAILED 任务（409 状态不允许） |
 | GET | `/api/transcripts/task/{taskId}/sse` | `text/event-stream` 实时 segments |
-| GET | `/api/transcripts/settings` | 自动识别设置全量列表（补 anchorName） |
-| GET | `/api/transcripts/models` | 模型列表（不回传 apiKey） |
-| POST | `/api/transcripts/models` | 添加模型（`isDefault=true` 原子清除其他默认位） |
-| PUT | `/api/transcripts/models/{modelId}` | 更新启用/禁用、默认位、最大并发、API Key（可选） |
+| GET | `/api/transcripts/settings` | 自动识别设置全量列表（补 anchorName、modelId/modelName） |
+| GET | `/api/transcripts/models` | 模型列表（不回传 apiKey，含 `model` 识别模型 ID） |
+| POST | `/api/transcripts/models` | 添加模型（`name/provider/type/apiKey/model` 必填） |
+| PUT | `/api/transcripts/models/{modelId}` | 更新启用/禁用、识别模型、最大并发、API Key（可选） |
 
 对外统一经 `servers/api` 代理（`/api/transcripts/**`、`/api/recordings/**`），web 不直连本服务。
 

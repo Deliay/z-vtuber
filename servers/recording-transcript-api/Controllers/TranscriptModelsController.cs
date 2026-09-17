@@ -31,25 +31,24 @@ public class TranscriptModelsController(TranscriptModelRepository models) : Cont
             return BadRequest(new ErrorResponse("provider and type are required"));
         }
 
+        if (string.IsNullOrWhiteSpace(request.Model))
+        {
+            return BadRequest(new ErrorResponse("model is required"));
+        }
+
         var model = new TranscriptModelRecord
         {
             Name = request.Name.Trim(),
             Provider = request.Provider.Trim(),
             Type = request.Type.Trim(),
             ApiKey = request.ApiKey,
+            Model = request.Model.Trim(),
             Enabled = request.Enabled ?? true,
-            IsDefault = false,
             MaxConcurrency = Math.Max(1, request.MaxConcurrency ?? 1),
             CreatedAt = DateTime.UtcNow,
         };
 
         await models.InsertAsync(model, ct);
-
-        if (request.IsDefault == true)
-        {
-            await models.SetDefaultAsync(model.Id, ct);
-            model.IsDefault = true;
-        }
 
         return Ok(TranscriptMapping.ToModelDto(model));
     }
@@ -76,21 +75,18 @@ public class TranscriptModelsController(TranscriptModelRepository models) : Cont
             return BadRequest(new ErrorResponse("request body is required"));
         }
 
+        if (request.Model is not null && string.IsNullOrWhiteSpace(request.Model))
+        {
+            return BadRequest(new ErrorResponse("model must not be blank"));
+        }
+
         await models.UpdateAsync(
             id,
             apiKey: request.ApiKey,
+            model: request.Model?.Trim(),
             enabled: request.Enabled,
             maxConcurrency: request.MaxConcurrency,
             ct: ct);
-
-        if (request.IsDefault == true)
-        {
-            await models.SetDefaultAsync(id, ct);
-        }
-        else if (request.IsDefault == false)
-        {
-            await models.UpdateAsync(id, isDefault: false, ct: ct);
-        }
 
         var updated = await models.GetByIdAsync(id, ct) ?? existing;
         return Ok(TranscriptMapping.ToModelDto(updated));
