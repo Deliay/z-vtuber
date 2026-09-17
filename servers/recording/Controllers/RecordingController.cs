@@ -10,6 +10,7 @@ namespace Z.Vtuber.Recording.Controllers;
 [Route("api")]
 public sealed class RecordingController(
     RecordingStatusRepository statusRepository,
+    RecordingRepository recordings,
     AudioStreamHub audio,
     RecordingOptions options) : ControllerBase
 {
@@ -25,43 +26,58 @@ public sealed class RecordingController(
     public async Task<IActionResult> ListRecordings(long roomId, CancellationToken ct)
     {
         var directory = RoomDirectory(roomId);
-        if (!Directory.Exists(directory))
-        {
-            return Ok(new { files = Array.Empty<object>() });
-        }
-
+        var sessions = await recordings.ListByRoomAsync(roomId, ct);
         var recordingFiles = await GetRecordingFilesAsync(roomId, ct);
-        var entries = new List<(string Name, long Size, DateTime CreatedAt)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var entries = new List<(string Name, long Size, DateTime CreatedAt, object Info)>();
 
-        foreach (var path in Directory.EnumerateFiles(directory, "*.flv"))
+        foreach (var session in sessions)
         {
-            var name = Path.GetFileName(path);
-            if (string.IsNullOrEmpty(name) || recordingFiles.Contains(name))
+            var info = new
             {
-                continue;
-            }
+                recordingId = session.Id.ToString(),
+                title = session.Title,
+                mid = session.Mid,
+                startedAt = session.StartedAt,
+                endedAt = session.EndedAt,
+            };
 
-            try
+            foreach (var name in session.Files.OrderBy(f => f, StringComparer.Ordinal))
             {
-                var info = new FileInfo(path);
-                var size = info.Length;
-                var createdAt = info.CreationTimeUtc;
-                if (createdAt == default)
+                if (string.IsNullOrEmpty(name) || seen.Contains(name) || recordingFiles.Contains(name))
                 {
-                    createdAt = info.LastWriteTimeUtc;
+                    continue;
                 }
 
-                entries.Add((name, size, createdAt));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // 枚举与读取之间文件被清理：跳过该文件，不影响整体响应
+                var path = Path.Combine(directory, name);
+                try
+                {
+                    var fileInfo = new FileInfo(path);
+                    if (!fileInfo.Exists)
+                    {
+                        // 归档文件磁盘上已不存在（外部清理）：跳过
+                        continue;
+                    }
+
+                    var size = fileInfo.Length;
+                    var createdAt = fileInfo.CreationTimeUtc;
+                    if (createdAt == default)
+                    {
+                        createdAt = fileInfo.LastWriteTimeUtc;
+                    }
+
+                    entries.Add((name, size, createdAt, info));
+                    seen.Add(name);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // 查询与读取之间文件被清理：跳过该文件，不影响整体响应
+                }
             }
         }
 
         var files = entries
-            .OrderBy(e => e.Name, StringComparer.Ordinal)
-            .Select(e => new { name = e.Name, size = e.Size, createdAt = e.CreatedAt })
+            .Select(e => new { name = e.Name, size = e.Size, createdAt = e.CreatedAt, info = e.Info })
             .ToArray();
 
         return Ok(new { files });

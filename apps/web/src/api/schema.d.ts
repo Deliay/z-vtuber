@@ -451,7 +451,7 @@ export interface paths {
         };
         /**
          * 订阅任务实时 segments（代理转写服务，SSE）
-         * @description 代理 transcript 服务的 text/event-stream；先 replay 已入库 segments，再订阅实时推送；15s 心跳；任务终态（DONE/FAILED）后推送 done 事件并关闭。
+         * @description 代理 transcript 服务的 text/event-stream；先订阅 Redis 实时推送，再 replay 已入库 segments，以 start 去重；15s 心跳；任务终态（DONE/FAILED）后推送 done 事件并关闭。
          */
         get: operations["streamTranscriptSegments"];
         put?: never;
@@ -753,6 +753,28 @@ export interface components {
              * @description 文件创建时间（UTC）
              */
             createdAt: string;
+            info: components["schemas"]["RecordingSessionInfo"];
+        };
+        RecordingSessionInfo: {
+            /** @description 所属场次归档记录标识 */
+            recordingId: string;
+            /** @description 场次标题（直播标题） */
+            title: string;
+            /**
+             * Format: int64
+             * @description 主播 mid
+             */
+            mid: number;
+            /**
+             * Format: date-time
+             * @description 场次开始（录制开始）时间（UTC）
+             */
+            startedAt: string;
+            /**
+             * Format: date-time
+             * @description 场次结束时间（UTC）；未正常收尾为 null
+             */
+            endedAt: string | null;
         };
         RecordingTranscriptErrorResponse: {
             error: string;
@@ -1467,7 +1489,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 录播文件列表（含大小与创建时间；不含录制中文件） */
+            /** @description 录播文件列表（按场次归档聚合，含文件元信息与所属场次信息；不含录制中文件；无录播返回空数组） */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1652,6 +1674,15 @@ export interface operations {
                     "application/json": components["schemas"]["RecordingTranscriptEnqueueResponse"];
                 };
             };
+            /** @description 录播尚未结束（EndedAt 为空），不满足手动发起转写的前置条件 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
             /** @description 录播或模型不存在，或模型已被禁用 */
             404: {
                 headers: {
@@ -1809,7 +1840,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description text/event-stream，先 replay 已入库 segments，再实时推送新 segment，终态推送 done */
+            /** @description text/event-stream，先订阅实时推送再 replay 已入库 segments，以 start 去重，终态推送 done */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1916,6 +1947,15 @@ export interface operations {
                     "application/json": components["schemas"]["RecordingTranscriptSettingsUpdateResponse"];
                 };
             };
+            /** @description 参数非法（请求体缺失） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
             /** @description transcript 服务不可达 */
             502: {
                 headers: {
@@ -2014,6 +2054,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecordingTranscriptModel"];
+                };
+            };
+            /** @description 参数非法（请求体缺失） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
                 };
             };
             /** @description 模型不存在 */
