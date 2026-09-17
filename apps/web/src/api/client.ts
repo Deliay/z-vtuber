@@ -394,12 +394,13 @@ export async function getTranscriptSettings(): Promise<TranscriptSettingsItem[]>
 export async function setRoomAutoEnqueue(
   roomId: number,
   enable: boolean,
+  modelId?: string,
 ): Promise<transcriptComponents['schemas']['TranscriptSettingsUpdateResponse']> {
   return request<transcriptComponents['schemas']['TranscriptSettingsUpdateResponse']>(
     `/recordings/${roomId}/transcripts/settings`,
     {
       method: 'POST',
-      body: JSON.stringify({ enable }),
+      body: JSON.stringify(modelId ? { enable, modelId } : { enable }),
     },
   )
 }
