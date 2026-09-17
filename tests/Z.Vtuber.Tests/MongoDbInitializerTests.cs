@@ -700,7 +700,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
 
         var legacyFalse = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", legacyFalseId)).FirstAsync();
         Assert.False(legacyFalse.Contains("IsDefault"));
-        Assert.Equal("model-b", legacyFalse["Model"].AsString);
+        Assert.Equal("model-b", legacyFalse["Name"].AsString);
 
         var untouched = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", untouchedId)).FirstAsync();
         Assert.Equal("model-c", untouched["Name"].AsString);
