@@ -1067,19 +1067,36 @@ describe('API Client', () => {
       expect(result).toEqual(items)
     })
 
-    it('setRoomAutoEnqueue should POST /recordings/{roomId}/transcripts/settings', async () => {
+    it('setRoomAutoEnqueue should POST /recordings/{roomId}/transcripts/settings with modelId', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ roomId: 101, enabled: true }),
       })
 
-      await setRoomAutoEnqueue(101, true)
+      await setRoomAutoEnqueue(101, true, 'm1')
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('/recordings/101/transcripts/settings'),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ enable: true }),
+          body: JSON.stringify({ enable: true, modelId: 'm1' }),
+        }),
+      )
+    })
+
+    it('setRoomAutoEnqueue should omit modelId when disabling', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ roomId: 101, enabled: false }),
+      })
+
+      await setRoomAutoEnqueue(101, false)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/recordings/101/transcripts/settings'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ enable: false }),
         }),
       )
     })
@@ -1121,8 +1138,8 @@ describe('API Client', () => {
         provider: 'ali-fun-asr',
         type: 'streaming',
         apiKey: 'secret',
+        model: 'fun-asr-realtime',
         enabled: true,
-        isDefault: false,
         maxConcurrency: 1,
       })
 
@@ -1132,6 +1149,7 @@ describe('API Client', () => {
         expect.objectContaining({ method: 'POST' }),
       )
       expect(body.apiKey).toBe('secret')
+      expect(body.model).toBe('fun-asr-realtime')
     })
 
     it('updateTranscriptModel should PUT /transcripts/models/{modelId}', async () => {

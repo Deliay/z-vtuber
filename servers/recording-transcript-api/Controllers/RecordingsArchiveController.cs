@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.RecordingTranscript.Api.Configuration;
@@ -74,8 +75,36 @@ public class RecordingsArchiveController(
             return BadRequest(new ErrorResponse("request body is required"));
         }
 
+        ObjectId? boundModelId = null;
+        if (request.Enable)
+        {
+            if (string.IsNullOrWhiteSpace(request.ModelId) || !ObjectId.TryParse(request.ModelId, out var parsed))
+            {
+                return BadRequest(new ErrorResponse("modelId is required and must be a valid id when enable is true"));
+            }
+
+            var model = await models.GetByIdAsync(parsed, ct);
+            if (model is null)
+            {
+                return BadRequest(new ErrorResponse("model not found"));
+            }
+
+            if (!model.Enabled)
+            {
+                return BadRequest(new ErrorResponse("model is disabled"));
+            }
+
+            boundModelId = parsed;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.ModelId) && ObjectId.TryParse(request.ModelId, out var parsedBound))
+        {
+            // enable=false：Plan 口径为「仅更新开关」，此分支允许顺带改绑但不校验模型状态；
+            // 再次开启时（enable=true）仍会强制校验 modelId 指向已启用模型。
+            boundModelId = parsedBound;
+        }
+
         var mid = await ResolveMidAsync(roomId, ct);
-        await autoEnqueue.UpsertAsync(roomId, mid, request.Enable, ct);
+        await autoEnqueue.UpsertAsync(roomId, mid, request.Enable, boundModelId, ct);
         return Ok(new TranscriptSettingsUpdateResponse(roomId, request.Enable));
     }
 

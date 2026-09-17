@@ -9,7 +9,7 @@ public sealed class TranscriptAutoEnqueueRepository(IMongoDatabase database)
     private readonly IMongoCollection<TranscriptAutoEnqueueRecord> _collection =
         database.GetCollection<TranscriptAutoEnqueueRecord>(MongoCollectionNames.TranscriptAutoEnqueue);
 
-    public Task UpsertAsync(long roomId, long mid, bool enabled, CancellationToken ct = default)
+    public Task UpsertAsync(long roomId, long mid, bool enabled, ObjectId? modelId = null, CancellationToken ct = default)
     {
         var filter = Builders<TranscriptAutoEnqueueRecord>.Filter.Eq(r => r.RoomId, roomId);
         var update = Builders<TranscriptAutoEnqueueRecord>.Update
@@ -17,6 +17,13 @@ public sealed class TranscriptAutoEnqueueRepository(IMongoDatabase database)
             .Set(r => r.Mid, mid)
             .Set(r => r.Enabled, enabled)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
+
+        // 仅在显式传入时更新绑定（enable=false 未传 modelId 时保留原绑定，避免误清）
+        if (modelId.HasValue)
+        {
+            update = update.Set(r => r.ModelId, modelId.Value);
+        }
+
         return _collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, ct);
     }
 

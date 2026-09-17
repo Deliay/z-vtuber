@@ -541,7 +541,7 @@ export interface paths {
         get?: never;
         /**
          * 更新转写模型（代理转写服务）
-         * @description 更新启用/禁用、默认位、最大并发、API Key（可选，不传则不改）；被禁用模型进行中的任务继续跑完。
+         * @description 更新启用/禁用、识别模型、最大并发、API Key（可选，不传则不改）；被禁用模型进行中的任务继续跑完。
          */
         put: operations["updateTranscriptModel"];
         post?: never;
@@ -859,12 +859,18 @@ export interface components {
             mid?: number | null;
             anchorName?: string | null;
             enabled?: boolean;
+            /** @description 绑定的转写模型 ID；为空表示未绑定（待完善），自动转写不生效 */
+            modelId?: string | null;
+            /** @description 绑定模型名称；未绑定或模型已删除时为空 */
+            modelName?: string | null;
         };
         RecordingTranscriptSettingsList: {
             items?: components["schemas"]["RecordingTranscriptSettingsItem"][];
         };
         RecordingTranscriptSettingsUpdateRequest: {
             enable: boolean;
+            /** @description 绑定的转写模型 ID；enable=true 时必填且须指向已启用模型，否则 400； enable=false 时可省略 */
+            modelId?: string;
         };
         RecordingTranscriptSettingsUpdateResponse: {
             /** Format: int64 */
@@ -920,8 +926,9 @@ export interface components {
             provider?: "ali-fun-asr";
             /** @enum {string} */
             type?: "streaming";
+            /** @description 实际发给服务商的模型 ID，如 fun-asr-realtime */
+            model?: string;
             enabled?: boolean;
-            isDefault?: boolean;
             /** Format: int32 */
             maxConcurrency?: number;
             /** Format: date-time */
@@ -937,10 +944,10 @@ export interface components {
             /** @enum {string} */
             type: "streaming";
             apiKey: string;
+            /** @description 实际发给服务商的模型 ID，如 fun-asr-realtime */
+            model: string;
             /** @default true */
             enabled: boolean;
-            /** @default false */
-            isDefault: boolean;
             /**
              * Format: int32
              * @default 1
@@ -949,7 +956,8 @@ export interface components {
         };
         RecordingTranscriptModelUpdateRequest: {
             enabled?: boolean;
-            isDefault?: boolean;
+            /** @description 实际发给服务商的模型 ID */
+            model?: string;
             /** Format: int32 */
             maxConcurrency?: number;
             /** @description 可选，不传则不改 */
@@ -1947,7 +1955,7 @@ export interface operations {
                     "application/json": components["schemas"]["RecordingTranscriptSettingsUpdateResponse"];
                 };
             };
-            /** @description 参数非法（请求体缺失） */
+            /** @description 参数非法：请求体缺失；或 enable=true 时缺少 modelId、modelId 格式非法、 指向不存在或未启用的模型 */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2005,7 +2013,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 创建成功（isDefault=true 时原子清除其他模型默认位；不回传 apiKey） */
+            /** @description 创建成功（不回传 apiKey） */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -124,7 +124,7 @@ export interface paths {
         };
         /**
          * 订阅任务实时 segments（SSE）
-         * @description 先 replay 已入库 segments，再订阅实时推送；15s 心跳；任务终态（DONE/FAILED）后推送 done 事件并关闭。
+         * @description 先订阅 Redis 实时推送，再 replay 已入库 segments，以 start 去重；15s 心跳；任务终态（DONE/FAILED）后推送 done 事件并关闭。
          */
         get: operations["streamTranscriptSegments"];
         put?: never;
@@ -214,7 +214,7 @@ export interface paths {
         get?: never;
         /**
          * 更新转写模型
-         * @description 更新启用/禁用、默认位、最大并发、API Key（可选，不传则不改）；被禁用模型进行中的任务继续跑完。
+         * @description 更新启用/禁用、识别模型、最大并发、API Key（可选，不传则不改）；被禁用模型进行中的任务继续跑完。
          */
         put: operations["updateTranscriptModel"];
         post?: never;
@@ -311,12 +311,18 @@ export interface components {
             mid?: number | null;
             anchorName?: string | null;
             enabled?: boolean;
+            /** @description 绑定的转写模型 ID；为空表示未绑定（待完善），自动转写不生效 */
+            modelId?: string | null;
+            /** @description 绑定模型名称；未绑定或模型已删除时为空 */
+            modelName?: string | null;
         };
         TranscriptSettingsList: {
             items?: components["schemas"]["TranscriptSettingsItem"][];
         };
         TranscriptSettingsUpdateRequest: {
             enable: boolean;
+            /** @description 绑定的转写模型 ID；enable=true 时必填且须指向已启用模型，否则 400； enable=false 时可省略 */
+            modelId?: string;
         };
         TranscriptSettingsUpdateResponse: {
             /** Format: int64 */
@@ -372,8 +378,9 @@ export interface components {
             provider?: "ali-fun-asr";
             /** @enum {string} */
             type?: "streaming";
+            /** @description 实际发给服务商的模型 ID，如 fun-asr-realtime */
+            model?: string;
             enabled?: boolean;
-            isDefault?: boolean;
             /** Format: int32 */
             maxConcurrency?: number;
             /** Format: date-time */
@@ -389,10 +396,10 @@ export interface components {
             /** @enum {string} */
             type: "streaming";
             apiKey: string;
+            /** @description 实际发给服务商的模型 ID，如 fun-asr-realtime */
+            model: string;
             /** @default true */
             enabled: boolean;
-            /** @default false */
-            isDefault: boolean;
             /**
              * Format: int32
              * @default 1
@@ -401,7 +408,8 @@ export interface components {
         };
         TranscriptModelUpdateRequest: {
             enabled?: boolean;
-            isDefault?: boolean;
+            /** @description 实际发给服务商的模型 ID */
+            model?: string;
             /** Format: int32 */
             maxConcurrency?: number;
             /** @description 可选，不传则不改 */
@@ -493,6 +501,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnqueueResponse"];
+                };
+            };
+            /** @description 录播尚未结束（EndedAt 为空），不满足手动发起转写的前置条件 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description 录播或模型不存在，或模型已被禁用 */
@@ -624,7 +641,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description text/event-stream，先 replay 已入库 segments，再实时推送新 segment，终态推送 done */
+            /** @description text/event-stream，先订阅实时推送再 replay 已入库 segments，以 start 去重，终态推送 done */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -710,6 +727,15 @@ export interface operations {
                     "application/json": components["schemas"]["TranscriptSettingsUpdateResponse"];
                 };
             };
+            /** @description 参数非法：请求体缺失；或 enable=true 时缺少 modelId、modelId 格式非法、 指向不存在或未启用的模型 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     listTranscriptModels: {
@@ -745,7 +771,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 创建成功（isDefault=true 时原子清除其他模型默认位；不回传 apiKey） */
+            /** @description 创建成功（不回传 apiKey） */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -787,6 +813,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TranscriptModel"];
+                };
+            };
+            /** @description 参数非法（请求体缺失） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description 模型不存在 */

@@ -2,6 +2,13 @@ using System.Text.Json;
 
 namespace Z.Vtuber.Common.Live;
 
+/// <summary>可索引的直播事件文本类型常量（LiveEventTextExtractor / MongoDbInitializer 共用）。</summary>
+public static class LiveEventTextTypes
+{
+    public const string Danmaku = "danmaku";
+    public const string SuperChat = "super_chat";
+}
+
 public sealed record LiveEventTextExtraction(
     string Text,
     string SenderName,
@@ -26,7 +33,7 @@ public static class LiveEventTextExtractor
             long senderUid = 0;
             string senderMedal = string.Empty;
 
-            if (type == "danmaku")
+            if (type == LiveEventTextTypes.Danmaku)
             {
                 // 弹幕：取 info[1]（text）、info[2][0]（uid）、info[2][1]（uname）、info[3][1]（medal）
                 if (doc.RootElement.TryGetProperty("info", out var info) &&
@@ -65,7 +72,7 @@ public static class LiveEventTextExtractor
                     }
                 }
             }
-            else if (type == "super_chat")
+            else if (type == LiveEventTextTypes.SuperChat)
             {
                 // 醒目留言：取 data.message（text）、data.uid、data.user_info.uname、data.medal_info.medal_name
                 if (doc.RootElement.TryGetProperty("data", out var data) &&

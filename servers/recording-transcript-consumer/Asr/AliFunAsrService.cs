@@ -2,25 +2,27 @@ using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Channels;
+using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.RecordingTranscript.Consumer.Configuration;
 
 namespace Z.Vtuber.RecordingTranscript.Consumer.Asr;
 
 public interface IStreamingAsrServiceFactory
 {
-    IStreamingAsrService Create(long offset, string apiKey);
+    IStreamingAsrService Create(TranscriptModelRecord model, long offset, IReadOnlyList<string> context);
 }
 
 public sealed class AliFunAsrServiceFactory(
     TranscriptConsumerOptions options,
     ILoggerFactory loggerFactory) : IStreamingAsrServiceFactory
 {
-    public IStreamingAsrService Create(long offset, string apiKey) =>
+    public IStreamingAsrService Create(TranscriptModelRecord model, long offset, IReadOnlyList<string> context) =>
         new AliFunAsrService(
             new Uri(options.AsrEndpoint),
-            apiKey,
+            model.ApiKey,
             offset,
-            options.AsrModel,
+            model.Model,
+            context,
             TimeSpan.FromSeconds(options.AsrIdleTimeoutSeconds),
             loggerFactory.CreateLogger<AliFunAsrService>());
 }
@@ -40,16 +42,24 @@ public sealed class AliFunAsrService : IStreamingAsrService
     private readonly string _apiKey;
     private readonly long _offset;
     private readonly string _model;
+    private readonly IReadOnlyList<string> _context;
     private readonly TimeSpan _idleTimeout;
     private readonly ILogger _logger;
 
     public AliFunAsrService(
-        Uri endpoint, string apiKey, long offset, string model, TimeSpan idleTimeout, ILogger logger)
+        Uri endpoint,
+        string apiKey,
+        long offset,
+        string model,
+        IReadOnlyList<string> context,
+        TimeSpan idleTimeout,
+        ILogger logger)
     {
         _endpoint = endpoint;
         _apiKey = apiKey;
         _offset = offset;
         _model = model;
+        _context = context;
         _idleTimeout = idleTimeout;
         _logger = logger;
     }
@@ -68,8 +78,10 @@ public sealed class AliFunAsrService : IStreamingAsrService
         _logger.LogInformation("FunASR connected: endpoint={Endpoint}", _endpoint);
 
         var taskId = Guid.NewGuid().ToString("N");
-        await SendTextAsync(socket, FunAsrProtocol.BuildRunTask(taskId, _model), ct);
-        _logger.LogInformation("FunASR run-task sent: taskId={TaskId} model={Model}", taskId, _model);
+        await SendTextAsync(socket, FunAsrProtocol.BuildRunTask(taskId, _model, _context), ct);
+        _logger.LogInformation(
+            "FunASR run-task sent: taskId={TaskId} model={Model} contextLines={ContextLines}",
+            taskId, _model, _context.Count);
 
         var channel = Channel.CreateUnbounded<StreamingAsrSegment>(
             new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });

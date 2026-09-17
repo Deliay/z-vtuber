@@ -16,25 +16,25 @@ describe('SettingsTab', () => {
     vi.resetAllMocks()
 
     mockGetSettings.mockResolvedValue([
-      { roomId: 101, mid: 1, anchorName: '主播A', enabled: true },
+      { roomId: 101, mid: 1, anchorName: '主播A', enabled: true, modelId: 'm1', modelName: '模型A' },
     ])
     mockListModels.mockResolvedValue([
       {
         id: 'm1',
-        name: '默认模型',
+        name: '模型A',
         provider: 'ali-fun-asr',
         type: 'streaming',
+        model: 'fun-asr-realtime',
         enabled: true,
-        isDefault: true,
         maxConcurrency: 1,
       },
       {
         id: 'm2',
-        name: '备用模型',
+        name: '模型B',
         provider: 'ali-fun-asr',
         type: 'streaming',
+        model: 'paraformer-realtime-v2',
         enabled: false,
-        isDefault: false,
         maxConcurrency: 2,
       },
     ])
@@ -53,7 +53,24 @@ describe('SettingsTab', () => {
     })
   })
 
-  it('should add auto recognition for a valid room and refresh the settings list', async () => {
+  it('should add auto recognition with a selected model and refresh the settings list', async () => {
+    render(<SettingsTab />)
+
+    await screen.findByRole('button', { name: '添加自动识别' })
+
+    fireEvent.change(screen.getByLabelText('直播间号'), { target: { value: '202' } })
+    fireEvent.change(screen.getByLabelText('添加识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加自动识别' }))
+
+    await waitFor(() => {
+      expect(mockSetRoom).toHaveBeenCalledWith(202, true, 'm1')
+    })
+    await waitFor(() => {
+      expect(mockGetSettings).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it('should block adding auto recognition without a model and not call the api', async () => {
     render(<SettingsTab />)
 
     await screen.findByRole('button', { name: '添加自动识别' })
@@ -61,12 +78,8 @@ describe('SettingsTab', () => {
     fireEvent.change(screen.getByLabelText('直播间号'), { target: { value: '202' } })
     fireEvent.click(screen.getByRole('button', { name: '添加自动识别' }))
 
-    await waitFor(() => {
-      expect(mockSetRoom).toHaveBeenCalledWith(202, true)
-    })
-    await waitFor(() => {
-      expect(mockGetSettings).toHaveBeenCalledTimes(2)
-    })
+    expect(await screen.findByText('请先选择识别模型')).toBeInTheDocument()
+    expect(mockSetRoom).not.toHaveBeenCalled()
   })
 
   it('should show a validation error for an invalid room id and not call the api', async () => {
@@ -81,32 +94,46 @@ describe('SettingsTab', () => {
     expect(mockSetRoom).not.toHaveBeenCalled()
   })
 
-  it('should hint that a default model is required for auto recognition', async () => {
-    mockListModels.mockResolvedValue([
-      {
-        id: 'm1',
-        name: '非默认模型',
-        provider: 'ali-fun-asr',
-        type: 'streaming',
-        enabled: true,
-        isDefault: false,
-        maxConcurrency: 1,
-      },
+  it('should flag unbound settings as pending and block enabling without a model', async () => {
+    mockGetSettings.mockResolvedValue([
+      { roomId: 103, mid: 3, anchorName: '主播C', enabled: false, modelId: null, modelName: null },
     ])
 
     render(<SettingsTab />)
 
+    expect(await screen.findByText('待完善')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('开启'))
+
     expect(
-      await screen.findByText('未配置默认模型，自动识别需要先设置默认模型'),
+      await screen.findByText('请先选择识别模型，自动转写需要绑定模型'),
     ).toBeInTheDocument()
+    expect(mockSetRoom).not.toHaveBeenCalled()
   })
 
-  it('should add a model without echoing the api key afterwards', async () => {
+  it('should bind a model when enabling a pending setting', async () => {
+    mockGetSettings.mockResolvedValue([
+      { roomId: 104, mid: 4, anchorName: '主播D', enabled: false, modelId: null, modelName: null },
+    ])
+
+    render(<SettingsTab />)
+
+    await screen.findByText('待完善')
+    fireEvent.change(screen.getByLabelText('识别模型-104'), { target: { value: 'm1' } })
+    fireEvent.click(screen.getByText('开启'))
+
+    await waitFor(() => {
+      expect(mockSetRoom).toHaveBeenCalledWith(104, true, 'm1')
+    })
+  })
+
+  it('should add a model with the recognition model and without echoing the api key', async () => {
     render(<SettingsTab />)
 
     await screen.findByText('添加模型')
 
     fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: '新模型' } })
+    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'fun-asr-realtime' } })
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'super-secret' } })
     fireEvent.click(screen.getByText('添加'))
 
@@ -117,15 +144,32 @@ describe('SettingsTab', () => {
     const payload = mockCreateModel.mock.calls[0][0]
     expect(payload.apiKey).toBe('super-secret')
     expect(payload.provider).toBe('ali-fun-asr')
+    expect(payload.model).toBe('fun-asr-realtime')
 
     expect((screen.getByLabelText('API Key') as HTMLInputElement).value).toBe('')
     expect(screen.queryByText('super-secret')).not.toBeInTheDocument()
   })
 
-  it('should enable/disable, set default and update max concurrency', async () => {
+  it('should require a recognition model when creating a model', async () => {
+    render(<SettingsTab />)
+
+    await screen.findByText('添加模型')
+
+    fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: '新模型' } })
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'secret' } })
+    fireEvent.click(screen.getByText('添加'))
+
+    expect(await screen.findByText('请输入识别模型')).toBeInTheDocument()
+    expect(mockCreateModel).not.toHaveBeenCalled()
+  })
+
+  it('should enable/disable and update max concurrency without a default marker', async () => {
     render(<SettingsTab />)
 
     await screen.findByRole('button', { name: '禁用' })
+
+    expect(screen.queryByRole('button', { name: '设为默认' })).not.toBeInTheDocument()
+    expect(screen.queryByText('未配置默认模型，自动识别需要先设置默认模型')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getAllByRole('button', { name: '禁用' })[0])
     await waitFor(() => {
@@ -137,12 +181,7 @@ describe('SettingsTab', () => {
       expect(mockUpdateModel).toHaveBeenCalledWith('m2', { enabled: true })
     })
 
-    fireEvent.click(screen.getByRole('button', { name: '设为默认' }))
-    await waitFor(() => {
-      expect(mockUpdateModel).toHaveBeenCalledWith('m2', { isDefault: true })
-    })
-
-    fireEvent.change(screen.getByLabelText('最大并发-备用模型'), { target: { value: '3' } })
+    fireEvent.change(screen.getByLabelText('最大并发-模型B'), { target: { value: '3' } })
     fireEvent.click(screen.getAllByRole('button', { name: '保存' })[1])
     await waitFor(() => {
       expect(mockUpdateModel).toHaveBeenCalledWith('m2', { maxConcurrency: 3 })
@@ -187,13 +226,14 @@ describe('SettingsTab', () => {
 
     await screen.findByText('添加模型')
 
-    fireEvent.change(screen.getByLabelText('最大并发-备用模型'), { target: { value: '-3' } })
+    fireEvent.change(screen.getByLabelText('最大并发-模型B'), { target: { value: '-3' } })
     fireEvent.click(screen.getAllByRole('button', { name: '保存' })[1])
     await waitFor(() => {
       expect(mockUpdateModel).toHaveBeenCalledWith('m2', { maxConcurrency: 1 })
     })
 
     fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: '负并发模型' } })
+    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'fun-asr-realtime' } })
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'secret' } })
     fireEvent.change(screen.getByLabelText('最大并发数'), { target: { value: '-5' } })
     const createForm = screen.getByText('添加').closest('form')

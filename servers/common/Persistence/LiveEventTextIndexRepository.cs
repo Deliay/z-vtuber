@@ -19,6 +19,32 @@ public sealed class LiveEventTextIndexRepository(IMongoDatabase database)
         await Collection.InsertOneAsync(record, cancellationToken: ct);
     }
 
+    /// <summary>
+    /// 按 RoomId + Type + OccurredAt ∈ [from, to] 升序列举（上下文组装用）。
+    /// 命中 { RoomId: 1, OccurredAt: -1, Id: -1 } 索引。
+    /// </summary>
+    public async Task<IReadOnlyList<LiveEventTextIndexRecord>> ListByRoomTypeAndWindowAsync(
+        long roomId,
+        string type,
+        DateTime from,
+        DateTime to,
+        int limit,
+        CancellationToken ct = default)
+    {
+        var filter = Builders<LiveEventTextIndexRecord>.Filter.And(
+            Builders<LiveEventTextIndexRecord>.Filter.Eq(r => r.RoomId, roomId),
+            Builders<LiveEventTextIndexRecord>.Filter.Eq(r => r.Type, type),
+            Builders<LiveEventTextIndexRecord>.Filter.Gte(r => r.OccurredAt, from),
+            Builders<LiveEventTextIndexRecord>.Filter.Lte(r => r.OccurredAt, to));
+
+        var sort = Builders<LiveEventTextIndexRecord>.Sort.Ascending(r => r.OccurredAt);
+
+        return await Collection.Find(filter, new FindOptions { Hint = SearchIndexName })
+            .Sort(sort)
+            .Limit(Math.Max(1, limit))
+            .ToListAsync(ct);
+    }
+
     public async Task<(long total, List<LiveEventTextIndexRecord> items)> SearchAsync(
         long roomId,
         string criteria,

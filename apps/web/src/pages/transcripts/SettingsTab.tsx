@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   getTranscriptSettings,
   setRoomAutoEnqueue,
@@ -36,17 +36,19 @@ export function SettingsTab() {
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null)
 
   const [newRoomId, setNewRoomId] = useState('')
+  const [newRoomModelId, setNewRoomModelId] = useState('')
   const [addMessage, setAddMessage] = useState<string | null>(null)
   const [addError, setAddError] = useState<string | null>(null)
 
   const [modelName, setModelName] = useState('')
   const [modelApiKey, setModelApiKey] = useState('')
+  const [modelIdentifier, setModelIdentifier] = useState('')
   const [modelMaxConcurrency, setModelMaxConcurrency] = useState('1')
   const [modelEnabled, setModelEnabled] = useState(true)
-  const [modelIsDefault, setModelIsDefault] = useState(false)
   const [modelMessage, setModelMessage] = useState<string | null>(null)
   const [modelError, setModelError] = useState<string | null>(null)
   const [concurrencyDrafts, setConcurrencyDrafts] = useState<Record<string, string>>({})
+  const [bindingDrafts, setBindingDrafts] = useState<Record<number, string>>({})
 
   const fetchAll = useCallback(async () => {
     try {
@@ -72,19 +74,28 @@ export function SettingsTab() {
     fetchAll()
   }, [fetchAll])
 
-  const hasDefaultModel = useMemo(
-    () => models.some((model) => model.isDefault === true),
-    [models],
-  )
+  const enabledModels = models.filter((model) => model.enabled === true)
 
   const handleToggleAuto = async (item: TranscriptSettingsItem) => {
     if (typeof item.roomId !== 'number') {
       return
     }
+
+    const targetModelId = item.modelId ?? bindingDrafts[item.roomId]
+    if (!item.enabled && !targetModelId) {
+      setError('请先选择识别模型，自动转写需要绑定模型')
+      setRetryAction(null)
+      return
+    }
+
     try {
       setError(null)
       setRetryAction(null)
-      await setRoomAutoEnqueue(item.roomId, !item.enabled)
+      if (item.enabled) {
+        await setRoomAutoEnqueue(item.roomId, false)
+      } else {
+        await setRoomAutoEnqueue(item.roomId, true, targetModelId ?? undefined)
+      }
       await fetchAll()
     } catch {
       setError('自动识别设置更新失败')
@@ -105,12 +116,18 @@ export function SettingsTab() {
       return
     }
 
+    if (!newRoomModelId) {
+      setAddError('请先选择识别模型')
+      return
+    }
+
     const submit = async () => {
       try {
         setError(null)
         setRetryAction(null)
-        await setRoomAutoEnqueue(roomId, true)
+        await setRoomAutoEnqueue(roomId, true, newRoomModelId)
         setNewRoomId('')
+        setNewRoomModelId('')
         setAddMessage('已添加自动识别')
         await fetchAll()
       } catch {
@@ -137,6 +154,10 @@ export function SettingsTab() {
       setModelError('请输入模型名称')
       return
     }
+    if (!modelIdentifier.trim()) {
+      setModelError('请输入识别模型')
+      return
+    }
     if (!modelApiKey.trim()) {
       setModelError('请输入 API Key')
       return
@@ -148,15 +169,15 @@ export function SettingsTab() {
         provider: 'ali-fun-asr',
         type: 'streaming',
         apiKey: modelApiKey,
+        model: modelIdentifier,
         enabled: modelEnabled,
-        isDefault: modelIsDefault,
         maxConcurrency: normalizeConcurrency(modelMaxConcurrency),
       })
       setModelName('')
       setModelApiKey('')
+      setModelIdentifier('')
       setModelMaxConcurrency('1')
       setModelEnabled(true)
-      setModelIsDefault(false)
       setModelMessage('模型已添加')
       const modelsData = await listTranscriptModels()
       setModels(modelsData)
@@ -218,6 +239,7 @@ export function SettingsTab() {
             <thead>
               <tr>
                 <th style={{ textAlign: 'left', padding: '0.5rem' }}>主播</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem' }}>识别模型</th>
                 <th style={{ textAlign: 'left', padding: '0.5rem' }}>自动识别</th>
                 <th style={{ textAlign: 'left', padding: '0.5rem' }}>操作</th>
               </tr>
@@ -227,6 +249,42 @@ export function SettingsTab() {
                 <tr key={item.roomId}>
                   <td style={{ padding: '0.5rem' }}>
                     {item.anchorName ?? '-'}（{item.roomId}）
+                  </td>
+                  <td style={{ padding: '0.5rem' }}>
+                    {item.modelId ? (
+                      item.modelName ?? item.modelId
+                    ) : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span
+                          style={{
+                            color: '#fbbf24',
+                            border: '1px solid #b45309',
+                            borderRadius: '0.25rem',
+                            padding: '0 0.35rem',
+                          }}
+                        >
+                          待完善
+                        </span>
+                        <select
+                          aria-label={`识别模型-${item.roomId}`}
+                          value={bindingDrafts[item.roomId] ?? ''}
+                          onChange={(e) =>
+                            setBindingDrafts((prev) => ({
+                              ...prev,
+                              [item.roomId]: e.target.value,
+                            }))
+                          }
+                          style={inputStyle}
+                        >
+                          <option value="">选择识别模型</option>
+                          {enabledModels.map((model) => (
+                            <option key={model.id} value={model.id}>
+                              {model.name}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                    )}
                   </td>
                   <td style={{ padding: '0.5rem' }}>{item.enabled ? '已开启' : '已关闭'}</td>
                   <td style={{ padding: '0.5rem' }}>
@@ -257,15 +315,25 @@ export function SettingsTab() {
             onChange={(e) => setNewRoomId(e.target.value)}
             style={{ ...inputStyle, width: '9rem' }}
           />
+          <select
+            aria-label="添加识别模型"
+            value={newRoomModelId}
+            onChange={(e) => setNewRoomModelId(e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">选择识别模型</option>
+            {enabledModels.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name}
+              </option>
+            ))}
+          </select>
           <button type="submit" style={{ padding: '0.5rem 1rem' }}>
             添加自动识别
           </button>
         </form>
         {addError && <p style={{ color: '#f87171' }}>{addError}</p>}
         {addMessage && <p style={{ color: '#22c55e' }}>{addMessage}</p>}
-        {!hasDefaultModel && (
-          <p style={{ color: '#fbbf24' }}>未配置默认模型，自动识别需要先设置默认模型</p>
-        )}
       </section>
 
       <section>
@@ -278,6 +346,7 @@ export function SettingsTab() {
             <thead>
               <tr>
                 <th style={{ textAlign: 'left', padding: '0.5rem' }}>名称</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem' }}>识别模型</th>
                 <th style={{ textAlign: 'left', padding: '0.5rem' }}>提供方</th>
                 <th style={{ textAlign: 'left', padding: '0.5rem' }}>状态</th>
                 <th style={{ textAlign: 'left', padding: '0.5rem' }}>最大并发</th>
@@ -287,10 +356,8 @@ export function SettingsTab() {
             <tbody>
               {models.map((model) => (
                 <tr key={model.id}>
-                  <td style={{ padding: '0.5rem' }}>
-                    {model.name}
-                    {model.isDefault ? '（默认）' : ''}
-                  </td>
+                  <td style={{ padding: '0.5rem' }}>{model.name}</td>
+                  <td style={{ padding: '0.5rem' }}>{model.model ?? '-'}</td>
                   <td style={{ padding: '0.5rem' }}>{model.provider}</td>
                   <td style={{ padding: '0.5rem' }}>{model.enabled ? '已启用' : '已禁用'}</td>
                   <td style={{ padding: '0.5rem' }}>
@@ -323,18 +390,10 @@ export function SettingsTab() {
                   <td style={{ padding: '0.5rem' }}>
                     <button
                       onClick={() => handleUpdateModel(model, { enabled: !model.enabled })}
-                      style={{ marginRight: '0.5rem', padding: '0.25rem 0.5rem' }}
+                      style={{ padding: '0.25rem 0.5rem' }}
                     >
                       {model.enabled ? '禁用' : '启用'}
                     </button>
-                    {!model.isDefault && (
-                      <button
-                        onClick={() => handleUpdateModel(model, { isDefault: true })}
-                        style={{ padding: '0.25rem 0.5rem' }}
-                      >
-                        设为默认
-                      </button>
-                    )}
                   </td>
                 </tr>
               ))}
@@ -349,6 +408,13 @@ export function SettingsTab() {
             placeholder="模型名称"
             value={modelName}
             onChange={(e) => setModelName(e.target.value)}
+            style={inputStyle}
+          />
+          <input
+            aria-label="识别模型"
+            placeholder="识别模型（如 fun-asr-realtime）"
+            value={modelIdentifier}
+            onChange={(e) => setModelIdentifier(e.target.value)}
             style={inputStyle}
           />
           <input
@@ -374,14 +440,6 @@ export function SettingsTab() {
               onChange={(e) => setModelEnabled(e.target.checked)}
             />
             启用
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-            <input
-              type="checkbox"
-              checked={modelIsDefault}
-              onChange={(e) => setModelIsDefault(e.target.checked)}
-            />
-            设为默认
           </label>
           <button type="submit" style={{ padding: '0.5rem 1rem' }}>
             添加

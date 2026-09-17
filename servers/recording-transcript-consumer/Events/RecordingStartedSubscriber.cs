@@ -5,7 +5,7 @@ using Z.Vtuber.RecordingTranscript.Consumer.Enqueue;
 
 namespace Z.Vtuber.RecordingTranscript.Consumer.Events;
 
-/// <summary>订阅 recording-started，roomId 启用自动识别时按默认模型建 mode=live 任务。</summary>
+/// <summary>订阅 recording-started，roomId 启用自动识别时按设置绑定的 ModelId 建 mode=live 任务。</summary>
 public sealed class RecordingStartedSubscriber(
     IConnectionMultiplexer redis,
     TranscriptEnqueueService enqueue,

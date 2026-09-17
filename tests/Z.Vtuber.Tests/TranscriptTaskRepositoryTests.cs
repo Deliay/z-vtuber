@@ -243,83 +243,53 @@ public class TranscriptTaskRepositoryTests(MongoDbFixture fixture) : IClassFixtu
     }
 
     [Fact]
-    public async Task Models_PartialUnique_PreventsTwoDefaults()
+    public async Task Models_MultipleRecords_NoDefaultConstraint()
     {
         var repository = Models;
         await repository.InsertAsync(new TranscriptModelRecord
         {
-            Name = "default-model",
+            Name = "model-1",
             Provider = "ali-fun-asr",
             Type = "streaming",
             ApiKey = "k1",
+            Model = "fun-asr-realtime",
             Enabled = true,
-            IsDefault = true,
             CreatedAt = DateTime.UtcNow,
         });
-
-        var ex = await Assert.ThrowsAsync<MongoWriteException>(() => repository.InsertAsync(new TranscriptModelRecord
+        await repository.InsertAsync(new TranscriptModelRecord
         {
-            Name = "second-default",
+            Name = "model-2",
             Provider = "ali-fun-asr",
             Type = "streaming",
             ApiKey = "k2",
+            Model = "fun-asr-realtime",
             Enabled = true,
-            IsDefault = true,
-            CreatedAt = DateTime.UtcNow,
-        }));
-
-        Assert.Equal(ServerErrorCategory.DuplicateKey, ex.WriteError?.Category);
-
-        await repository.InsertAsync(new TranscriptModelRecord
-        {
-            Name = "non-default-1",
-            Provider = "ali-fun-asr",
-            Type = "streaming",
-            ApiKey = "k3",
-            Enabled = true,
-            IsDefault = false,
-            CreatedAt = DateTime.UtcNow,
-        });
-        await repository.InsertAsync(new TranscriptModelRecord
-        {
-            Name = "non-default-2",
-            Provider = "ali-fun-asr",
-            Type = "streaming",
-            ApiKey = "k4",
-            Enabled = true,
-            IsDefault = false,
             CreatedAt = DateTime.UtcNow,
         });
 
         var all = await repository.ListAsync();
-        Assert.Equal(3, all.Count);
-        Assert.Single(all, m => m.IsDefault);
+        Assert.Equal(2, all.Count);
     }
 
     [Fact]
-    public async Task Models_SetDefault_ClearsOtherDefaults()
+    public async Task Models_Update_UpdatesModelField()
     {
         var repository = Models;
-        var first = await repository.InsertAsync(new TranscriptModelRecord
+        var id = await repository.InsertAsync(new TranscriptModelRecord
         {
-            Name = "first",
-            IsDefault = true,
-            CreatedAt = DateTime.UtcNow,
-        });
-        var second = await repository.InsertAsync(new TranscriptModelRecord
-        {
-            Name = "second",
-            IsDefault = false,
+            Name = "model",
+            Provider = "ali-fun-asr",
+            Type = "streaming",
+            ApiKey = "secret",
+            Model = "fun-asr-realtime",
+            Enabled = true,
             CreatedAt = DateTime.UtcNow,
         });
 
-        await repository.SetDefaultAsync(second);
+        await repository.UpdateAsync(id, model: "paraformer-realtime-v2");
 
-        var all = await repository.ListAsync();
-        Assert.Single(all, m => m.IsDefault);
-        Assert.True(all.Single(m => m.Id == second).IsDefault);
-        Assert.False(all.Single(m => m.Id == first).IsDefault);
-        Assert.Equal(second, (await repository.GetDefaultAsync())!.Id);
+        var record = await repository.GetByIdAsync(id);
+        Assert.Equal("paraformer-realtime-v2", record!.Model);
     }
 
     [Fact]
@@ -352,13 +322,28 @@ public class TranscriptTaskRepositoryTests(MongoDbFixture fixture) : IClassFixtu
     {
         var repository = AutoEnqueue;
 
-        await repository.UpsertAsync(100, 1, true);
+        var modelId = ObjectId.GenerateNewId();
+        await repository.UpsertAsync(100, 1, true, modelId);
         await repository.UpsertAsync(100, 1, false);
 
         var all = await repository.GetAllAsync();
         var record = Assert.Single(all, r => r.RoomId == 100);
         Assert.False(record.Enabled);
         Assert.Equal(1, record.Mid);
+        // enable=false 未传 modelId：保留原绑定
+        Assert.Equal(modelId, record.ModelId);
+    }
+
+    [Fact]
+    public async Task AutoEnqueue_Upsert_PersistsModelId()
+    {
+        var repository = AutoEnqueue;
+        var modelId = ObjectId.GenerateNewId();
+
+        await repository.UpsertAsync(300, 3, true, modelId);
+
+        var record = await repository.GetByRoomIdAsync(300);
+        Assert.Equal(modelId, record!.ModelId);
     }
 
     [Fact]
