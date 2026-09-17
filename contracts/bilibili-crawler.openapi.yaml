@@ -290,7 +290,7 @@ paths:
         - $ref: "#/components/parameters/RoomId"
       responses:
         "200":
-          description: 录播文件列表（含大小与创建时间；不含录制中文件）
+          description: 录播文件列表（按场次归档聚合，含文件元信息与所属场次信息；不含录制中文件；无录播返回空数组）
           content:
             application/json:
               schema:
@@ -1158,7 +1158,7 @@ components:
             $ref: "#/components/schemas/RecordingFile"
     RecordingFile:
       type: object
-      required: [name, size, createdAt]
+      required: [name, size, createdAt, info]
       properties:
         name:
           type: string
@@ -1171,6 +1171,31 @@ components:
           type: string
           format: date-time
           description: 文件创建时间（UTC）
+        info:
+          $ref: "#/components/schemas/RecordingSessionInfo"
+    RecordingSessionInfo:
+      type: object
+      required: [recordingId, title, mid, startedAt, endedAt]
+      properties:
+        recordingId:
+          type: string
+          description: 所属场次归档记录标识
+        title:
+          type: string
+          description: 场次标题（直播标题）
+        mid:
+          type: integer
+          format: int64
+          description: 主播 mid
+        startedAt:
+          type: string
+          format: date-time
+          description: 场次开始（录制开始）时间（UTC）
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 场次结束时间（UTC）；未正常收尾为 null
     RecordingTranscriptErrorResponse:
       type: object
       required: [error]

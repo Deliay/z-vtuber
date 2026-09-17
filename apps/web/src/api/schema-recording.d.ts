@@ -134,6 +134,28 @@ export interface components {
              * @description 文件创建时间（UTC）
              */
             createdAt: string;
+            info: components["schemas"]["RecordingSessionInfo"];
+        };
+        RecordingSessionInfo: {
+            /** @description 所属场次归档记录标识 */
+            recordingId: string;
+            /** @description 场次标题（直播标题） */
+            title: string;
+            /**
+             * Format: int64
+             * @description 主播 mid
+             */
+            mid: number;
+            /**
+             * Format: date-time
+             * @description 场次开始（录制开始）时间（UTC）
+             */
+            startedAt: string;
+            /**
+             * Format: date-time
+             * @description 场次结束时间（UTC）；未正常收尾为 null
+             */
+            endedAt: string | null;
         };
     };
     responses: never;
@@ -230,7 +252,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 录播文件列表（含大小与创建时间；不含录制中文件；无录播返回空数组） */
+            /** @description 录播文件列表（按场次归档聚合，含文件元信息与所属场次信息；不含录制中文件；无录播返回空数组） */
             200: {
                 headers: {
                     [name: string]: unknown;

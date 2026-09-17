@@ -575,8 +575,30 @@ describe('API Client', () => {
 
     it('listRecordings should fetch room recordings', async () => {
       const files = [
-        { name: 'a.flv', size: 1024, createdAt: '2026-09-01T00:00:00Z' },
-        { name: 'b.flv', size: 2048, createdAt: '2026-09-02T00:00:00Z' },
+        {
+          name: 'a.flv',
+          size: 1024,
+          createdAt: '2026-09-01T00:00:00Z',
+          info: {
+            recordingId: 'rec-1',
+            title: '歌回',
+            mid: 456,
+            startedAt: '2026-09-01T00:00:00Z',
+            endedAt: '2026-09-01T02:00:00Z',
+          },
+        },
+        {
+          name: 'b.flv',
+          size: 2048,
+          createdAt: '2026-09-02T00:00:00Z',
+          info: {
+            recordingId: 'rec-2',
+            title: '杂谈',
+            mid: 456,
+            startedAt: '2026-09-02T00:00:00Z',
+            endedAt: null,
+          },
+        },
       ]
       mockFetch.mockResolvedValue({
         ok: true,

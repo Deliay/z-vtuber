@@ -82,6 +82,13 @@ describe('RecordingStatusPage', () => {
         name: '[RAW][101][主播A] 2026-09-01-歌回.flv',
         size: 1288490189,
         createdAt: '2026-09-01T12:00:00Z',
+        info: {
+          recordingId: 'rec-101',
+          title: '往期歌回',
+          mid: 1,
+          startedAt: '2026-09-01T12:00:00Z',
+          endedAt: '2026-09-01T14:00:00Z',
+        },
       },
     ])
 
@@ -99,6 +106,7 @@ describe('RecordingStatusPage', () => {
       ).toBeInTheDocument()
     })
     expect(screen.getByText('1.2 GB')).toBeInTheDocument()
+    expect(screen.getByText('往期歌回')).toBeInTheDocument()
     expect(mockListRecordings).toHaveBeenCalledWith(101)
     expect(mockDownloadUrl).toHaveBeenCalledWith(
       101,
