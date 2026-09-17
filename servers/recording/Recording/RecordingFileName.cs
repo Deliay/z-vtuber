@@ -20,7 +20,7 @@ public static class RecordingFileName
         var normalizedEncode = (encode ?? string.Empty).ToUpperInvariant();
         var anchor = Sanitize(anchorName, MaxAnchorLength, "未知主播");
         var title = Sanitize(sessionTitle, MaxTitleLength, "未命名场次");
-        return $"[{normalizedEncode}][{roomId}][{anchor}]{date:yyyy-MM-dd-hh-mm-ss}-{title}.flv";
+        return $"[{normalizedEncode}][{roomId}][{anchor}]{date:yyyy-MM-dd-HH-mm-ss}-{title}.flv";
     }
 
     /// <summary>
