@@ -126,6 +126,9 @@ export function RecordingStatusPage() {
           <li key={file.name}>
             <a href={recordingDownloadUrl(roomId, file.name)}>{file.name}</a>{' '}
             <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
+              {file.info.title}
+            </span>{' '}
+            <span style={{ color: '#64748b', fontSize: '0.875rem' }}>
               {formatBytes(file.size)}
             </span>
           </li>
