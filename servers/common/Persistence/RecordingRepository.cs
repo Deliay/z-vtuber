@@ -55,6 +55,12 @@ public sealed class RecordingRepository(IMongoDatabase database)
     public async Task<RecordingRecord?> GetByRoomIdStartedAtAsync(long roomId, DateTime startedAt, CancellationToken ct = default) =>
         await _collection.Find(r => r.RoomId == roomId && r.StartedAt == startedAt).FirstOrDefaultAsync(ct);
 
+    /// <summary>查询指定房间全部场次，按 StartedAt 倒序（供录播文件列表聚合）。</summary>
+    public async Task<IReadOnlyList<RecordingRecord>> ListByRoomAsync(long roomId, CancellationToken ct = default) =>
+        await _collection.Find(r => r.RoomId == roomId)
+            .SortByDescending(r => r.StartedAt)
+            .ToListAsync(ct);
+
     public async Task<IReadOnlyList<RecordingRecord>> ListAsync(
         long? roomId, int limit, DateTime? before, CancellationToken ct = default)
     {

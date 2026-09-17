@@ -27,6 +27,7 @@ public class RecordingApiTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
     {
         var controller = new RecordingController(
             new RecordingStatusRepository(fixture.Database),
+            new RecordingRepository(fixture.Database),
             hub,
             new RecordingOptions { StorageDir = _storageDir });
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
@@ -76,30 +77,47 @@ public class RecordingApiTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
             UpdatedAt = DateTime.UtcNow - age,
         });
 
+    private Task SeedSessionAsync(
+        long roomId, long mid, string title, DateTime startedAt, DateTime? endedAt, params string[] files) =>
+        new RecordingRepository(fixture.Database).InsertAsync(new RecordingRecord
+        {
+            RoomId = roomId,
+            Mid = mid,
+            Title = title,
+            Files = [.. files],
+            StartedAt = startedAt,
+            EndedAt = endedAt,
+            CreatedAt = startedAt,
+        });
+
+    private static List<JsonElement> FilesOf(IActionResult result) =>
+        OkJson(result).GetProperty("files").EnumerateArray().ToList();
+
     [Fact]
-    public async Task ListRecordings_NoDirectory_ReturnsEmptyArray()
+    public async Task ListRecordings_NoSessions_ReturnsEmptyArray()
     {
         var controller = CreateController(new AudioStreamHub(1024));
 
         var result = await controller.ListRecordings(555, CancellationToken.None);
 
-        var json = OkJson(result);
-        Assert.Empty(json.GetProperty("files").EnumerateArray());
+        Assert.Empty(FilesOf(result));
     }
 
     [Fact]
-    public async Task ListRecordings_ReturnsFileMetadata()
+    public async Task ListRecordings_ReturnsFileMetadataWithSessionInfo()
     {
+        var startedAt = new DateTime(2026, 9, 15, 10, 0, 0, DateTimeKind.Utc);
+        var endedAt = startedAt.AddHours(1);
         Directory.CreateDirectory(RoomDir(556));
         File.WriteAllText(Path.Combine(RoomDir(556), "b.flv"), "hello");
         File.WriteAllText(Path.Combine(RoomDir(556), "a.flv"), "hi");
         File.WriteAllText(Path.Combine(RoomDir(556), "ignore.txt"), "x");
+        await SeedSessionAsync(556, 1001, "晚间歌回", startedAt, endedAt, "b.flv", "a.flv");
 
         var controller = CreateController(new AudioStreamHub(1024));
         var result = await controller.ListRecordings(556, CancellationToken.None);
 
-        var json = OkJson(result);
-        var files = json.GetProperty("files").EnumerateArray().ToList();
+        var files = FilesOf(result);
         Assert.Equal(2, files.Count);
 
         Assert.Equal("a.flv", files[0].GetProperty("name").GetString());
@@ -109,36 +127,106 @@ public class RecordingApiTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
 
         var createdAt = files[0].GetProperty("createdAt").GetDateTime();
         Assert.True(createdAt > DateTime.UtcNow.AddMinutes(-5) && createdAt <= DateTime.UtcNow.AddMinutes(1));
+
+        var info = files[0].GetProperty("info");
+        Assert.Equal("晚间歌回", info.GetProperty("title").GetString());
+        Assert.Equal(1001, info.GetProperty("mid").GetInt64());
+        Assert.Equal(startedAt, info.GetProperty("startedAt").GetDateTime());
+        Assert.Equal(endedAt, info.GetProperty("endedAt").GetDateTime());
+        Assert.False(string.IsNullOrEmpty(info.GetProperty("recordingId").GetString()));
+    }
+
+    [Fact]
+    public async Task ListRecordings_AggregatesSessionsSortedByStartedAtDescAndNameAsc()
+    {
+        var older = DateTime.UtcNow.AddDays(-2);
+        var newer = DateTime.UtcNow.AddDays(-1);
+        Directory.CreateDirectory(RoomDir(580));
+        foreach (var name in new[] { "old-raw.flv", "old-av1.flv", "new-raw.flv", "new-av1.flv" })
+        {
+            File.WriteAllText(Path.Combine(RoomDir(580), name), name);
+        }
+
+        await SeedSessionAsync(580, 2002, "旧场次", older, older.AddHours(1), "old-av1.flv", "old-raw.flv");
+        await SeedSessionAsync(580, 2002, "新场次", newer, newer.AddHours(1), "new-raw.flv", "new-av1.flv");
+
+        var controller = CreateController(new AudioStreamHub(1024));
+        var result = await controller.ListRecordings(580, CancellationToken.None);
+
+        var files = FilesOf(result);
+        Assert.Equal(["new-av1.flv", "new-raw.flv", "old-av1.flv", "old-raw.flv"],
+            files.Select(f => f.GetProperty("name").GetString()).ToList());
+
+        var newInfo = files[0].GetProperty("info");
+        Assert.Equal("新场次", newInfo.GetProperty("title").GetString());
+        Assert.Equal(newInfo.GetProperty("recordingId").GetString(),
+            files[1].GetProperty("info").GetProperty("recordingId").GetString());
+        Assert.Equal("旧场次", files[2].GetProperty("info").GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public async Task ListRecordings_SkipsMissingAndOrphanFiles()
+    {
+        var startedAt = DateTime.UtcNow.AddHours(-1);
+        Directory.CreateDirectory(RoomDir(581));
+        File.WriteAllText(Path.Combine(RoomDir(581), "listed.flv"), "x");
+        File.WriteAllText(Path.Combine(RoomDir(581), "orphan.flv"), "x");
+        await SeedSessionAsync(581, 3003, "场次", startedAt, startedAt.AddHours(1), "listed.flv", "missing.flv");
+
+        var controller = CreateController(new AudioStreamHub(1024));
+        var result = await controller.ListRecordings(581, CancellationToken.None);
+
+        var names = FilesOf(result).Select(f => f.GetProperty("name").GetString()).ToList();
+        Assert.Equal(["listed.flv"], names);
+    }
+
+    [Fact]
+    public async Task ListRecordings_OrphanSessionWithoutHeartbeat_ListedWithNullEndedAt()
+    {
+        var startedAt = DateTime.UtcNow.AddHours(-3);
+        Directory.CreateDirectory(RoomDir(582));
+        File.WriteAllText(Path.Combine(RoomDir(582), "orphan.flv"), "x");
+        await SeedSessionAsync(582, 4004, "未收尾场次", startedAt, null, "orphan.flv");
+
+        var controller = CreateController(new AudioStreamHub(1024));
+        var result = await controller.ListRecordings(582, CancellationToken.None);
+
+        var files = FilesOf(result);
+        Assert.Single(files);
+        Assert.Equal("orphan.flv", files[0].GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, files[0].GetProperty("info").GetProperty("endedAt").ValueKind);
     }
 
     [Fact]
     public async Task ListRecordings_ExcludesRecordingFile()
     {
+        var startedAt = DateTime.UtcNow.AddHours(-1);
         Directory.CreateDirectory(RoomDir(563));
         File.WriteAllText(Path.Combine(RoomDir(563), "active.flv"), "x");
         File.WriteAllText(Path.Combine(RoomDir(563), "finished.flv"), "x");
+        await SeedSessionAsync(563, 5005, "场次", startedAt, null, "active.flv", "finished.flv");
         await SeedRecordingAsync(563, TimeSpan.Zero, "active.flv");
 
         var controller = CreateController(new AudioStreamHub(1024));
         var result = await controller.ListRecordings(563, CancellationToken.None);
 
-        var names = OkJson(result).GetProperty("files").EnumerateArray()
-            .Select(f => f.GetProperty("name").GetString()).ToList();
+        var names = FilesOf(result).Select(f => f.GetProperty("name").GetString()).ToList();
         Assert.Equal(["finished.flv"], names);
     }
 
     [Fact]
     public async Task ListRecordings_StaleRecordingStatus_IncludesFile()
     {
+        var startedAt = DateTime.UtcNow.AddHours(-1);
         Directory.CreateDirectory(RoomDir(564));
         File.WriteAllText(Path.Combine(RoomDir(564), "active.flv"), "x");
+        await SeedSessionAsync(564, 6006, "场次", startedAt, null, "active.flv");
         await SeedRecordingAsync(564, TimeSpan.FromMinutes(10), "active.flv");
 
         var controller = CreateController(new AudioStreamHub(1024));
         var result = await controller.ListRecordings(564, CancellationToken.None);
 
-        var names = OkJson(result).GetProperty("files").EnumerateArray()
-            .Select(f => f.GetProperty("name").GetString()).ToList();
+        var names = FilesOf(result).Select(f => f.GetProperty("name").GetString()).ToList();
         Assert.Equal(["active.flv"], names);
     }
 
