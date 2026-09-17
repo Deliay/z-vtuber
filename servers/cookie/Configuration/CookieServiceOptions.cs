@@ -8,6 +8,7 @@ public class CookieServiceOptions
     public int QrCodeExpiresSeconds { get; set; } = 180;
     public int RefreshIntervalMinutes { get; set; } = 10;
     public int RefreshNavTimeoutSeconds { get; set; } = 30;
+    public int PageIdleCloseDelaySeconds { get; set; } = 60;
     public int MaxConsecutiveRefreshFailures { get; set; } = 3;
     public int ReportInvalidTimeoutSeconds { get; set; } = 60;
     public int MaxPendingLoginSessions { get; set; } = 3;

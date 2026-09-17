@@ -37,7 +37,8 @@ graph LR
   - `HealthController`：健康检查（`GET /health`）
 - `Browser/`：Playwright 浏览器 session 管理（Profile 驱动）
   - `IBrowserSessionManager`：浏览器 session 抽象（创建/等待登录态/提取 cookie/删除/刷新）
-  - `BrowserSessionManager`：按 `ICookiePlatformProfile` 驱动；被动观察（bilibili nav）与主动探测（weibo `api/config`，经 `context.APIRequest`）两种登录态信号；二维码元素等待超时改为告警 + 整页截图兜底（不再抛错，行为变更已在此明示）；提取 cookie 后按 Profile `RequiredCookieNames`（微博 SUB/SUBP）做存在性校验并告警
+  - `BrowserSessionManager`：按 `ICookiePlatformProfile` 驱动；被动观察（bilibili nav）与主动探测（weibo `api/config`，经 `context.APIRequest`）两种登录态信号；二维码元素等待超时改为告警 + 整页截图兜底（不再抛错，行为变更已在此明示）；提取 cookie 后按 Profile `RequiredCookieNames`（微博 SUB/SUBP）做存在性校验并告警。context 采用**按需惰性打开 + 用后空闲延时关闭**（`PageIdleCloseDelaySeconds`，默认 60s）：`ExtractCookiesAsync`/`RefreshSessionAsync` 在 context 不存在时冷启动（依赖 userDataDir 磁盘持久化恢复登录态），使用完毕启动 per-account 空闲计时，期间再次使用则顺延，到期关闭 context 释放进程；扫码登录 pending 阶段保持打开、不参与空闲关闭；per-account `SemaphoreSlim` 保证打开/使用/关闭互斥
+  - `IdleCloseScheduler`：per-key 空闲延时关闭调度组件（`Touch` 重置计时、`Cancel` 取消、到期回调异常仅记日志），供 `BrowserSessionManager` 使用
   - `LoginSessionWorker`：后台 hosted service，遍历 `CookiePlatformRegistry` 处理双平台扫码登录 session 的 cookie 提取与身份回填入库
 - `Refresh/`：Cookie 刷新与失效检测
   - `SessionRefreshJob`：遍历 `CookiePlatformRegistry` 定时刷新双平台活跃 session 的 Cookie
@@ -84,6 +85,7 @@ graph LR
 - `ConnectionStrings:mongo`：MongoDB 连接串
 - `ConnectionStrings:messaging`：Redis 连接串
 - `CookieService` 节：`BrowserSessionDataDir`（浏览器 session 数据目录，必填）
+- `CookieService:PageIdleCloseDelaySeconds`：刷新/提取完成后关闭浏览器 context 的空闲延时时长（秒，默认 60，须 > 0）；`BrowserSessionDataDir` 与该项经 `CookieServiceOptionsValidator` 在启动时校验
 
 ## 开发流程
 
