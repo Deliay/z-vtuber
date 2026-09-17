@@ -3,6 +3,7 @@ using MongoDB.Bson.Serialization.Attributes;
 
 namespace Z.Vtuber.Common.Persistence.Entities;
 
+[BsonIgnoreExtraElements]
 public sealed class TranscriptModelRecord
 {
     [BsonId]

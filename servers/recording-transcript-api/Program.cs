@@ -46,6 +46,7 @@ using (var scope = app.Services.CreateScope())
 {
     var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
     await initializer.EnsureIndexesAsync();
+    await initializer.CleanupTranscriptModelIsDefaultAsync();
 }
 
 app.MapHealthChecks("/health");

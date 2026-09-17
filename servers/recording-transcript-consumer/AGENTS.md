@@ -37,7 +37,7 @@ graph LR
 - `Asr/`：`IStreamingAsrService`（`StreamingAsrSegment(Start, End, Text)` + `IAsyncEnumerable` 抽象）、`IStreamingAsrServiceFactory.Create(TranscriptModelRecord model, long offset, IReadOnlyList<string> context)`（模型名/API Key 取自 DB 模型记录，`model` 为实际发给服务商的模型 ID）、`AliFunAsrService`（构造传入 offset 与上下文，websocket 协议 run-task/音频帧/finish-task，仅成句 yield，时间 = 返回时间 + offset；连接/run-task/task-started/finish-task/task-finished/关闭等关键节点 Info 日志、成句进度节流日志；服务端 `AsrIdleTimeoutSeconds` 无消息即抛 TimeoutException 使任务 FAILED 可重试）、`FunAsrProtocol`（客户端指令 `header.action`＝run-task/finish-task、服务端事件 `header.event`＝task-started/result-generated/task-finished/task-failed；`task-failed` 解析 error_code/message；`BuildRunTask` 上下文非空时填充 `input.context` 单条 user 消息，为空维持空 `input`）
 - `Audio/`：`FfmpegAudioStream`（`FfmpegAudioArgs` 参数构造、`IAudioProcess`/`IAudioProcessFactory`、`IAudioSource`/`IAudioSourceFactory`；实时/live 与 file 双音源统一 s16le pipe，按 1 秒（32000B）分块、有界缓冲形成背压）
 - `Services/`：`RecordingServiceClient`（`IRecordingServiceClient`：拼实时音频/录播文件 URL、HEAD 探测实时流可用性）、`TranscriptModelMigration`（启动迁移：为 `Model` 缺失/为空的 `transcript_models` 记录回填 `Model`，取旧配置 `TranscriptConsumer:AsrModel`，缺省 `fun-asr-realtime`；`zvtuber_meta` marker 幂等，已填不覆盖）
-- `Program.cs`：注册 Mongo/Redis/Options（`ValidateOnStart`）/仓储/服务/HttpClient（`RecordingService:BaseUrl`）/HostedService，启动幂等索引初始化，`/health`
+- `Program.cs`：注册 Mongo/Redis/Options（`ValidateOnStart`）/仓储/服务/HttpClient（`RecordingService:BaseUrl`）/HostedService，启动幂等索引初始化 + 清理 `transcript_models` 存量 `IsDefault` 字段迁移（`CleanupTranscriptModelIsDefaultAsync`），`/health`
 - `MongoDbHealthCheck.cs`：与 crawler 同模式
 - `Properties/launchSettings.json`：本地 8085
 - `Dockerfile`：两阶段构建（aspnet 运行时 + `apt-get install ffmpeg`，`EXPOSE 8080`）
