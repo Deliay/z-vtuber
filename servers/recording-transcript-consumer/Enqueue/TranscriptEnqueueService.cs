@@ -27,7 +27,7 @@ public sealed class TranscriptEnqueueService(
     TranscriptAutoEnqueueRepository autoEnqueue,
     ILogger<TranscriptEnqueueService> logger)
 {
-    /// <summary>开播自动建 mode=live 任务；未启用自动识别、无默认模型或非启用后场次时返回 null。</summary>
+    /// <summary>开播自动建 mode=live 任务；未启用自动识别、未绑定模型（待完善）/绑定模型不存在或被禁用、或非启用后场次时返回 null。</summary>
     public async Task<ObjectId?> EnqueueForStartedAsync(RecordingStartedEvent evt, CancellationToken ct = default)
     {
         var setting = await autoEnqueue.GetByRoomIdAsync(evt.RoomId, ct);
@@ -36,8 +36,8 @@ public sealed class TranscriptEnqueueService(
             return null;
         }
 
-        var model = await models.GetDefaultAsync(ct);
-        if (model is null || !model.Enabled)
+        var model = await ResolveSettingModelAsync(setting, "started", ct);
+        if (model is null)
         {
             return null;
         }
@@ -76,8 +76,8 @@ public sealed class TranscriptEnqueueService(
             return null;
         }
 
-        var model = await models.GetDefaultAsync(ct);
-        if (model is null || !model.Enabled)
+        var model = await ResolveSettingModelAsync(setting, "finished", ct);
+        if (model is null)
         {
             return null;
         }
@@ -133,6 +133,32 @@ public sealed class TranscriptEnqueueService(
         var taskId = await EnsureTaskAsync(
             recording, model, TranscriptTaskModes.File, TranscriptTaskSources.Manual, ct);
         return new EnqueueResult(taskId, EnqueueError.None);
+    }
+
+    /// <summary>
+    /// 从自动识别设置解析绑定模型：未绑定（待完善）或模型不存在/被禁用时记 Warn 并返回 null（不建任务）。
+    /// </summary>
+    internal async Task<TranscriptModelRecord?> ResolveSettingModelAsync(
+        TranscriptAutoEnqueueRecord setting, string scope, CancellationToken ct)
+    {
+        if (setting.ModelId is null)
+        {
+            logger.LogWarning(
+                "Auto transcript for room {RoomId} has no bound model (pending setup, scope={Scope}); skipping",
+                setting.RoomId, scope);
+            return null;
+        }
+
+        var model = await models.GetByIdAsync(setting.ModelId.Value, ct);
+        if (model is null || !model.Enabled)
+        {
+            logger.LogWarning(
+                "Auto transcript for room {RoomId} bound model {ModelId} is missing or disabled (scope={Scope}); skipping",
+                setting.RoomId, setting.ModelId, scope);
+            return null;
+        }
+
+        return model;
     }
 
     private async Task<ObjectId> EnsureTaskAsync(

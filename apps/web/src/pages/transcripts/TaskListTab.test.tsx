@@ -72,8 +72,8 @@ describe('TaskListTab', () => {
         name: '默认模型',
         provider: 'ali-fun-asr',
         type: 'streaming',
+        model: 'fun-asr-realtime',
         enabled: true,
-        isDefault: true,
         maxConcurrency: 1,
       },
     ])

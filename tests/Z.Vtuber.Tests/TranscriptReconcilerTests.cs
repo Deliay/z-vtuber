@@ -28,18 +28,18 @@ public class TranscriptReconcilerTests(MongoDbFixture mongo) : IClassFixture<Mon
         Recordings, Tasks, Models, AutoEnqueue, NullLogger<TranscriptEnqueueService>.Instance);
 
     private TranscriptReconciler Reconciler => new(
-        Statuses, Recordings, AutoEnqueue, Models, Tasks, Enqueue,
+        Statuses, Recordings, AutoEnqueue, Tasks, Enqueue,
         new TranscriptConsumerOptions(), NullLogger<TranscriptReconciler>.Instance);
 
-    private async Task<ObjectId> InsertModelAsync() =>
+    private async Task<ObjectId> InsertModelAsync(bool enabled = true) =>
         await Models.InsertAsync(new TranscriptModelRecord
         {
             Name = "default",
             Provider = "ali-fun-asr",
             Type = "streaming",
             ApiKey = "key",
-            Enabled = true,
-            IsDefault = true,
+            Model = "fun-asr-realtime",
+            Enabled = enabled,
             MaxConcurrency = 2,
             CreatedAt = DateTime.UtcNow,
         });
@@ -70,8 +70,8 @@ public class TranscriptReconcilerTests(MongoDbFixture mongo) : IClassFixture<Mon
     [Fact]
     public async Task InProgress_MissingLiveTask_CreatesLiveTask()
     {
-        await InsertModelAsync();
-        await AutoEnqueue.UpsertAsync(500, 501, enabled: true);
+        var modelId = await InsertModelAsync();
+        await AutoEnqueue.UpsertAsync(500, 501, enabled: true, modelId);
         await SetRecordingStatusAsync(500);
         var recordingId = await InsertRecordingAsync(500, DateTime.UtcNow, endedAt: null);
 
@@ -85,8 +85,8 @@ public class TranscriptReconcilerTests(MongoDbFixture mongo) : IClassFixture<Mon
     [Fact]
     public async Task Ended_MissingFileTask_CreatesFileTask()
     {
-        await InsertModelAsync();
-        await AutoEnqueue.UpsertAsync(510, 511, enabled: true);
+        var modelId = await InsertModelAsync();
+        await AutoEnqueue.UpsertAsync(510, 511, enabled: true, modelId);
         var recordingId = await InsertRecordingAsync(510, DateTime.UtcNow.AddMinutes(-5), DateTime.UtcNow);
 
         await Reconciler.ReconcileOnceAsync();
@@ -99,8 +99,8 @@ public class TranscriptReconcilerTests(MongoDbFixture mongo) : IClassFixture<Mon
     public async Task Historical_NotBackfilled()
     {
         var recordingId = await InsertRecordingAsync(520, DateTime.UtcNow.AddHours(-3), DateTime.UtcNow.AddHours(-2));
-        await InsertModelAsync();
-        await AutoEnqueue.UpsertAsync(520, 521, enabled: true);
+        var modelId = await InsertModelAsync();
+        await AutoEnqueue.UpsertAsync(520, 521, enabled: true, modelId);
 
         await Reconciler.ReconcileOnceAsync();
 
@@ -122,8 +122,8 @@ public class TranscriptReconcilerTests(MongoDbFixture mongo) : IClassFixture<Mon
     [Fact]
     public async Task Idempotent_RepeatedReconcile_CreatesSingleTask()
     {
-        await InsertModelAsync();
-        await AutoEnqueue.UpsertAsync(540, 541, enabled: true);
+        var modelId = await InsertModelAsync();
+        await AutoEnqueue.UpsertAsync(540, 541, enabled: true, modelId);
         var recordingId = await InsertRecordingAsync(540, DateTime.UtcNow.AddMinutes(-5), DateTime.UtcNow);
 
         await Reconciler.ReconcileOnceAsync();
@@ -133,10 +133,22 @@ public class TranscriptReconcilerTests(MongoDbFixture mongo) : IClassFixture<Mon
     }
 
     [Fact]
-    public async Task NoDefaultModel_DoesNotCreateTask()
+    public async Task UnboundModel_DoesNotCreateTask()
     {
         var recordingId = await InsertRecordingAsync(550, DateTime.UtcNow.AddMinutes(-5), DateTime.UtcNow);
         await AutoEnqueue.UpsertAsync(550, 551, enabled: true);
+
+        await Reconciler.ReconcileOnceAsync();
+
+        Assert.Empty(await Tasks.ListAsync(recordingId, null, null, 10));
+    }
+
+    [Fact]
+    public async Task DisabledBoundModel_DoesNotCreateTask()
+    {
+        var recordingId = await InsertRecordingAsync(560, DateTime.UtcNow.AddMinutes(-5), DateTime.UtcNow);
+        var modelId = await InsertModelAsync(enabled: false);
+        await AutoEnqueue.UpsertAsync(560, 561, enabled: true, modelId);
 
         await Reconciler.ReconcileOnceAsync();
 

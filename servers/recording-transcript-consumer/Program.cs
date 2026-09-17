@@ -6,6 +6,7 @@ using Z.Vtuber.RecordingTranscript.Consumer;
 using Z.Vtuber.RecordingTranscript.Consumer.Asr;
 using Z.Vtuber.RecordingTranscript.Consumer.Audio;
 using Z.Vtuber.RecordingTranscript.Consumer.Configuration;
+using Z.Vtuber.RecordingTranscript.Consumer.Context;
 using Z.Vtuber.RecordingTranscript.Consumer.Enqueue;
 using Z.Vtuber.RecordingTranscript.Consumer.Events;
 using Z.Vtuber.RecordingTranscript.Consumer.Reconcile;
@@ -46,7 +47,12 @@ builder.Services.AddSingleton<TranscriptSegmentRepository>();
 builder.Services.AddSingleton<TranscriptModelRepository>();
 builder.Services.AddSingleton<TranscriptAutoEnqueueRepository>();
 builder.Services.AddSingleton<RecordingStatusRepository>();
+builder.Services.AddSingleton<AccountBasicInfoRepository>();
+builder.Services.AddSingleton<LiveGuardRepository>();
+builder.Services.AddSingleton<LiveEventTextIndexRepository>();
 
+builder.Services.AddSingleton<TranscriptModelMigration>();
+builder.Services.AddSingleton<ITranscriptContextBuilder, TranscriptContextBuilder>();
 builder.Services.AddSingleton<TranscriptEnqueueService>();
 builder.Services.AddSingleton<ITranscriptTaskLockProvider, RedisTranscriptTaskLockProvider>();
 builder.Services.AddSingleton<ITranscriptSegmentPersister, MongoTranscriptSegmentPersister>();
@@ -75,6 +81,9 @@ using (var scope = app.Services.CreateScope())
 {
     var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
     await initializer.EnsureIndexesAsync();
+
+    var migration = scope.ServiceProvider.GetRequiredService<TranscriptModelMigration>();
+    await migration.MigrateAsync();
 }
 
 app.MapHealthChecks("/health");

@@ -72,10 +72,13 @@ public sealed record TranscriptSettingsItemDto(
     [property: JsonPropertyName("roomId")] long RoomId,
     [property: JsonPropertyName("mid")] long? Mid,
     [property: JsonPropertyName("anchorName")] string? AnchorName,
-    [property: JsonPropertyName("enabled")] bool Enabled);
+    [property: JsonPropertyName("enabled")] bool Enabled,
+    [property: JsonPropertyName("modelId")] string? ModelId,
+    [property: JsonPropertyName("modelName")] string? ModelName);
 
 public sealed record TranscriptSettingsUpdateRequest(
-    [property: JsonPropertyName("enable")] bool Enable);
+    [property: JsonPropertyName("enable")] bool Enable,
+    [property: JsonPropertyName("modelId")] string? ModelId);
 
 public sealed record TranscriptSettingsUpdateResponse(
     [property: JsonPropertyName("roomId")] long RoomId,
@@ -86,8 +89,8 @@ public sealed record TranscriptModelDto(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("provider")] string Provider,
     [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("model")] string Model,
     [property: JsonPropertyName("enabled")] bool Enabled,
-    [property: JsonPropertyName("isDefault")] bool IsDefault,
     [property: JsonPropertyName("maxConcurrency")] int MaxConcurrency,
     [property: JsonPropertyName("createdAt")] DateTime CreatedAt);
 
@@ -96,12 +99,12 @@ public sealed record TranscriptModelCreateRequest(
     [property: JsonPropertyName("provider")] string? Provider,
     [property: JsonPropertyName("type")] string? Type,
     [property: JsonPropertyName("apiKey")] string? ApiKey,
+    [property: JsonPropertyName("model")] string? Model,
     [property: JsonPropertyName("enabled")] bool? Enabled,
-    [property: JsonPropertyName("isDefault")] bool? IsDefault,
     [property: JsonPropertyName("maxConcurrency")] int? MaxConcurrency);
 
 public sealed record TranscriptModelUpdateRequest(
     [property: JsonPropertyName("enabled")] bool? Enabled,
-    [property: JsonPropertyName("isDefault")] bool? IsDefault,
+    [property: JsonPropertyName("model")] string? Model,
     [property: JsonPropertyName("maxConcurrency")] int? MaxConcurrency,
     [property: JsonPropertyName("apiKey")] string? ApiKey);

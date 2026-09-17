@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Z.Vtuber.RecordingTranscript.Consumer.Asr;
@@ -20,8 +21,12 @@ public class AliFunAsrOffsetTests
         (sentenceEnd ? "true" : "false") + "}}}}";
 
     private static AliFunAsrService CreateService(
-        string url, long offset, TimeSpan? idleTimeout = null, ILogger<AliFunAsrService>? logger = null) =>
-        new(new Uri(url), "test-key", offset, "qwen-fun-asr-streaming",
+        string url,
+        long offset,
+        TimeSpan? idleTimeout = null,
+        ILogger<AliFunAsrService>? logger = null,
+        IReadOnlyList<string>? context = null) =>
+        new(new Uri(url), "test-key", offset, "qwen-fun-asr-streaming", context ?? [],
             idleTimeout ?? TimeSpan.FromSeconds(5),
             logger ?? NullLogger<AliFunAsrService>.Instance);
 
@@ -86,6 +91,41 @@ public class AliFunAsrOffsetTests
         var segment = Assert.Single(segments);
         Assert.Equal(5500, segment.Start);
         Assert.Equal(6500, segment.End);
+    }
+
+    [Fact]
+    public async Task Context_NonEmpty_InjectsUserMessageIntoRunTaskInput()
+    {
+        await using var server = new FakeFunAsrServer();
+        server.Connection.Results.Add(ResultJson(0, 500, "hello", true));
+        var service = CreateService(server.Url, 0, context: ["主播名", "舰长A", "SC text"]);
+        var audio = new MemoryStream(new byte[100]);
+
+        await CollectAsync(service.TranscribeAsync(audio));
+
+        using var doc = JsonDocument.Parse(server.Connection.TextMessages[0]);
+        var context = doc.RootElement.GetProperty("payload").GetProperty("input").GetProperty("context");
+        var message = Assert.Single(context.EnumerateArray());
+        Assert.Equal("user", message.GetProperty("role").GetString());
+        var content = message.GetProperty("content").EnumerateArray().Single();
+        Assert.Equal("input_text", content.GetProperty("type").GetString());
+        Assert.Equal("主播名\n舰长A\nSC text", content.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task Context_Empty_KeepsInputObjectEmpty()
+    {
+        await using var server = new FakeFunAsrServer();
+        server.Connection.Results.Add(ResultJson(0, 500, "hello", true));
+        var service = CreateService(server.Url, 0);
+        var audio = new MemoryStream(new byte[100]);
+
+        await CollectAsync(service.TranscribeAsync(audio));
+
+        using var doc = JsonDocument.Parse(server.Connection.TextMessages[0]);
+        var input = doc.RootElement.GetProperty("payload").GetProperty("input");
+        Assert.Equal(JsonValueKind.Object, input.ValueKind);
+        Assert.Empty(input.EnumerateObject());
     }
 
     [Fact]

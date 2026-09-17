@@ -41,8 +41,8 @@ internal static class TranscriptMapping
         model.Name,
         model.Provider,
         model.Type,
+        model.Model,
         model.Enabled,
-        model.IsDefault,
         model.MaxConcurrency,
         model.CreatedAt);
 

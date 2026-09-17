@@ -38,8 +38,8 @@ public class RecordingFinishedSubscriberTests(MongoDbFixture mongo, RedisFixture
             Provider = "ali-fun-asr",
             Type = "streaming",
             ApiKey = "key",
+            Model = "fun-asr-realtime",
             Enabled = true,
-            IsDefault = true,
             MaxConcurrency = 2,
             CreatedAt = DateTime.UtcNow,
         });
@@ -61,8 +61,7 @@ public class RecordingFinishedSubscriberTests(MongoDbFixture mongo, RedisFixture
     public async Task Finished_MissingLiveTask_CreatesFileAutoTask()
     {
         var modelId = await SeedDefaultModelAsync(Models);
-        var enabledAt = DateTime.UtcNow.AddMinutes(-5);
-        await AutoEnqueue.UpsertAsync(400, 401, enabled: true);
+        await AutoEnqueue.UpsertAsync(400, 401, enabled: true, modelId);
         var endedAt = DateTime.UtcNow;
         var recordingId = await SeedEndedRecordingAsync(Recordings, 400, endedAt);
 
@@ -80,8 +79,8 @@ public class RecordingFinishedSubscriberTests(MongoDbFixture mongo, RedisFixture
     [Fact]
     public async Task Finished_LiveTaskExists_DoesNotCreateDuplicate()
     {
-        await SeedDefaultModelAsync(Models);
-        await AutoEnqueue.UpsertAsync(402, 403, enabled: true);
+        var modelId = await SeedDefaultModelAsync(Models);
+        await AutoEnqueue.UpsertAsync(402, 403, enabled: true, modelId);
         var endedAt = DateTime.UtcNow;
         var recordingId = await SeedEndedRecordingAsync(Recordings, 402, endedAt);
 
@@ -90,7 +89,7 @@ public class RecordingFinishedSubscriberTests(MongoDbFixture mongo, RedisFixture
             RecordingId = recordingId,
             RoomId = 402,
             File = "[RAW]a.flv",
-            ModelId = (await Models.GetDefaultAsync())!.Id,
+            ModelId = modelId,
             Mode = TranscriptTaskModes.Live,
             Source = TranscriptTaskSources.Auto,
             Status = TranscriptTaskStatus.Done,
@@ -124,8 +123,8 @@ public class RecordingFinishedSubscriberTests(MongoDbFixture mongo, RedisFixture
     [Fact]
     public async Task Finished_EndedBeforeEnabledAt_DoesNotBackfill()
     {
-        await SeedDefaultModelAsync(Models);
-        await AutoEnqueue.UpsertAsync(406, 407, enabled: true);
+        var modelId = await SeedDefaultModelAsync(Models);
+        await AutoEnqueue.UpsertAsync(406, 407, enabled: true, modelId);
         var endedAt = DateTime.UtcNow.AddHours(-2);
         var recordingId = await SeedEndedRecordingAsync(Recordings, 406, endedAt);
 
