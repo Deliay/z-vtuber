@@ -574,7 +574,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/RecordingTranscriptSettingsUpdateResponse"
         "400":
-          description: 参数非法（请求体缺失）
+          description: >-
+            参数非法：请求体缺失；或 enable=true 时缺少 modelId、modelId 格式非法、
+            指向不存在或未启用的模型
           content:
             application/json:
               schema:
@@ -605,7 +607,7 @@ paths:
               $ref: "#/components/schemas/RecordingTranscriptModelCreateRequest"
       responses:
         "200":
-          description: 创建成功（isDefault=true 时原子清除其他模型默认位；不回传 apiKey）
+          description: 创建成功（不回传 apiKey）
           content:
             application/json:
               schema:
@@ -621,7 +623,7 @@ paths:
   /api/transcripts/models/{modelId}:
     put:
       summary: 更新转写模型（代理转写服务）
-      description: 更新启用/禁用、默认位、最大并发、API Key（可选，不传则不改）；被禁用模型进行中的任务继续跑完。
+      description: 更新启用/禁用、识别模型、最大并发、API Key（可选，不传则不改）；被禁用模型进行中的任务继续跑完。
       operationId: updateTranscriptModel
       parameters:
         - $ref: "#/components/parameters/TranscriptModelId"
@@ -1298,6 +1300,14 @@ components:
           nullable: true
         enabled:
           type: boolean
+        modelId:
+          type: string
+          nullable: true
+          description: 绑定的转写模型 ID；为空表示未绑定（待完善），自动转写不生效
+        modelName:
+          type: string
+          nullable: true
+          description: 绑定模型名称；未绑定或模型已删除时为空
     RecordingTranscriptSettingsList:
       type: object
       properties:
@@ -1311,6 +1321,12 @@ components:
       properties:
         enable:
           type: boolean
+        modelId:
+          type: string
+          description: >-
+            绑定的转写模型 ID；enable=true 时必填且须指向已启用模型，否则 400；
+            enable=false 时可省略
+
     RecordingTranscriptSettingsUpdateResponse:
       type: object
       required: [roomId, enabled]
@@ -1417,9 +1433,10 @@ components:
         type:
           type: string
           enum: [streaming]
+        model:
+          type: string
+          description: 实际发给服务商的模型 ID，如 fun-asr-realtime
         enabled:
-          type: boolean
-        isDefault:
           type: boolean
         maxConcurrency:
           type: integer
@@ -1436,7 +1453,7 @@ components:
             $ref: "#/components/schemas/RecordingTranscriptModel"
     RecordingTranscriptModelCreateRequest:
       type: object
-      required: [name, provider, type, apiKey]
+      required: [name, provider, type, apiKey, model]
       properties:
         name:
           type: string
@@ -1448,12 +1465,12 @@ components:
           enum: [streaming]
         apiKey:
           type: string
+        model:
+          type: string
+          description: 实际发给服务商的模型 ID，如 fun-asr-realtime
         enabled:
           type: boolean
           default: true
-        isDefault:
-          type: boolean
-          default: false
         maxConcurrency:
           type: integer
           format: int32
@@ -1463,8 +1480,9 @@ components:
       properties:
         enabled:
           type: boolean
-        isDefault:
-          type: boolean
+        model:
+          type: string
+          description: 实际发给服务商的模型 ID
         maxConcurrency:
           type: integer
           format: int32
