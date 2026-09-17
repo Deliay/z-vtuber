@@ -98,6 +98,8 @@ public class RecordingsArchiveController(
         }
         else if (!string.IsNullOrWhiteSpace(request.ModelId) && ObjectId.TryParse(request.ModelId, out var parsedBound))
         {
+            // enable=false：Plan 口径为「仅更新开关」，此分支允许顺带改绑但不校验模型状态；
+            // 再次开启时（enable=true）仍会强制校验 modelId 指向已启用模型。
             boundModelId = parsedBound;
         }
 
