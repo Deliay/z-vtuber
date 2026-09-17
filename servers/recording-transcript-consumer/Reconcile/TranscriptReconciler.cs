@@ -8,7 +8,8 @@ namespace Z.Vtuber.RecordingTranscript.Consumer.Reconcile;
 /// <summary>
 /// 对账补建（事件 fire-and-forget 兜底，5min 周期 + 抖动）：
 /// (a) 开播中漏建：recording_status.state=recording + 已启用 + 当前场次无任务 → 补建 live PENDING；
-/// (b) 结束后漏建：recordings.EndedAt != null + 已启用 + 无该 recording+默认模型任务 → 补建 file PENDING。
+/// (b) 结束后漏建：recordings.EndedAt != null + 已启用 + 无该 recording+设置绑定模型（ModelId）任务 → 补建 file PENDING。
+/// 未绑定模型（待完善）或绑定模型不存在/被禁用的 roomId 跳过并记 Warn。
 /// 仅补「启用之后」开播/结束的场次；与唯一索引配合幂等。
 /// </summary>
 public sealed class TranscriptReconciler(

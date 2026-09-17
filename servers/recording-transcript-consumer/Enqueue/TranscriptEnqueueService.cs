@@ -27,7 +27,7 @@ public sealed class TranscriptEnqueueService(
     TranscriptAutoEnqueueRepository autoEnqueue,
     ILogger<TranscriptEnqueueService> logger)
 {
-    /// <summary>开播自动建 mode=live 任务；未启用自动识别、无默认模型或非启用后场次时返回 null。</summary>
+    /// <summary>开播自动建 mode=live 任务；未启用自动识别、未绑定模型（待完善）/绑定模型不存在或被禁用、或非启用后场次时返回 null。</summary>
     public async Task<ObjectId?> EnqueueForStartedAsync(RecordingStartedEvent evt, CancellationToken ct = default)
     {
         var setting = await autoEnqueue.GetByRoomIdAsync(evt.RoomId, ct);
