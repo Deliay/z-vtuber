@@ -16,9 +16,10 @@ public sealed class TranscriptModelRecord
 
     public string ApiKey { get; set; } = string.Empty;
 
-    public bool Enabled { get; set; }
+    /// <summary>实际发给服务商的模型 ID（如 fun-asr-realtime）。</summary>
+    public string Model { get; set; } = string.Empty;
 
-    public bool IsDefault { get; set; }
+    public bool Enabled { get; set; }
 
     public int MaxConcurrency { get; set; }
 

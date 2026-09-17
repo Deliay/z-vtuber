@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Z.Vtuber.Common.Live;
 using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Common.Persistence;
@@ -455,7 +456,8 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var textIndexCollection = database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
 
         // 筛选弹幕和醒目留言事件
-        var typeFilter = Builders<LiveEventRecord>.Filter.In(e => e.Type, new[] { "danmaku", "super_chat" });
+        var typeFilter = Builders<LiveEventRecord>.Filter.In(
+            e => e.Type, new[] { LiveEventTextTypes.Danmaku, LiveEventTextTypes.SuperChat });
 
         // 使用基于 _id 的游标分页，避免死循环
         MongoDB.Bson.ObjectId lastId = MongoDB.Bson.ObjectId.Empty;
@@ -562,7 +564,8 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         var textIndexCollection = database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
 
         // 筛选弹幕和醒目留言事件
-        var typeFilter = Builders<LiveEventRecord>.Filter.In(e => e.Type, new[] { "danmaku", "super_chat" });
+        var typeFilter = Builders<LiveEventRecord>.Filter.In(
+            e => e.Type, new[] { LiveEventTextTypes.Danmaku, LiveEventTextTypes.SuperChat });
 
         // 使用基于 _id 的游标分页，避免死循环
         MongoDB.Bson.ObjectId lastId = MongoDB.Bson.ObjectId.Empty;
@@ -972,18 +975,6 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await segments.Indexes.CreateOneAsync(
             new CreateIndexModel<TranscriptSegmentRecord>(
                 segmentKeys, new CreateIndexOptions { Unique = true, Name = "TaskId_1_StartTime_1" }),
-            cancellationToken: ct);
-
-        var models = database.GetCollection<TranscriptModelRecord>(MongoCollectionNames.TranscriptModels);
-        var modelKeys = Builders<TranscriptModelRecord>.IndexKeys.Ascending(m => m.IsDefault);
-        var modelOptions = new CreateIndexOptions<TranscriptModelRecord>
-        {
-            Unique = true,
-            Name = "IsDefault_1",
-            PartialFilterExpression = Builders<TranscriptModelRecord>.Filter.Eq(m => m.IsDefault, true),
-        };
-        await models.Indexes.CreateOneAsync(
-            new CreateIndexModel<TranscriptModelRecord>(modelKeys, modelOptions),
             cancellationToken: ct);
 
         var autoEnqueue = database.GetCollection<TranscriptAutoEnqueueRecord>(MongoCollectionNames.TranscriptAutoEnqueue);

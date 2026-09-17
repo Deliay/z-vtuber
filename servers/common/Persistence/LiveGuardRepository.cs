@@ -88,6 +88,14 @@ public sealed class LiveGuardRepository(IMongoDatabase database)
         return items.Select(e => e.Entry).ToList();
     }
 
+    /// <summary>按 RoomId 取最新一天（Date 最大）的舰长快照；无快照返回 null。命中 RoomId_1_Date_1 索引。</summary>
+    public async Task<LiveGuardRecord?> GetLatestSnapshotByRoomIdAsync(long roomId, CancellationToken ct = default)
+    {
+        var filter = Builders<LiveGuardRecord>.Filter.Eq(r => r.RoomId, roomId);
+        var sort = Builders<LiveGuardRecord>.Sort.Descending(r => r.Date);
+        return await _collection.Find(filter).Sort(sort).Limit(1).FirstOrDefaultAsync(ct);
+    }
+
     public async Task<IReadOnlyList<long>> GetDistinctMidsAsync(CancellationToken ct = default)
     {
         var filter = Builders<LiveGuardRecord>.Filter.Empty;
