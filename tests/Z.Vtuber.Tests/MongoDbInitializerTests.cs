@@ -649,6 +649,152 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
         Assert.Single(sessionNames, n => n == "CookieId_1");
     }
 
+    [Fact]
+    public async Task CleanupTranscriptModelIsDefault_UnsetsField_AndPreservesOtherFields()
+    {
+        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var legacyTrueId = ObjectId.GenerateNewId();
+        var legacyFalseId = ObjectId.GenerateNewId();
+        var untouchedId = ObjectId.GenerateNewId();
+        await collection.InsertManyAsync(
+        [
+            new BsonDocument
+            {
+                { "_id", legacyTrueId },
+                { "Name", "model-a" },
+                { "Provider", "ali-fun-asr" },
+                { "Type", "streaming" },
+                { "ApiKey", "key-a" },
+                { "Model", "fun-asr-realtime" },
+                { "Enabled", true },
+                { "MaxConcurrency", 2 },
+                { "IsDefault", true },
+            },
+            new BsonDocument
+            {
+                { "_id", legacyFalseId },
+                { "Name", "model-b" },
+                { "Model", "paraformer-realtime-v2" },
+                { "Enabled", false },
+                { "IsDefault", false },
+            },
+            new BsonDocument
+            {
+                { "_id", untouchedId },
+                { "Name", "model-c" },
+                { "Model", "fun-asr-realtime" },
+                { "Enabled", true },
+            },
+        ]);
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.CleanupTranscriptModelIsDefaultAsync();
+
+        var legacyTrue = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", legacyTrueId)).FirstAsync();
+        Assert.False(legacyTrue.Contains("IsDefault"));
+        Assert.Equal("model-a", legacyTrue["Name"].AsString);
+        Assert.Equal("key-a", legacyTrue["ApiKey"].AsString);
+        Assert.Equal("fun-asr-realtime", legacyTrue["Model"].AsString);
+        Assert.True(legacyTrue["Enabled"].AsBoolean);
+        Assert.Equal(2, legacyTrue["MaxConcurrency"].AsInt32);
+
+        var legacyFalse = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", legacyFalseId)).FirstAsync();
+        Assert.False(legacyFalse.Contains("IsDefault"));
+        Assert.Equal("model-b", legacyFalse["Model"].AsString);
+
+        var untouched = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", untouchedId)).FirstAsync();
+        Assert.Equal("model-c", untouched["Name"].AsString);
+        Assert.Equal(3, await collection.CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty));
+    }
+
+    [Fact]
+    public async Task CleanupTranscriptModelIsDefault_IsIdempotent_AndWritesMarkerOnce()
+    {
+        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var id = ObjectId.GenerateNewId();
+        await collection.InsertOneAsync(new BsonDocument
+        {
+            { "_id", id },
+            { "Name", "model-a" },
+            { "IsDefault", true },
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.CleanupTranscriptModelIsDefaultAsync();
+        await initializer.CleanupTranscriptModelIsDefaultAsync();
+
+        var record = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).FirstAsync();
+        Assert.False(record.Contains("IsDefault"));
+        Assert.Equal(1, await collection.CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty));
+
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        Assert.Equal(1, await meta.CountDocumentsAsync(
+            r => r.Key == MongoDbInitializer.TranscriptModelIsDefaultCleanupMigrationKey));
+    }
+
+    [Fact]
+    public async Task CleanupTranscriptModelIsDefault_Marker_PreventsRerun()
+    {
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        await meta.InsertOneAsync(new MetaRecord
+        {
+            Key = MongoDbInitializer.TranscriptModelIsDefaultCleanupMigrationKey,
+        });
+
+        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var id = ObjectId.GenerateNewId();
+        await collection.InsertOneAsync(new BsonDocument
+        {
+            { "_id", id },
+            { "Name", "model-a" },
+            { "IsDefault", true },
+        });
+
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.CleanupTranscriptModelIsDefaultAsync();
+
+        var record = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).FirstAsync();
+        Assert.True(record.Contains("IsDefault"));
+    }
+
+    [Fact]
+    public async Task CleanupTranscriptModelIsDefault_EmptyCollection_MarksApplied()
+    {
+        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        await initializer.CleanupTranscriptModelIsDefaultAsync();
+
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        Assert.True(await meta.Find(
+            r => r.Key == MongoDbInitializer.TranscriptModelIsDefaultCleanupMigrationKey).AnyAsync());
+    }
+
+    [Fact]
+    public async Task CleanupTranscriptModelIsDefault_ConcurrentRuns_DoNotThrowDuplicateKey()
+    {
+        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var id = ObjectId.GenerateNewId();
+        await collection.InsertOneAsync(new BsonDocument
+        {
+            { "_id", id },
+            { "Name", "model-a" },
+            { "IsDefault", true },
+        });
+
+        var initializerA = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializerB = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+
+        await Task.WhenAll(
+            initializerA.CleanupTranscriptModelIsDefaultAsync(),
+            initializerB.CleanupTranscriptModelIsDefaultAsync());
+
+        var record = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).FirstAsync();
+        Assert.False(record.Contains("IsDefault"));
+
+        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        Assert.Equal(1, await meta.CountDocumentsAsync(
+            r => r.Key == MongoDbInitializer.TranscriptModelIsDefaultCleanupMigrationKey));
+    }
+
     private static async Task<List<string>> ListIndexNamesAsync<T>(IMongoCollection<T> collection)
     {
         using var cursor = await collection.Indexes.ListAsync();
