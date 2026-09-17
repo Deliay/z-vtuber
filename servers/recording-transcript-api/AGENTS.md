@@ -25,7 +25,7 @@ graph LR
 - `Sse/`：`TranscriptSegmentStream`（先 replay 全量 segments，再订阅 Redis `transcript-segment:{taskId}` 转发；以 `start` 去重；15s 心跳注释；任务终态推 `done` 事件并关闭）
 - `Contracts/`：`Dtos.cs`（请求/响应 record，字段 JSON 名小驼峰）、`TranscriptMapping.cs`（实体 → DTO 映射）
 - `Configuration/`：`TranscriptApiOptions`（节 `TranscriptApi`，`MaxPageSize`(200)）
-- `Program.cs`：注册 Mongo/Redis/Options/仓储/`TranscriptSegmentStream`/Controllers，启动幂等索引初始化，`/health` + `MapControllers()`
+- `Program.cs`：注册 Mongo/Redis/Options/仓储/`TranscriptSegmentStream`/Controllers，启动幂等索引初始化 + 清理 `transcript_models` 存量 `IsDefault` 字段迁移（`CleanupTranscriptModelIsDefaultAsync`），`/health` + `MapControllers()`
 - `MongoDbHealthCheck.cs`：与 crawler 同模式
 - `Properties/launchSettings.json`：本地 8084
 - `Dockerfile`：两阶段构建（纯 aspnet 运行时，`EXPOSE 8080`）

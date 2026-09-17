@@ -664,6 +664,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
 
     public const string SubscriptionTypeSplitMigrationKey = "subscription_type_split_v1";
     public const string CookieInvalidEventTypeSplitMigrationKey = "cookie_invalid_platform_split_v1";
+    public const string TranscriptModelIsDefaultCleanupMigrationKey = "transcript_model_isdefault_cleanup_v1";
 
     public async Task MigrateSubscriptionTypeSplitAsync(CancellationToken ct = default)
     {
@@ -1067,6 +1068,33 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         // 使用 upsert 避免重复键错误（回滚场景 / 双服务并发）
         await MarkMigrationAppliedAsync(CookieInvalidEventTypeSplitMigrationKey, ct);
         logger.LogInformation("Cookie invalid event type split migration completed and marked as applied.");
+    }
+
+    // 清理 transcript_models 存量文档中已废弃的 IsDefault 元素：该字段已从实体移除，
+    // 残留元素会使 BsonClassMapSerializer 抛 FormatException（本次线上故障根因）。
+    // 用 BsonDocument 级 filter/update，因为强类型无法表达未映射字段。
+    public async Task CleanupTranscriptModelIsDefaultAsync(CancellationToken ct = default)
+    {
+        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == TranscriptModelIsDefaultCleanupMigrationKey)
+            .AnyAsync(ct);
+        if (markerExists)
+        {
+            logger.LogInformation("Transcript model IsDefault cleanup already applied; skipping.");
+            return;
+        }
+
+        var collection = database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var filter = Builders<BsonDocument>.Filter.Exists("IsDefault", true);
+        var update = Builders<BsonDocument>.Update.Unset("IsDefault");
+        var result = await collection.UpdateManyAsync(filter, update, cancellationToken: ct);
+
+        logger.LogInformation(
+            "Transcript model IsDefault cleanup matched {Matched} and modified {Modified} documents.",
+            result.MatchedCount, result.ModifiedCount);
+
+        await MarkMigrationAppliedAsync(TranscriptModelIsDefaultCleanupMigrationKey, ct);
+        logger.LogInformation("Transcript model IsDefault cleanup completed and marked as applied.");
     }
 }
 
