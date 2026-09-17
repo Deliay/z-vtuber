@@ -15,7 +15,6 @@ public sealed class TranscriptReconciler(
     RecordingStatusRepository statuses,
     RecordingRepository recordings,
     TranscriptAutoEnqueueRepository autoEnqueue,
-    TranscriptModelRepository models,
     TranscriptTaskRepository tasks,
     TranscriptEnqueueService enqueue,
     TranscriptConsumerOptions options,
@@ -70,14 +69,15 @@ public sealed class TranscriptReconciler(
             return;
         }
 
-        var model = await models.GetDefaultAsync(ct);
-        if (model is null || !model.Enabled)
-        {
-            return;
-        }
-
         foreach (var setting in settings)
         {
+            var model = await enqueue.ResolveSettingModelAsync(setting, "reconcile", ct);
+            if (model is null)
+            {
+                // 未绑定（待完善）或模型不存在/被禁用：跳过该 roomId，不补建
+                continue;
+            }
+
             await ReconcileRoomAsync(setting, model, ct);
         }
     }

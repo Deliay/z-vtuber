@@ -20,8 +20,31 @@ internal static class FunAsrProtocol
     public const string EventTaskFinished = "task-finished";
     public const string EventTaskFailed = "task-failed";
 
-    public static string BuildRunTask(string taskId, string model)
+    public static string BuildRunTask(string taskId, string model, IReadOnlyList<string>? context = null)
     {
+        object input;
+        if (context is { Count: > 0 })
+        {
+            input = new
+            {
+                context = new[]
+                {
+                    new
+                    {
+                        role = "user",
+                        content = new[]
+                        {
+                            new { type = "input_text", text = string.Join("\n", context) },
+                        },
+                    },
+                },
+            };
+        }
+        else
+        {
+            input = new { };
+        }
+
         var payload = new
         {
             header = new { action = ActionRunTask, task_id = taskId, streaming = "duplex" },
@@ -32,7 +55,7 @@ internal static class FunAsrProtocol
                 function = "recognition",
                 model,
                 parameters = new { format = "pcm", sample_rate = 16000 },
-                input = new { },
+                input,
             },
         };
         return JsonSerializer.Serialize(payload);

@@ -3,6 +3,7 @@ using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.RecordingTranscript.Consumer.Asr;
 using Z.Vtuber.RecordingTranscript.Consumer.Audio;
+using Z.Vtuber.RecordingTranscript.Consumer.Context;
 using Z.Vtuber.RecordingTranscript.Consumer.Enqueue;
 using Z.Vtuber.RecordingTranscript.Consumer.Services;
 
@@ -33,6 +34,7 @@ public sealed class TranscriptTaskRunner(
     IRecordingServiceClient recordingClient,
     IAudioSourceFactory audioFactory,
     IStreamingAsrServiceFactory asrFactory,
+    ITranscriptContextBuilder contextBuilder,
     ITranscriptSegmentPersister persister,
     ITranscriptSegmentPublisher publisher,
     ILogger<TranscriptTaskRunner> logger) : ITranscriptTaskRunner
@@ -92,7 +94,21 @@ public sealed class TranscriptTaskRunner(
                 source = await CreateFileSourceAsync(resolvedFile, task, ct);
             }
 
-            var asr = asrFactory.Create(offset, model.ApiKey);
+            // 识别上下文按任务启动时的数据快照组装；recording 缺失时降级为空上下文继续识别
+            IReadOnlyList<string> context;
+            if (recording is not null)
+            {
+                context = await contextBuilder.BuildAsync(recording, ct);
+            }
+            else
+            {
+                logger.LogWarning(
+                    "Recording {RecordingId} not found for transcript task {TaskId}; proceeding without context",
+                    task.RecordingId, task.Id);
+                context = [];
+            }
+
+            var asr = asrFactory.Create(model, offset, context);
             await foreach (var segment in asr.TranscribeAsync(source.Audio, ct).WithCancellation(ct))
             {
                 if (!await OwnsLockAsync(handle, task, ct))
