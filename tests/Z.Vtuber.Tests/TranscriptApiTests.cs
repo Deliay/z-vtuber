@@ -498,6 +498,66 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
             new TranscriptModelCreateRequest("model", "ali-fun-asr", "streaming", "key", "  ", true, 1)));
     }
 
+    private async Task<ObjectId> SeedLegacyModelDocAsync(string name)
+    {
+        var id = ObjectId.GenerateNewId();
+        var collection = mongo.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        await collection.InsertOneAsync(new BsonDocument
+        {
+            { "_id", id },
+            { "Name", name },
+            { "Provider", "ali-fun-asr" },
+            { "Type", "streaming" },
+            { "ApiKey", "super-secret" },
+            { "Model", "fun-asr-realtime" },
+            { "Enabled", true },
+            { "MaxConcurrency", 1 },
+            { "CreatedAt", DateTime.UtcNow },
+            { "IsDefault", true },
+            { "LegacyUnknownField", "legacy-value" },
+        });
+        return id;
+    }
+
+    [Fact]
+    public async Task Models_LegacyDocWithUnknownFields_ListsWithMappedFields()
+    {
+        await SeedLegacyModelDocAsync("legacy-model");
+
+        var json = Ok(await CreateModelsController().List());
+
+        var item = Assert.Single(json.GetProperty("items").EnumerateArray());
+        Assert.Equal("legacy-model", item.GetProperty("name").GetString());
+        Assert.Equal("fun-asr-realtime", item.GetProperty("model").GetString());
+        Assert.False(item.TryGetProperty("isDefault", out _));
+        Assert.False(item.TryGetProperty("apiKey", out _));
+    }
+
+    [Fact]
+    public async Task ListTasks_LegacyModelDoc_Returns200AndMapsModelName()
+    {
+        var recording = await SeedEndedRecordingAsync(700090, 555, "场次", "[RAW] a.flv");
+        var modelId = await SeedLegacyModelDocAsync("legacy-model");
+        await SeedTaskAsync(recording.Id, modelId, 700090);
+
+        var json = Ok(await CreateTasksController().ListTasks(roomId: 700090));
+
+        var item = Assert.Single(json.GetProperty("items").EnumerateArray());
+        Assert.Equal("legacy-model", item.GetProperty("modelName").GetString());
+    }
+
+    [Fact]
+    public async Task Settings_LegacyModelDoc_Returns200AndMapsModelName()
+    {
+        var modelId = await SeedLegacyModelDocAsync("legacy-model");
+        await AutoEnqueue.UpsertAsync(700091, 555, enabled: true, modelId);
+
+        var json = Ok(await CreateSettingsController().ListSettings());
+
+        var item = Assert.Single(json.GetProperty("items").EnumerateArray());
+        Assert.Equal("legacy-model", item.GetProperty("modelName").GetString());
+    }
+
     [Fact]
     public async Task Settings_ListJoinsAnchorName()
     {
