@@ -38,8 +38,8 @@ public class RecordingStartedSubscriberTests(MongoDbFixture mongo, RedisFixture 
             Provider = "ali-fun-asr",
             Type = "streaming",
             ApiKey = "key",
+            Model = "fun-asr-realtime",
             Enabled = true,
-            IsDefault = true,
             MaxConcurrency = 2,
             CreatedAt = DateTime.UtcNow,
         });
@@ -59,7 +59,7 @@ public class RecordingStartedSubscriberTests(MongoDbFixture mongo, RedisFixture 
     public async Task Started_Enabled_CreatesLiveAutoTask()
     {
         var modelId = await SeedDefaultModelAsync(Models);
-        await AutoEnqueue.UpsertAsync(300, 301, enabled: true);
+        await AutoEnqueue.UpsertAsync(300, 301, enabled: true, modelId);
         var recordingId = await SeedRecordingAsync(Recordings, 300);
 
         var evt = new RecordingStartedEvent(
@@ -89,8 +89,8 @@ public class RecordingStartedSubscriberTests(MongoDbFixture mongo, RedisFixture 
     [Fact]
     public async Task Started_Duplicate_IsIdempotent()
     {
-        await SeedDefaultModelAsync(Models);
-        await AutoEnqueue.UpsertAsync(304, 305, enabled: true);
+        var modelId = await SeedDefaultModelAsync(Models);
+        await AutoEnqueue.UpsertAsync(304, 305, enabled: true, modelId);
         var recordingId = await SeedRecordingAsync(Recordings, 304);
 
         var evt = new RecordingStartedEvent(

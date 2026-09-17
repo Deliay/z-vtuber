@@ -51,7 +51,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
             new TranscriptSegmentStream(Segments, Tasks, redis.Connection, NullLogger<TranscriptSegmentStream>.Instance)));
 
     private TranscriptSettingsController CreateSettingsController() =>
-        WithContext(new TranscriptSettingsController(AutoEnqueue, AccountInfo));
+        WithContext(new TranscriptSettingsController(AutoEnqueue, Models, AccountInfo));
 
     private TranscriptModelsController CreateModelsController() =>
         WithContext(new TranscriptModelsController(Models));
@@ -91,7 +91,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     }
 
     private async Task<TranscriptModelRecord> SeedModelAsync(
-        string name = "qwen-fun-asr", bool enabled = true, bool isDefault = false)
+        string name = "qwen-fun-asr", bool enabled = true)
     {
         var model = new TranscriptModelRecord
         {
@@ -99,8 +99,8 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
             Provider = "ali-fun-asr",
             Type = "streaming",
             ApiKey = "super-secret",
+            Model = "fun-asr-realtime",
             Enabled = enabled,
-            IsDefault = isDefault,
             MaxConcurrency = 1,
             CreatedAt = DateTime.UtcNow,
         };
@@ -183,12 +183,13 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     }
 
     [Fact]
-    public async Task UpdateSettings_UpsertsWithResolvedMid()
+    public async Task UpdateSettings_UpsertsWithResolvedMid_AndBindsModel()
     {
         await SeedRecordingAsync(700020, 444, "场次", "[RAW] a.flv");
+        var model = await SeedModelAsync();
 
         var result = await CreateArchiveController()
-            .UpdateSettings(700020, new TranscriptSettingsUpdateRequest(true));
+            .UpdateSettings(700020, new TranscriptSettingsUpdateRequest(true, model.Id.ToString()));
 
         var json = Ok(result);
         Assert.Equal(700020, json.GetProperty("roomId").GetInt64());
@@ -198,6 +199,79 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
         Assert.NotNull(stored);
         Assert.Equal(444, stored!.Mid);
         Assert.True(stored.Enabled);
+        Assert.Equal(model.Id, stored.ModelId);
+    }
+
+    [Fact]
+    public async Task UpdateSettings_EnableWithoutModelId_Returns400()
+    {
+        await SeedRecordingAsync(700021, 445, "场次", "[RAW] a.flv");
+
+        var result = await CreateArchiveController()
+            .UpdateSettings(700021, new TranscriptSettingsUpdateRequest(true, null));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Null(await AutoEnqueue.GetByRoomIdAsync(700021));
+    }
+
+    [Fact]
+    public async Task UpdateSettings_EnableWithUnknownModel_Returns400()
+    {
+        await SeedRecordingAsync(700022, 446, "场次", "[RAW] a.flv");
+
+        var result = await CreateArchiveController()
+            .UpdateSettings(700022, new TranscriptSettingsUpdateRequest(true, ObjectId.GenerateNewId().ToString()));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Null(await AutoEnqueue.GetByRoomIdAsync(700022));
+    }
+
+    [Fact]
+    public async Task UpdateSettings_EnableWithDisabledModel_Returns400()
+    {
+        await SeedRecordingAsync(700023, 447, "场次", "[RAW] a.flv");
+        var disabled = await SeedModelAsync(enabled: false);
+
+        var result = await CreateArchiveController()
+            .UpdateSettings(700023, new TranscriptSettingsUpdateRequest(true, disabled.Id.ToString()));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task UpdateSettings_DisableWithoutModelId_Succeeds()
+    {
+        var recording = await SeedRecordingAsync(700024, 448, "场次", "[RAW] a.flv");
+        var model = await SeedModelAsync();
+        await AutoEnqueue.UpsertAsync(700024, recording.Mid, enabled: true, model.Id);
+
+        var result = await CreateArchiveController()
+            .UpdateSettings(700024, new TranscriptSettingsUpdateRequest(false, null));
+
+        Assert.IsType<OkObjectResult>(result);
+        var stored = await AutoEnqueue.GetByRoomIdAsync(700024);
+        Assert.False(stored!.Enabled);
+        // 关闭时未传 modelId：保留原绑定
+        Assert.Equal(model.Id, stored.ModelId);
+    }
+
+    [Fact]
+    public async Task Settings_ListExposesModelBinding()
+    {
+        var model = await SeedModelAsync();
+        await AutoEnqueue.UpsertAsync(700025, 449, enabled: true, model.Id);
+        await AutoEnqueue.UpsertAsync(700026, 450, enabled: true);
+
+        var json = Ok(await CreateSettingsController().ListSettings());
+        var items = json.GetProperty("items").EnumerateArray().ToArray();
+
+        var bound = items.Single(i => i.GetProperty("roomId").GetInt64() == 700025);
+        Assert.Equal(model.Id.ToString(), bound.GetProperty("modelId").GetString());
+        Assert.Equal("qwen-fun-asr", bound.GetProperty("modelName").GetString());
+
+        var unbound = items.Single(i => i.GetProperty("roomId").GetInt64() == 700026);
+        Assert.Equal(JsonValueKind.Null, unbound.GetProperty("modelId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, unbound.GetProperty("modelName").ValueKind);
     }
 
     [Fact]
@@ -366,53 +440,46 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     }
 
     [Fact]
-    public async Task Models_NeverExposeApiKey_AndDefaultSwitchIsAtomic()
+    public async Task Models_NeverExposeApiKeyOrIsDefault_AndExposeModel()
     {
         var controller = CreateModelsController();
 
         var first = Ok(await controller.Create(new TranscriptModelCreateRequest(
-            "model-a", "ali-fun-asr", "streaming", "key-a", true, true, 2)));
-        var firstId = ObjectId.Parse(first.GetProperty("id").GetString());
-        Assert.True(first.GetProperty("isDefault").GetBoolean());
+            "model-a", "ali-fun-asr", "streaming", "key-a", "fun-asr-realtime", true, 2)));
         Assert.False(first.TryGetProperty("apiKey", out _));
+        Assert.False(first.TryGetProperty("isDefault", out _));
+        Assert.Equal("fun-asr-realtime", first.GetProperty("model").GetString());
 
         var second = Ok(await controller.Create(new TranscriptModelCreateRequest(
-            "model-b", "ali-fun-asr", "streaming", "key-b", true, true, 4)));
-        var secondId = ObjectId.Parse(second.GetProperty("id").GetString());
+            "model-b", "ali-fun-asr", "streaming", "key-b", "paraformer-realtime-v2", true, 4)));
 
         var list = Ok(await controller.List());
         var items = list.GetProperty("items").EnumerateArray().ToArray();
         Assert.Equal(2, items.Length);
         Assert.All(items, i => Assert.False(i.TryGetProperty("apiKey", out _)));
-
-        var storedFirst = await Models.GetByIdAsync(firstId);
-        var storedSecond = await Models.GetByIdAsync(secondId);
-        Assert.False(storedFirst!.IsDefault);
-        Assert.True(storedSecond!.IsDefault);
-
-        var defaultModel = await Models.GetDefaultAsync();
-        Assert.Equal(secondId, defaultModel!.Id);
+        Assert.All(items, i => Assert.False(i.TryGetProperty("isDefault", out _)));
+        Assert.Contains(items, i => i.GetProperty("model").GetString() == "paraformer-realtime-v2");
     }
 
     [Fact]
-    public async Task Models_UpdateTogglesEnabledAndDefaultAndKeepsApiKey()
+    public async Task Models_UpdateTogglesEnabledAndModelAndKeepsApiKey()
     {
         var controller = CreateModelsController();
         var first = Ok(await controller.Create(new TranscriptModelCreateRequest(
-            "model-a", "ali-fun-asr", "streaming", "key-a", true, true, 2)));
+            "model-a", "ali-fun-asr", "streaming", "key-a", "fun-asr-realtime", true, 2)));
         var second = Ok(await controller.Create(new TranscriptModelCreateRequest(
-            "model-b", "ali-fun-asr", "streaming", "key-b", true, false, 1)));
+            "model-b", "ali-fun-asr", "streaming", "key-b", "fun-asr-realtime", true, 1)));
         var firstId = first.GetProperty("id").GetString()!;
         var secondId = second.GetProperty("id").GetString()!;
 
         var updated = Ok(await controller.Update(secondId,
-            new TranscriptModelUpdateRequest(Enabled: false, IsDefault: true, MaxConcurrency: 7, ApiKey: null)));
+            new TranscriptModelUpdateRequest(Enabled: false, Model: "paraformer-realtime-v2", MaxConcurrency: 7, ApiKey: null)));
         Assert.False(updated.GetProperty("enabled").GetBoolean());
-        Assert.True(updated.GetProperty("isDefault").GetBoolean());
+        Assert.Equal("paraformer-realtime-v2", updated.GetProperty("model").GetString());
         Assert.Equal(7, updated.GetProperty("maxConcurrency").GetInt32());
         Assert.False(updated.TryGetProperty("apiKey", out _));
 
-        Assert.False((await Models.GetByIdAsync(ObjectId.Parse(firstId)))!.IsDefault);
+        Assert.Equal("fun-asr-realtime", (await Models.GetByIdAsync(ObjectId.Parse(firstId)))!.Model);
         Assert.Equal("key-b", (await Models.GetByIdAsync(ObjectId.Parse(secondId)))!.ApiKey);
     }
 
@@ -422,9 +489,13 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
         var controller = CreateModelsController();
 
         Assert.IsType<BadRequestObjectResult>(await controller.Create(
-            new TranscriptModelCreateRequest(null, "ali-fun-asr", "streaming", "key", true, false, 1)));
+            new TranscriptModelCreateRequest(null, "ali-fun-asr", "streaming", "key", "fun-asr-realtime", true, 1)));
         Assert.IsType<BadRequestObjectResult>(await controller.Create(
-            new TranscriptModelCreateRequest("model", "ali-fun-asr", "streaming", null, true, false, 1)));
+            new TranscriptModelCreateRequest("model", "ali-fun-asr", "streaming", null, "fun-asr-realtime", true, 1)));
+        Assert.IsType<BadRequestObjectResult>(await controller.Create(
+            new TranscriptModelCreateRequest("model", "ali-fun-asr", "streaming", "key", null, true, 1)));
+        Assert.IsType<BadRequestObjectResult>(await controller.Create(
+            new TranscriptModelCreateRequest("model", "ali-fun-asr", "streaming", "key", "  ", true, 1)));
     }
 
     [Fact]

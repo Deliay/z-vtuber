@@ -3,6 +3,7 @@ using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.RecordingTranscript.Consumer.Asr;
 using Z.Vtuber.RecordingTranscript.Consumer.Audio;
+using Z.Vtuber.RecordingTranscript.Consumer.Context;
 using Z.Vtuber.RecordingTranscript.Consumer.Services;
 using Z.Vtuber.RecordingTranscript.Consumer.Tasks;
 
@@ -95,13 +96,29 @@ public sealed class FakeStreamingAsrServiceFactory : IStreamingAsrServiceFactory
 {
     public List<long> Offsets { get; } = [];
     public List<string> ApiKeys { get; } = [];
+    public List<TranscriptModelRecord> Models { get; } = [];
+    public List<IReadOnlyList<string>> Contexts { get; } = [];
     public Func<long, IStreamingAsrService>? Provider { get; set; }
 
-    public IStreamingAsrService Create(long offset, string apiKey)
+    public IStreamingAsrService Create(TranscriptModelRecord model, long offset, IReadOnlyList<string> context)
     {
+        Models.Add(model);
         Offsets.Add(offset);
-        ApiKeys.Add(apiKey);
+        ApiKeys.Add(model.ApiKey);
+        Contexts.Add(context);
         return Provider?.Invoke(offset) ?? new FakeStreamingAsrService([]);
+    }
+}
+
+public sealed class FakeTranscriptContextBuilder : ITranscriptContextBuilder
+{
+    public IReadOnlyList<string> Result { get; set; } = [];
+    public List<RecordingRecord> Built { get; } = [];
+
+    public Task<IReadOnlyList<string>> BuildAsync(RecordingRecord recording, CancellationToken ct = default)
+    {
+        Built.Add(recording);
+        return Task.FromResult(Result);
     }
 }
 

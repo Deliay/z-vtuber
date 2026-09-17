@@ -5,6 +5,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.RecordingTranscript.Consumer.Asr;
 using Z.Vtuber.RecordingTranscript.Consumer.Audio;
 using Z.Vtuber.RecordingTranscript.Consumer.Configuration;
+using Z.Vtuber.RecordingTranscript.Consumer.Context;
 using Z.Vtuber.RecordingTranscript.Consumer.Enqueue;
 using Z.Vtuber.RecordingTranscript.Consumer.Services;
 using Z.Vtuber.RecordingTranscript.Consumer.Tasks;
@@ -32,8 +33,8 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
             Provider = "ali-fun-asr",
             Type = "streaming",
             ApiKey = "key",
+            Model = "fun-asr-realtime",
             Enabled = true,
-            IsDefault = true,
             MaxConcurrency = maxConcurrency,
             CreatedAt = DateTime.UtcNow,
         });
@@ -82,8 +83,10 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
         IAudioSourceFactory audioFactory,
         IStreamingAsrServiceFactory asrFactory,
         ITranscriptSegmentPersister persister,
-        ITranscriptSegmentPublisher publisher) =>
-        new(Tasks, Models, Recordings, recordingClient, audioFactory, asrFactory, persister, publisher,
+        ITranscriptSegmentPublisher publisher,
+        ITranscriptContextBuilder? contextBuilder = null) =>
+        new(Tasks, Models, Recordings, recordingClient, audioFactory, asrFactory,
+            contextBuilder ?? new FakeTranscriptContextBuilder(), persister, publisher,
             NullLogger<TranscriptTaskRunner>.Instance);
 
     private MongoTranscriptSegmentPersister CreatePersister() => new(mongo.Database);
@@ -125,6 +128,30 @@ public class TranscriptTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<Mon
         var segments = await Segments.ListByTaskAsync(taskId);
         Assert.Equal(new[] { 1000L, 2000L, 2500L }, segments.Select(s => s.StartTime).ToArray());
         Assert.Equal(2, publisher.Published.Count);
+    }
+
+    [Fact]
+    public async Task FileMode_BuildsContextAndPassesModelToAsr()
+    {
+        var modelId = await InsertModelAsync();
+        var recordingId = await InsertRecordingAsync(130);
+        var taskId = await InsertTaskAsync(recordingId, modelId, mode: TranscriptTaskModes.File);
+
+        var contextBuilder = new FakeTranscriptContextBuilder { Result = ["主播名", "舰长A"] };
+        var asrFactory = new FakeStreamingAsrServiceFactory
+        {
+            Provider = _ => new FakeStreamingAsrService([new StreamingAsrSegment(0, 500, "a")]),
+        };
+        var runner = CreateRunner(
+            new FakeRecordingServiceClient { LiveAvailable = false },
+            new FakeAudioSourceFactory(), asrFactory, CreatePersister(), new FakeTranscriptSegmentPublisher(),
+            contextBuilder);
+
+        await runner.RunAsync(await Tasks.GetByIdAsync(taskId));
+
+        Assert.Single(contextBuilder.Built);
+        Assert.Equal(new[] { "主播名", "舰长A" }, asrFactory.Contexts[0]);
+        Assert.Equal("fun-asr-realtime", asrFactory.Models[0].Model);
     }
 
     [Fact]

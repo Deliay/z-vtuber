@@ -27,7 +27,7 @@ public class TranscriptEnqueueTests(MongoDbFixture fixture) : IClassFixture<Mong
         AutoEnqueue,
         Microsoft.Extensions.Logging.Abstractions.NullLogger<TranscriptEnqueueService>.Instance);
 
-    private async Task<ObjectId> InsertModelAsync(bool enabled = true, bool isDefault = true, string name = "model")
+    private async Task<ObjectId> InsertModelAsync(bool enabled = true, string name = "model")
     {
         var id = await Models.InsertAsync(new TranscriptModelRecord
         {
@@ -35,8 +35,8 @@ public class TranscriptEnqueueTests(MongoDbFixture fixture) : IClassFixture<Mong
             Provider = "ali-fun-asr",
             Type = "streaming",
             ApiKey = "key-" + name,
+            Model = "fun-asr-realtime",
             Enabled = enabled,
-            IsDefault = isDefault,
             MaxConcurrency = 2,
             CreatedAt = DateTime.UtcNow,
         });
@@ -45,6 +45,10 @@ public class TranscriptEnqueueTests(MongoDbFixture fixture) : IClassFixture<Mong
 
     private async Task<ObjectId> InsertRecordingAsync(
         long roomId, params string[] files) =>
+        await InsertRecordingAsync(roomId, DateTime.UtcNow, files);
+
+    private async Task<ObjectId> InsertRecordingAsync(
+        long roomId, DateTime endedAt, params string[] files) =>
         await Recordings.InsertAsync(new RecordingRecord
         {
             RoomId = roomId,
@@ -52,7 +56,7 @@ public class TranscriptEnqueueTests(MongoDbFixture fixture) : IClassFixture<Mong
             Title = "title",
             Files = [.. files],
             StartedAt = DateTime.UtcNow.AddMinutes(-5),
-            EndedAt = DateTime.UtcNow,
+            EndedAt = endedAt,
             CreatedAt = DateTime.UtcNow,
         });
 
@@ -110,7 +114,7 @@ public class TranscriptEnqueueTests(MongoDbFixture fixture) : IClassFixture<Mong
     [Fact]
     public async Task Manual_DisabledModel_ReturnsError()
     {
-        var modelId = await InsertModelAsync(enabled: false, isDefault: false);
+        var modelId = await InsertModelAsync(enabled: false);
         var recordingId = await InsertRecordingAsync(103, "a.flv");
 
         var result = await Enqueue.EnqueueManualAsync(recordingId, modelId);
@@ -120,11 +124,11 @@ public class TranscriptEnqueueTests(MongoDbFixture fixture) : IClassFixture<Mong
     }
 
     [Fact]
-    public async Task Started_EnabledWithDefaultModel_CreatesLiveAutoTask()
+    public async Task Started_EnabledWithBoundModel_CreatesLiveAutoTask()
     {
-        var defaultModelId = await InsertModelAsync(name: "default");
-        await InsertModelAsync(name: "other", isDefault: false);
-        await AutoEnqueue.UpsertAsync(200, 201, enabled: true);
+        var boundModelId = await InsertModelAsync(name: "bound");
+        await InsertModelAsync(name: "other");
+        await AutoEnqueue.UpsertAsync(200, 201, enabled: true, boundModelId);
         var recordingId = await InsertRecordingAsync(200, "[RAW]a.flv", "[AV1]b.flv");
 
         var evt = new RecordingStartedEvent(
@@ -136,7 +140,7 @@ public class TranscriptEnqueueTests(MongoDbFixture fixture) : IClassFixture<Mong
         Assert.NotNull(task);
         Assert.Equal(TranscriptTaskModes.Live, task!.Mode);
         Assert.Equal(TranscriptTaskSources.Auto, task.Source);
-        Assert.Equal(defaultModelId, task.ModelId);
+        Assert.Equal(boundModelId, task.ModelId);
         Assert.Equal("[RAW]a.flv", task.File);
     }
 
@@ -169,9 +173,9 @@ public class TranscriptEnqueueTests(MongoDbFixture fixture) : IClassFixture<Mong
     }
 
     [Fact]
-    public async Task Started_NoDefaultModel_DoesNotCreateTask()
+    public async Task Started_NoBoundModel_DoesNotCreateTask()
     {
-        await InsertModelAsync(isDefault: false);
+        await InsertModelAsync();
         await AutoEnqueue.UpsertAsync(204, 205, enabled: true);
         var recordingId = await InsertRecordingAsync(204, "a.flv");
 
@@ -180,13 +184,30 @@ public class TranscriptEnqueueTests(MongoDbFixture fixture) : IClassFixture<Mong
         var taskId = await Enqueue.EnqueueForStartedAsync(evt);
 
         Assert.Null(taskId);
+        Assert.Empty(await Tasks.ListAsync(recordingId, null, null, 10));
+    }
+
+    [Fact]
+    public async Task Finished_DisabledBoundModel_DoesNotCreateTask()
+    {
+        var modelId = await InsertModelAsync(enabled: false);
+        await AutoEnqueue.UpsertAsync(208, 209, enabled: true, modelId);
+        var recordingId = await InsertRecordingAsync(208, DateTime.UtcNow.AddMinutes(5), "a.flv");
+        var recording = await Recordings.GetByIdAsync(recordingId);
+        var evt = new RecordingFinishedEvent(
+            recordingId.ToString(), 208, 209, "title", recording!.Files.ToArray(), [], recording.EndedAt!.Value);
+
+        var taskId = await Enqueue.EnqueueForFinishedAsync(evt);
+
+        Assert.Null(taskId);
+        Assert.Empty(await Tasks.ListAsync(recordingId, null, null, 10));
     }
 
     [Fact]
     public async Task Started_IsIdempotent()
     {
-        await InsertModelAsync();
-        await AutoEnqueue.UpsertAsync(206, 207, enabled: true);
+        var modelId = await InsertModelAsync();
+        await AutoEnqueue.UpsertAsync(206, 207, enabled: true, modelId);
         var recordingId = await InsertRecordingAsync(206, "a.flv");
 
         var evt = new RecordingStartedEvent(
