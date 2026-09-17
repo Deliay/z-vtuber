@@ -29,9 +29,9 @@ builder.AddRedisClient("messaging");
 
 builder.Services.AddOptions<CookieServiceOptions>()
     .BindConfiguration(CookieServiceOptions.SectionName)
-    .Validate(o => !string.IsNullOrWhiteSpace(o.BrowserSessionDataDir),
-        "缺少必需配置 BrowserSessionDataDir")
     .ValidateOnStart();
+
+builder.Services.AddSingleton<IValidateOptions<CookieServiceOptions>, CookieServiceOptionsValidator>();
 
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
