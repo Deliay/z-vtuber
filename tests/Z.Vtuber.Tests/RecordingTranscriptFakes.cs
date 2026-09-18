@@ -1,4 +1,7 @@
 using Microsoft.Extensions.Logging;
+using System.Net;
+using System.Text;
+using System.Text.Json;
 using Z.Vtuber.Common.Live;
 using Z.Vtuber.Recording.Recording;
 using Z.Vtuber.RecordingTranscript.Api.Clients;
@@ -41,6 +44,53 @@ public sealed class FakeRecordingFileStatsClient : IRecordingFileStatsClient
         }
 
         return Task.FromResult<IReadOnlyDictionary<(long RoomId, string FileName), RecordingFileStat>>(result);
+    }
+}
+
+/// <summary>
+/// 回显式 file-stats HTTP 处理器：按请求逐文件返回 exists/size，
+/// 记录每批 items 数量用于验证客户端分块；<see cref="Missing"/> 标记不存在文件。
+/// </summary>
+public sealed class EchoRecordingFileStatsHandler : HttpMessageHandler
+{
+    public List<int> BatchItemCounts { get; } = [];
+
+    public HashSet<(long RoomId, string FileName)> Missing { get; } = [];
+
+    public Dictionary<(long RoomId, string FileName), long> Sizes { get; } = [];
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(body);
+        var rooms = doc.RootElement.GetProperty("items").EnumerateArray().ToList();
+        BatchItemCounts.Add(rooms.Count);
+
+        var items = rooms.Select(room =>
+        {
+            var roomId = room.GetProperty("roomId").GetInt64();
+            var files = room.GetProperty("files").EnumerateArray()
+                .Select(file => file.GetString() ?? string.Empty)
+                .Select(name =>
+                {
+                    var exists = !Missing.Contains((roomId, name));
+                    return new
+                    {
+                        name,
+                        exists,
+                        size = exists ? Sizes.GetValueOrDefault((roomId, name)) : (long?)null,
+                    };
+                })
+                .ToArray();
+            return new { roomId, files };
+        }).ToArray();
+
+        var json = JsonSerializer.Serialize(new { items });
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
     }
 }
 

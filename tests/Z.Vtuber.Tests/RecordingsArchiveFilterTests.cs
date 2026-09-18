@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
+using Z.Vtuber.RecordingTranscript.Api.Clients;
 using Z.Vtuber.RecordingTranscript.Api.Configuration;
 using Z.Vtuber.RecordingTranscript.Api.Controllers;
 
@@ -28,10 +29,10 @@ public class RecordingsArchiveFilterTests(MongoDbFixture mongo) : IClassFixture<
     private static readonly IOptions<TranscriptApiOptions> DefaultOptions =
         Options.Create(new TranscriptApiOptions());
 
-    private RecordingsArchiveController CreateController() =>
+    private RecordingsArchiveController CreateController(IRecordingFileStatsClient? fileStats = null) =>
         WithContext(new RecordingsArchiveController(
             DefaultOptions, Recordings, Tasks, Models, AutoEnqueue,
-            AccountInfo, _fileStats, NullLogger<RecordingsArchiveController>.Instance));
+            AccountInfo, fileStats ?? _fileStats, NullLogger<RecordingsArchiveController>.Instance));
 
     private static T WithContext<T>(T controller) where T : ControllerBase
     {
@@ -138,5 +139,28 @@ public class RecordingsArchiveFilterTests(MongoDbFixture mongo) : IClassFixture<
         var items = json.GetProperty("items").EnumerateArray().ToArray();
         var item = Assert.Single(items);
         Assert.Equal(kept.Id.ToString(), item.GetProperty("recordingId").GetString());
+    }
+
+    [Fact]
+    public async Task ListRecordings_LimitBeyondSingleFileStatsRequest_StillFiltersEmptyRecordings()
+    {
+        // limit=120 > recording file-stats 单请求上限 100：客户端需分块，过滤仍须生效
+        var handler = new EchoRecordingFileStatsHandler();
+        handler.Missing.Add((950000, "[RAW] a.flv"));
+        var realClient = new RecordingFileStatsClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://recording/") },
+            NullLogger<RecordingFileStatsClient>.Instance);
+
+        for (var i = 0; i < 120; i++)
+        {
+            await SeedRecordingAsync(950000 + i, 111, $"场次{i}", "[RAW] a.flv");
+        }
+
+        var json = Ok(await CreateController(realClient).ListRecordings(limit: 120));
+
+        var items = json.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Equal(119, items.Length);
+        Assert.DoesNotContain(items, i => i.GetProperty("roomId").GetInt64() == 950000);
+        Assert.Equal([100, 20], handler.BatchItemCounts);
     }
 }
