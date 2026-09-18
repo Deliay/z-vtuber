@@ -23,6 +23,9 @@ public sealed class RecordingFileStatsClient(
     HttpClient httpClient,
     ILogger<RecordingFileStatsClient> logger) : IRecordingFileStatsClient
 {
+    /// <summary>recording file-stats 端点单次请求 items 上限；超出时由本客户端分块聚合，对调用方透明。</summary>
+    internal const int MaxItemsPerRequest = 100;
+
     private static readonly System.Text.Json.JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -37,29 +40,33 @@ public sealed class RecordingFileStatsClient(
             return result;
         }
 
-        var request = new FileStatsRequest(
-            queries.Select(q => new FileStatsRoomRequest(q.RoomId, q.Files)).ToList());
-
-        using var response = await httpClient.PostAsJsonAsync(
-            "api/recordings/file-stats", request, SerializerOptions, ct);
-        response.EnsureSuccessStatusCode();
-
-        var payload = await response.Content.ReadFromJsonAsync<FileStatsResponse>(SerializerOptions, ct);
-        if (payload?.Items is null)
+        for (var offset = 0; offset < queries.Count; offset += MaxItemsPerRequest)
         {
-            return result;
-        }
+            var chunk = queries.Skip(offset).Take(MaxItemsPerRequest).ToList();
+            var request = new FileStatsRequest(
+                chunk.Select(q => new FileStatsRoomRequest(q.RoomId, q.Files)).ToList());
 
-        foreach (var room in payload.Items)
-        {
-            foreach (var file in room.Files ?? [])
+            using var response = await httpClient.PostAsJsonAsync(
+                "api/recordings/file-stats", request, SerializerOptions, ct);
+            response.EnsureSuccessStatusCode();
+
+            var payload = await response.Content.ReadFromJsonAsync<FileStatsResponse>(SerializerOptions, ct);
+            if (payload?.Items is null)
             {
-                if (file.Name is null)
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                result[(room.RoomId, file.Name)] = new RecordingFileStat(file.Exists, file.Size);
+            foreach (var room in payload.Items)
+            {
+                foreach (var file in room.Files ?? [])
+                {
+                    if (file.Name is null)
+                    {
+                        continue;
+                    }
+
+                    result[(room.RoomId, file.Name)] = new RecordingFileStat(file.Exists, file.Size);
+                }
             }
         }
 
