@@ -60,6 +60,9 @@ var transcriptApi = builder.AddProject<Projects.Z_Vtuber_RecordingTranscript_Api
     .WaitFor(mongo)
     .WithReference(messaging)
     .WaitFor(messaging)
+    .WithReference(recording)
+    .WaitFor(recording)
+    .WithEnvironment("RecordingService:BaseUrl", recording.GetEndpoint("http"))
     .WithHttpHealthCheck("/health");
 
 var transcriptConsumer = builder.AddProject<Projects.Z_Vtuber_RecordingTranscript_Consumer>("recording-transcript-consumer")

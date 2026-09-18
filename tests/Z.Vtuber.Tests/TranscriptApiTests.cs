@@ -35,10 +35,13 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     private static readonly IOptions<TranscriptApiOptions> DefaultOptions =
         Options.Create(new TranscriptApiOptions());
 
+    private readonly FakeRecordingFileStatsClient _fileStats = new();
+
     private RecordingsArchiveController CreateArchiveController(
         IOptions<TranscriptApiOptions>? options = null) =>
         WithContext(new RecordingsArchiveController(
-            options ?? DefaultOptions, Recordings, Tasks, Models, AutoEnqueue));
+            options ?? DefaultOptions, Recordings, Tasks, Models, AutoEnqueue,
+            AccountInfo, _fileStats, NullLogger<RecordingsArchiveController>.Instance));
 
     private TranscriptTasksController CreateTasksController(
         IOptions<TranscriptApiOptions>? options = null) =>

@@ -281,4 +281,102 @@ describe('TaskListTab', () => {
       expect(mockRetry).toHaveBeenCalledWith('t1')
     })
   })
+
+  it('should render recording options with anchor, size and 进行中 fallback', async () => {
+    mockListRecordings.mockResolvedValue([
+      {
+        id: 'r1',
+        roomId: 101,
+        mid: 1,
+        anchorName: '主播A',
+        title: '晚间歌回',
+        files: [],
+        size: 2048,
+        startedAt: '2026-09-16T20:05:00',
+        endedAt: '2026-09-16T22:30:00',
+      },
+      {
+        id: 'r2',
+        roomId: 202,
+        mid: 2,
+        anchorName: null,
+        title: '杂谈',
+        files: [],
+        size: null,
+        startedAt: '2026-09-17T09:00:00',
+        endedAt: null,
+      },
+    ])
+
+    render(<TaskListTab />)
+
+    expect(
+      await screen.findByRole('option', {
+        name: '[主播A][2.0 KB] 晚间歌回 - 2026-09-16-20-05 - 2026-09-16-22-30',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('option', {
+        name: '[202][未知大小] 杂谈 - 2026-09-17-09-00 - 进行中',
+      }),
+    ).toBeInTheDocument()
+  })
+
+  it('should show anchorName in the room filter and fall back to roomId', async () => {
+    mockListRecordings.mockResolvedValue([
+      { id: 'r1', roomId: 101, mid: 1, anchorName: '主播A', title: '晚间歌回', files: [] },
+      { id: 'r2', roomId: 202, mid: 2, title: '杂谈', files: [] },
+    ])
+
+    render(<TaskListTab />)
+
+    expect(await screen.findByRole('option', { name: '主播A（101）' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '202' })).toBeInTheDocument()
+  })
+
+  it('should collapse the detail and close the EventSource when clicking 收起', async () => {
+    mockListTasks.mockResolvedValue([
+      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },
+    ])
+    mockGetTask.mockResolvedValue({
+      task: { id: 't1' },
+      segments: [{ start: 0, end: 1000, text: '第一句' }],
+    })
+
+    render(<TaskListTab />)
+
+    fireEvent.click(await screen.findByText('查看'))
+    await waitFor(() => {
+      expect(screen.getByText('第一句')).toBeInTheDocument()
+    })
+
+    const source = MockEventSource.instances[0]
+    fireEvent.click(screen.getByRole('button', { name: '收起识别结果' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('第一句')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByText('识别结果')).not.toBeInTheDocument()
+    expect(source.closed).toBe(true)
+  })
+
+  it('should constrain and scroll the segments container', async () => {
+    mockListTasks.mockResolvedValue([
+      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },
+    ])
+    mockGetTask.mockResolvedValue({
+      task: { id: 't1' },
+      segments: [{ start: 0, end: 1000, text: '第一句' }],
+    })
+
+    render(<TaskListTab />)
+
+    fireEvent.click(await screen.findByText('查看'))
+    const segment = await screen.findByText('第一句')
+    const container = segment.closest('ul')?.parentElement as HTMLElement | null
+
+    expect(container).not.toBeNull()
+    expect(container?.style.maxHeight).toBe('24rem')
+    expect(container?.style.overflowY).toBe('auto')
+  })
 })

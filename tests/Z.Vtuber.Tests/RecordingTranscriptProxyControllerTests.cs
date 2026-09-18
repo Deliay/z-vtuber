@@ -214,4 +214,56 @@ public class RecordingTranscriptProxyControllerTests
         Assert.Equal("PUT", handler.Methods[0]);
         Assert.Equal("/api/transcripts/models/m1", handler.Requests[0]);
     }
+
+    [Fact]
+    public async Task CandidateRooms_ProxiesToTranscriptService()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.OK, """{"items":[]}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ListTranscriptCandidateRooms(CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("GET", handler.Methods[0]);
+        Assert.Equal("/api/transcripts/candidate-rooms", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task DeleteSettings_ForwardsDeleteAndPassesThrough204()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.NoContent),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DeleteRoomTranscriptSettings(321, CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("DELETE", handler.Methods[0]);
+        Assert.Equal("/api/recordings/321/transcripts/settings", handler.Requests[0]);
+        Assert.Equal(StatusCodes.Status204NoContent, controller.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteSettings_PassesThrough404()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.NotFound, """{"error":"transcript settings not found"}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DeleteRoomTranscriptSettings(322, CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status404NotFound, controller.Response.StatusCode);
+        Assert.Contains("transcript settings not found", await ReadBodyAsync(controller.HttpContext));
+    }
 }

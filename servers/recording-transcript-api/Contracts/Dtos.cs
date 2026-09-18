@@ -16,10 +16,17 @@ public sealed record RecordingItemDto(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("roomId")] long RoomId,
     [property: JsonPropertyName("mid")] long Mid,
+    [property: JsonPropertyName("anchorName")] string? AnchorName,
     [property: JsonPropertyName("title")] string? Title,
     [property: JsonPropertyName("files")] IReadOnlyList<string> Files,
+    [property: JsonPropertyName("size")] long? Size,
     [property: JsonPropertyName("startedAt")] DateTime StartedAt,
     [property: JsonPropertyName("endedAt")] DateTime? EndedAt);
+
+public sealed record CandidateRoomDto(
+    [property: JsonPropertyName("roomId")] long RoomId,
+    [property: JsonPropertyName("mid")] long Mid,
+    [property: JsonPropertyName("anchorName")] string? AnchorName);
 
 public sealed record RoomTranscriptTaskRefDto(
     [property: JsonPropertyName("taskId")] string TaskId,
