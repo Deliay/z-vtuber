@@ -115,24 +115,40 @@ internal static class FunAsrProtocol
         return false;
     }
 
-    public static string? ParseErrorMessage(string json)
+    /// <summary>
+    /// 解析 task-failed 报文：header 存在即返回 true，并按需读取 error_code/error_message（缺则为 null）；
+    /// 非 JSON 或无 header 返回 false。供失败日志结构化记录与异常消息拼装共用。
+    /// </summary>
+    public static bool TryParseTaskFailed(string json, out string? errorCode, out string? errorMessage)
     {
+        errorCode = null;
+        errorMessage = null;
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("header", out var header))
+            if (!doc.RootElement.TryGetProperty("header", out var header))
             {
-                var code = header.TryGetProperty("error_code", out var c) ? c.ToString() : null;
-                var message = header.TryGetProperty("error_message", out var m) ? m.GetString() : null;
-                return $"FunASR task failed ({code}): {message}";
+                return false;
             }
+
+            errorCode = header.TryGetProperty("error_code", out var c) ? c.ToString() : null;
+            errorMessage = header.TryGetProperty("error_message", out var m) ? m.GetString() : null;
+            return true;
         }
         catch (JsonException)
         {
-            // ignore
+            return false;
+        }
+    }
+
+    public static string? ParseErrorMessage(string json)
+    {
+        if (!TryParseTaskFailed(json, out var code, out var message))
+        {
+            return "FunASR task failed";
         }
 
-        return "FunASR task failed";
+        return $"FunASR task failed ({code}): {message}";
     }
 
     /// <summary>解析 result 事件；仅当 sentence_end == true 且文本非空时返回成句片段，时间为返回时间 + offset。</summary>
