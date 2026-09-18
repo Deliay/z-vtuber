@@ -479,6 +479,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transcripts/candidate-rooms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询候选主播列表（代理转写服务）
+         * @description 从 recordings 聚合 distinct roomId 与最新 mid，关联主播资料补 anchorName，按 roomId 升序返回。
+         */
+        get: operations["listTranscriptCandidateRooms"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/recordings/{roomId}/transcripts": {
         parameters: {
             query?: never;
@@ -507,7 +527,11 @@ export interface paths {
         put?: never;
         /** 设置指定主播的自动识别开关（代理转写服务） */
         post: operations["updateTranscriptSettings"];
-        delete?: never;
+        /**
+         * 删除指定主播的自动识别设置（代理转写服务）
+         * @description 物理删除 transcript_auto_enqueue 记录；不影响该主播已存在的转写任务。
+         */
+        delete: operations["deleteTranscriptSettings"];
         options?: never;
         head?: never;
         patch?: never;
@@ -883,8 +907,11 @@ export interface components {
             roomId?: number;
             /** Format: int64 */
             mid?: number;
+            anchorName?: string | null;
             title?: string | null;
             files?: string[];
+            /** Format: int64 */
+            size?: number | null;
             /** Format: date-time */
             startedAt?: string;
             /** Format: date-time */
@@ -892,6 +919,16 @@ export interface components {
         };
         RecordingTranscriptRecordingList: {
             items?: components["schemas"]["RecordingTranscriptRecordingItem"][];
+        };
+        RecordingTranscriptCandidateRoom: {
+            /** Format: int64 */
+            roomId?: number;
+            /** Format: int64 */
+            mid?: number;
+            anchorName?: string | null;
+        };
+        RecordingTranscriptCandidateRoomList: {
+            items?: components["schemas"]["RecordingTranscriptCandidateRoom"][];
         };
         RecordingTranscriptRoomTaskRef: {
             taskId?: string;
@@ -1902,6 +1939,33 @@ export interface operations {
             };
         };
     };
+    listTranscriptCandidateRooms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 候选主播列表（roomId 升序） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptCandidateRoomList"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getRoomTranscripts: {
         parameters: {
             query?: never;
@@ -1957,6 +2021,42 @@ export interface operations {
             };
             /** @description 参数非法：请求体缺失；或 enable=true 时缺少 modelId、modelId 格式非法、 指向不存在或未启用的模型 */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteTranscriptSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 该主播的自动识别设置不存在 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

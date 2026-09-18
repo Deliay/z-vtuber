@@ -75,6 +75,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/recordings/file-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批量查询录播文件磁盘状态
+         * @description 磁盘权威端点：按 {StorageDir}/{roomId}/{fileName} 逐个判定文件是否存在与实际字节大小。 文件名沿用下载端点的路径穿越防护，非法文件名（含路径分隔符或解析后越出房间目录）按 exists=false 处理； 房间目录不存在时其下全部文件按 exists=false 处理。请求 items 总量上限 100，超限返回 400。
+         */
+        post: operations["getRecordingFileStats"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/{roomId}/recordings/{fileName}": {
         parameters: {
             query?: never;
@@ -117,6 +137,32 @@ export interface components {
         };
         RecordingStatusList: {
             items?: components["schemas"]["RecordingStatus"][];
+        };
+        RecordingFileStatsRequest: {
+            /** @description 待查询的房间与文件名分组，总量上限 100 */
+            items: components["schemas"]["RecordingFileStatsRoomRequest"][];
+        };
+        RecordingFileStatsRoomRequest: {
+            /** Format: int64 */
+            roomId: number;
+            files: string[];
+        };
+        RecordingFileStatsResponse: {
+            items?: components["schemas"]["RecordingFileStatsRoom"][];
+        };
+        RecordingFileStatsRoom: {
+            /** Format: int64 */
+            roomId?: number;
+            files?: components["schemas"]["RecordingFileStat"][];
+        };
+        RecordingFileStat: {
+            name: string;
+            exists: boolean;
+            /**
+             * Format: int64
+             * @description 存在时的实际字节数；不存在为 null
+             */
+            size?: number | null;
         };
         RecordingFileList: {
             files?: components["schemas"]["RecordingFile"][];
@@ -259,6 +305,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecordingFileList"];
+                };
+            };
+        };
+    };
+    getRecordingFileStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordingFileStatsRequest"];
+            };
+        };
+        responses: {
+            /** @description 各房间文件的磁盘存在性与大小 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingFileStatsResponse"];
+                };
+            };
+            /** @description 请求体缺失或 items 超过上限 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
                 };
             };
         };

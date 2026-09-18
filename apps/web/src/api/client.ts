@@ -28,6 +28,7 @@ type TranscriptModel = transcriptComponents['schemas']['TranscriptModel']
 type TranscriptModelCreateRequest = transcriptComponents['schemas']['TranscriptModelCreateRequest']
 type TranscriptModelUpdateRequest = transcriptComponents['schemas']['TranscriptModelUpdateRequest']
 type TranscriptRecordingItem = transcriptComponents['schemas']['RecordingItem']
+type TranscriptCandidateRoom = transcriptComponents['schemas']['CandidateRoom']
 type RoomTranscriptView = transcriptComponents['schemas']['RoomTranscriptView']
 
 interface ApiError extends Error {
@@ -328,6 +329,19 @@ export async function listTranscriptRecordings(params: {
     `/recordings${qs ? `?${qs}` : ''}`,
   )
   return data.items ?? []
+}
+
+export async function getTranscriptCandidateRooms(): Promise<TranscriptCandidateRoom[]> {
+  const data = await request<transcriptComponents['schemas']['CandidateRoomList']>(
+    '/transcripts/candidate-rooms',
+  )
+  return data.items ?? []
+}
+
+export async function deleteTranscriptSettings(roomId: number): Promise<void> {
+  return request<void>(`/recordings/${roomId}/transcripts/settings`, {
+    method: 'DELETE',
+  })
 }
 
 export async function enqueueTranscript(

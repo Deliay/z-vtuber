@@ -5,11 +5,14 @@ import {
   listTranscriptModels,
   createTranscriptModel,
   updateTranscriptModel,
+  getTranscriptCandidateRooms,
+  deleteTranscriptSettings,
 } from '../../api/client'
 import type { components as transcriptComponents } from '../../api/schema-recording-transcript'
 
 type TranscriptSettingsItem = transcriptComponents['schemas']['TranscriptSettingsItem']
 type TranscriptModel = transcriptComponents['schemas']['TranscriptModel']
+type CandidateRoom = transcriptComponents['schemas']['CandidateRoom']
 
 const inputStyle: React.CSSProperties = {
   padding: '0.5rem',
@@ -30,6 +33,7 @@ function normalizeConcurrency(value: string | number | null | undefined): number
 export function SettingsTab() {
   const [settings, setSettings] = useState<TranscriptSettingsItem[]>([])
   const [models, setModels] = useState<TranscriptModel[]>([])
+  const [candidates, setCandidates] = useState<CandidateRoom[]>([])
   const [loading, setLoading] = useState(true)
   const [initialized, setInitialized] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,12 +59,14 @@ export function SettingsTab() {
       setError(null)
       setRetryAction(null)
       setLoading(true)
-      const [settingsData, modelsData] = await Promise.all([
+      const [settingsData, modelsData, candidatesData] = await Promise.all([
         getTranscriptSettings(),
         listTranscriptModels(),
+        getTranscriptCandidateRooms(),
       ])
       setSettings(settingsData)
       setModels(modelsData)
+      setCandidates(candidatesData ?? [])
     } catch {
       setError('服务不可用')
       setRetryAction(null)
@@ -103,6 +109,30 @@ export function SettingsTab() {
         void handleToggleAuto(item)
       })
     }
+  }
+
+  const performDelete = async (roomId: number) => {
+    try {
+      setError(null)
+      setRetryAction(null)
+      await deleteTranscriptSettings(roomId)
+      await fetchAll()
+    } catch {
+      setError('删除自动识别设置失败')
+      setRetryAction(() => () => {
+        void performDelete(roomId)
+      })
+    }
+  }
+
+  const handleDelete = (item: TranscriptSettingsItem) => {
+    if (typeof item.roomId !== 'number') {
+      return
+    }
+    if (!window.confirm(`确认删除直播间 ${item.roomId} 的自动识别设置？`)) {
+      return
+    }
+    void performDelete(item.roomId)
   }
 
   const handleAddAuto = async (e: React.FormEvent) => {
@@ -294,6 +324,15 @@ export function SettingsTab() {
                     >
                       {item.enabled ? '关闭' : '开启'}
                     </button>
+                    {typeof item.roomId === 'number' && (
+                      <button
+                        onClick={() => handleDelete(item)}
+                        aria-label={`删除自动识别-${item.roomId}`}
+                        style={{ marginLeft: '0.5rem', padding: '0.25rem 0.5rem' }}
+                      >
+                        删除
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -306,15 +345,21 @@ export function SettingsTab() {
           noValidate
           style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}
         >
-          <input
+          <select
             aria-label="直播间号"
-            placeholder="直播间号"
-            type="number"
-            min={1}
             value={newRoomId}
             onChange={(e) => setNewRoomId(e.target.value)}
             style={{ ...inputStyle, width: '9rem' }}
-          />
+          >
+            <option value="">选择直播间</option>
+            {candidates.map((candidate) => (
+              <option key={candidate.roomId} value={String(candidate.roomId)}>
+                {candidate.anchorName
+                  ? `${candidate.anchorName}（${candidate.roomId}）`
+                  : `${candidate.roomId}`}
+              </option>
+            ))}
+          </select>
           <select
             aria-label="添加识别模型"
             value={newRoomModelId}
@@ -328,10 +373,17 @@ export function SettingsTab() {
               </option>
             ))}
           </select>
-          <button type="submit" style={{ padding: '0.5rem 1rem' }}>
+          <button
+            type="submit"
+            disabled={candidates.length === 0}
+            style={{ padding: '0.5rem 1rem' }}
+          >
             添加自动识别
           </button>
         </form>
+        {candidates.length === 0 && (
+          <p style={{ color: '#94a3b8' }}>暂无可选主播</p>
+        )}
         {addError && <p style={{ color: '#f87171' }}>{addError}</p>}
         {addMessage && <p style={{ color: '#22c55e' }}>{addMessage}</p>}
       </section>

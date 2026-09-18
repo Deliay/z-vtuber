@@ -10,6 +10,8 @@ const mockSetRoom = vi.mocked(client.setRoomAutoEnqueue)
 const mockListModels = vi.mocked(client.listTranscriptModels)
 const mockCreateModel = vi.mocked(client.createTranscriptModel)
 const mockUpdateModel = vi.mocked(client.updateTranscriptModel)
+const mockGetCandidates = vi.mocked(client.getTranscriptCandidateRooms)
+const mockDeleteSettings = vi.mocked(client.deleteTranscriptSettings)
 
 describe('SettingsTab', () => {
   beforeEach(() => {
@@ -41,6 +43,11 @@ describe('SettingsTab', () => {
     mockCreateModel.mockResolvedValue({ id: 'm3', name: '新模型' })
     mockUpdateModel.mockResolvedValue({ id: 'm2' })
     mockSetRoom.mockResolvedValue({ roomId: 101, enabled: false })
+    mockGetCandidates.mockResolvedValue([
+      { roomId: 101, mid: 1, anchorName: '主播A' },
+      { roomId: 202, mid: 2, anchorName: null },
+    ])
+    mockDeleteSettings.mockResolvedValue(undefined)
   })
 
   it('should toggle auto recognition per anchor', async () => {
@@ -82,16 +89,55 @@ describe('SettingsTab', () => {
     expect(mockSetRoom).not.toHaveBeenCalled()
   })
 
-  it('should show a validation error for an invalid room id and not call the api', async () => {
+  it('should render the add-automation room as a candidate select with anchor labels', async () => {
     render(<SettingsTab />)
 
-    await screen.findByRole('button', { name: '添加自动识别' })
+    const select = await screen.findByLabelText('直播间号')
+    expect(select.tagName).toBe('SELECT')
+    expect(screen.getByRole('option', { name: '主播A（101）' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '202' })).toBeInTheDocument()
+  })
 
-    fireEvent.change(screen.getByLabelText('直播间号'), { target: { value: '0' } })
-    fireEvent.click(screen.getByRole('button', { name: '添加自动识别' }))
+  it('should disable submit and show a hint when there are no candidate rooms', async () => {
+    mockGetCandidates.mockResolvedValue([])
 
-    expect(await screen.findByText('请输入有效的直播间号')).toBeInTheDocument()
+    render(<SettingsTab />)
+
+    await screen.findByText('暂无可选主播')
+    expect(screen.getByRole('button', { name: '添加自动识别' })).toBeDisabled()
     expect(mockSetRoom).not.toHaveBeenCalled()
+  })
+
+  it('should confirm and delete a settings row then refresh', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<SettingsTab />)
+
+    await screen.findByText('关闭')
+    fireEvent.click(screen.getByRole('button', { name: '删除自动识别-101' }))
+
+    await waitFor(() => {
+      expect(mockDeleteSettings).toHaveBeenCalledWith(101)
+    })
+    await waitFor(() => {
+      expect(mockGetSettings).toHaveBeenCalledTimes(2)
+    })
+
+    confirmSpy.mockRestore()
+  })
+
+  it('should not delete when the confirmation is dismissed', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    render(<SettingsTab />)
+
+    await screen.findByText('关闭')
+    fireEvent.click(screen.getByRole('button', { name: '删除自动识别-101' }))
+
+    expect(mockDeleteSettings).not.toHaveBeenCalled()
+    expect(confirmSpy).toHaveBeenCalled()
+
+    confirmSpy.mockRestore()
   })
 
   it('should flag unbound settings as pending and block enabling without a model', async () => {
