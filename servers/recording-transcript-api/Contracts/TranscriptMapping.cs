@@ -6,12 +6,18 @@ namespace Z.Vtuber.RecordingTranscript.Api.Contracts;
 /// <summary>实体到响应 DTO 的映射（模型 DTO 永不携带 ApiKey）。</summary>
 internal static class TranscriptMapping
 {
-    public static RecordingItemDto ToRecordingItem(RecordingRecord record) => new(
+    public static RecordingItemDto ToRecordingItem(
+        RecordingRecord record,
+        string? anchorName = null,
+        IReadOnlyList<string>? files = null,
+        long? size = null) => new(
         record.Id.ToString(),
         record.RoomId,
         record.Mid,
+        anchorName,
         record.Title,
-        record.Files,
+        files ?? record.Files,
+        size,
         record.StartedAt,
         record.EndedAt);
 

@@ -95,8 +95,8 @@ public sealed class TranscriptTaskScanner(
                 continue;
             }
 
-            // DB 已反映 RUNNING（CountByModelAndStatus 会计入），释放内存预留避免同一任务被重复计数，
-            // 否则 MaxConcurrency=2 时实际只跑 1 个。
+            // DB 已反映 RUNNING 且本节点持有锁（持锁 RUNNING 会被并发计数覆盖），
+            // 释放内存预留避免同一任务被重复计数，否则 MaxConcurrency=2 时实际只跑 1 个。
             ReleaseConcurrency(model.Id);
             _ = RunDetachedAsync(task, handle, ct);
         }
@@ -138,11 +138,22 @@ public sealed class TranscriptTaskScanner(
 
     private async Task<bool> TryReserveConcurrencyAsync(TranscriptModelRecord model, CancellationToken ct)
     {
-        var running = await tasks.CountByModelAndStatusAsync(model.Id, TranscriptTaskStatus.Running, ct);
+        // 口径：仅「持锁 RUNNING」占用并发额度。僵尸 RUNNING（无锁）不占额度，
+        // 修复待接管任务把自身计入 maxConcurrency 造成的自我死锁，并避免多僵尸饿死同模型 PENDING。
+        var running = await tasks.ListByModelAndStatusAsync(model.Id, TranscriptTaskStatus.Running, ct);
+        var heldCount = 0;
+        foreach (var runningTask in running)
+        {
+            if (await lockProvider.IsHeldAsync(runningTask.Id, ct))
+            {
+                heldCount++;
+            }
+        }
+
         lock (_concurrencyLock)
         {
             var inFlight = _inFlight.GetValueOrDefault(model.Id);
-            if (running + inFlight >= Math.Max(1, model.MaxConcurrency))
+            if (heldCount + inFlight >= Math.Max(1, model.MaxConcurrency))
             {
                 return false;
             }

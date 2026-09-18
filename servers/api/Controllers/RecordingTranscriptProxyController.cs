@@ -26,6 +26,14 @@ public class RecordingTranscriptProxyController(IHttpClientFactory httpClientFac
     public Task<IActionResult> UpdateRoomTranscriptSettings(long roomId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, $"api/recordings/{roomId}/transcripts/settings", ct);
 
+    [HttpDelete("recordings/{roomId:long}/transcripts/settings")]
+    public Task<IActionResult> DeleteRoomTranscriptSettings(long roomId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Delete, $"api/recordings/{roomId}/transcripts/settings", ct);
+
+    [HttpGet("transcripts/candidate-rooms")]
+    public Task<IActionResult> ListTranscriptCandidateRooms(CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Get, "api/transcripts/candidate-rooms", ct);
+
     [HttpPost("transcripts/enqueue")]
     public Task<IActionResult> EnqueueTranscript(CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, "api/transcripts/enqueue", ct);

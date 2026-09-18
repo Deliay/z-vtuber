@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using StackExchange.Redis;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.RecordingTranscript.Api;
+using Z.Vtuber.RecordingTranscript.Api.Clients;
 using Z.Vtuber.RecordingTranscript.Api.Configuration;
 using Z.Vtuber.RecordingTranscript.Api.Sse;
 
@@ -18,6 +19,17 @@ builder.Services.AddOptions<TranscriptApiOptions>()
     .BindConfiguration(TranscriptApiOptions.SectionName)
     .ValidateDataAnnotations()
     .ValidateOnStart();
+
+builder.Services.AddOptions<RecordingServiceOptions>()
+    .Bind(builder.Configuration.GetSection(RecordingServiceOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddHttpClient<IRecordingFileStatsClient, RecordingFileStatsClient>(client =>
+{
+    client.BaseAddress = new Uri(
+        builder.Configuration["RecordingService:BaseUrl"] ?? RecordingServiceOptions.DefaultBaseUrl);
+});
 
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));

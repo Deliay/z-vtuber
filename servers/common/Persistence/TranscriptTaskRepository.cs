@@ -88,4 +88,10 @@ public sealed class TranscriptTaskRepository(IMongoDatabase database)
     public Task<long> CountByModelAndStatusAsync(ObjectId modelId, string status, CancellationToken ct = default) =>
         _collection.CountDocumentsAsync(
             t => t.ModelId == modelId && t.Status == status, cancellationToken: ct);
+
+    /// <summary>列举指定模型下处于指定状态的任务（供扫描器按锁存在性判定持锁占用）。</summary>
+    public async Task<IReadOnlyList<TranscriptTaskRecord>> ListByModelAndStatusAsync(
+        ObjectId modelId, string status, CancellationToken ct = default) =>
+        await _collection.Find(t => t.ModelId == modelId && t.Status == status)
+            .ToListAsync(ct);
 }
