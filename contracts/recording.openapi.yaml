@@ -58,6 +58,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RecordingFileList"
+  /api/recordings/file-stats:
+    post:
+      summary: 批量查询录播文件磁盘状态
+      description: >-
+        磁盘权威端点：按 {StorageDir}/{roomId}/{fileName} 逐个判定文件是否存在与实际字节大小。
+        文件名沿用下载端点的路径穿越防护，非法文件名（含路径分隔符或解析后越出房间目录）按 exists=false 处理；
+        房间目录不存在时其下全部文件按 exists=false 处理。请求 items 总量上限 100，超限返回 400。
+      operationId: getRecordingFileStats
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingFileStatsRequest"
+      responses:
+        "200":
+          description: 各房间文件的磁盘存在性与大小
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingFileStatsResponse"
+        "400":
+          description: 请求体缺失或 items 超过上限
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
   /api/{roomId}/recordings/{fileName}:
     get:
       summary: 下载录播文件
@@ -189,6 +220,56 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RecordingStatus"
+    RecordingFileStatsRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 待查询的房间与文件名分组，总量上限 100
+          items:
+            $ref: "#/components/schemas/RecordingFileStatsRoomRequest"
+    RecordingFileStatsRoomRequest:
+      type: object
+      required: [roomId, files]
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        files:
+          type: array
+          items:
+            type: string
+    RecordingFileStatsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingFileStatsRoom"
+    RecordingFileStatsRoom:
+      type: object
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingFileStat"
+    RecordingFileStat:
+      type: object
+      required: [name, exists]
+      properties:
+        name:
+          type: string
+        exists:
+          type: boolean
+        size:
+          type: integer
+          format: int64
+          nullable: true
+          description: 存在时的实际字节数；不存在为 null
     RecordingFileList:
       type: object
       properties:

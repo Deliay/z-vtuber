@@ -33,6 +33,8 @@ import {
   reportInvalidWeiboCookie,
   cooldownWeiboCookie,
   listTranscriptRecordings,
+  getTranscriptCandidateRooms,
+  deleteTranscriptSettings,
   enqueueTranscript,
   listTranscriptTasks,
   getTranscriptTask,
@@ -970,6 +972,39 @@ describe('API Client', () => {
       expect(urlArg).toContain('roomId=101')
       expect(urlArg).toContain('limit=20')
       expect(result).toEqual(items)
+    })
+
+    it('getTranscriptCandidateRooms should GET /transcripts/candidate-rooms', async () => {
+      const items = [
+        { roomId: 101, mid: 1, anchorName: '主播A' },
+        { roomId: 202, mid: 2, anchorName: null },
+      ]
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ items }) })
+
+      const result = await getTranscriptCandidateRooms()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/transcripts/candidate-rooms'),
+        expect.anything(),
+      )
+      expect(result).toEqual(items)
+    })
+
+    it('getTranscriptCandidateRooms should return empty array when items undefined', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+
+      expect(await getTranscriptCandidateRooms()).toEqual([])
+    })
+
+    it('deleteTranscriptSettings should DELETE /recordings/{roomId}/transcripts/settings', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+      await deleteTranscriptSettings(101)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/recordings/101/transcripts/settings'),
+        expect.objectContaining({ method: 'DELETE' }),
+      )
     })
 
     it('enqueueTranscript should POST /transcripts/enqueue with recordingId and modelId', async () => {

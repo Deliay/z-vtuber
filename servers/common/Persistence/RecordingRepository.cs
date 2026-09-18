@@ -61,6 +61,30 @@ public sealed class RecordingRepository(IMongoDatabase database)
             .SortByDescending(r => r.StartedAt)
             .ToListAsync(ct);
 
+    /// <summary>
+    /// 聚合 distinct RoomId 及各房间最新场次的 Mid（供候选主播端点），按 RoomId 升序。
+    /// </summary>
+    public async Task<IReadOnlyList<(long RoomId, long Mid)>> DistinctRoomsAsync(CancellationToken ct = default)
+    {
+        var pipeline = new[]
+        {
+            new BsonDocument("$sort", new BsonDocument("StartedAt", -1)),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", "$RoomId" },
+                { "Mid", new BsonDocument("$first", "$Mid") },
+            }),
+            new BsonDocument("$sort", new BsonDocument("_id", 1)),
+        };
+
+        var docs = await _collection.Aggregate<BsonDocument>(pipeline).ToListAsync(ct);
+        return docs
+            .Select(d => (
+                d["_id"].ToInt64(),
+                d.TryGetValue("Mid", out var mid) && !mid.IsBsonNull ? mid.ToInt64() : 0L))
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<RecordingRecord>> ListAsync(
         long? roomId, int limit, DateTime? before, CancellationToken ct = default)
     {

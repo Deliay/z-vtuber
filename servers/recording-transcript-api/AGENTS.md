@@ -21,8 +21,9 @@ graph LR
 
 无状态转写查询服务：录播场次归档查询、任务/segments 查询、手动 enqueue、retry、SSE 实时推送、自动识别设置与模型管理。web 一律经 `servers/api` 代理访问，不直连本服务。
 
-- `Controllers/`：`RecordingsArchiveController`（`GET /api/recordings`、`GET /api/recordings/{roomId}/transcripts`、`POST /api/recordings/{roomId}/transcripts/settings`（`enable=true` 时强制 `modelId`，须为存在且启用的模型，否则 400））、`TranscriptTasksController`（`POST /api/transcripts/enqueue`、`GET /api/transcripts/task`、`GET /api/transcripts/task/{taskId}`、`POST /api/transcripts/task/{taskId}/retry`（仅 FAILED 可重试，置 RUNNING 清 error，409 否则）、`GET /api/transcripts/task/{taskId}/sse`）、`TranscriptSettingsController`（`GET /api/transcripts/settings` 全量列表，关联 `AccountBasicInfoRepository` 补 anchorName、关联 `TranscriptModelRepository` 补 modelName）、`TranscriptModelsController`（`GET/POST /api/transcripts/models`、`PUT /api/transcripts/models/{modelId}`，`model` 必填，响应剔除 apiKey、无 isDefault）
+- `Controllers/`：`RecordingsArchiveController`（`GET /api/recordings`（以 recording 磁盘数据过滤「所有文件均不存在」的空场次、files 收缩为存在子集、`size` 求和、`anchorName` 补全；recording 不可达降级返回未过滤列表 `size=null`）、`GET /api/recordings/{roomId}/transcripts`（同样过滤空场次）、`GET /api/transcripts/candidate-rooms`（`DistinctRoomsAsync` + anchorName，roomId 升序）、`POST /api/recordings/{roomId}/transcripts/settings`（`enable=true` 时强制 `modelId`，须为存在且启用的模型，否则 400）、`DELETE /api/recordings/{roomId}/transcripts/settings`（物理删除，204/404，不影响已存在任务））、`TranscriptTasksController`（`POST /api/transcripts/enqueue`、`GET /api/transcripts/task`、`GET /api/transcripts/task/{taskId}`、`POST /api/transcripts/task/{taskId}/retry`（仅 FAILED 可重试，置 RUNNING 清 error，409 否则）、`GET /api/transcripts/task/{taskId}/sse`）、`TranscriptSettingsController`（`GET /api/transcripts/settings` 全量列表，关联 `AccountBasicInfoRepository` 补 anchorName、关联 `TranscriptModelRepository` 补 modelName）、`TranscriptModelsController`（`GET/POST /api/transcripts/models`、`PUT /api/transcripts/models/{modelId}`，`model` 必填，响应剔除 apiKey、无 isDefault）
 - `Sse/`：`TranscriptSegmentStream`（先 replay 全量 segments，再订阅 Redis `transcript-segment:{taskId}` 转发；以 `start` 去重；15s 心跳注释；任务终态推 `done` 事件并关闭）
+- `Clients/`：`RecordingFileStatsClient`（typed HttpClient，节 `RecordingService:BaseUrl`，`IRecordingFileStatsClient.GetFileStatsAsync` 单次请求 `POST /api/recordings/file-stats` 聚合整页 (roomId, files) 的磁盘 exists/size；传输/协议异常抛出由控制器降级）
 - `Contracts/`：`Dtos.cs`（请求/响应 record，字段 JSON 名小驼峰）、`TranscriptMapping.cs`（实体 → DTO 映射）
 - `Configuration/`：`TranscriptApiOptions`（节 `TranscriptApi`，`MaxPageSize`(200)）
 - `Program.cs`：注册 Mongo/Redis/Options/仓储/`TranscriptSegmentStream`/Controllers，启动幂等索引初始化 + 清理 `transcript_models` 存量 `IsDefault` 字段迁移（`CleanupTranscriptModelIsDefaultAsync`），`/health` + `MapControllers()`
@@ -38,9 +39,11 @@ graph LR
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/health` | 进程存活 + MongoDB 连通性 |
-| GET | `/api/recordings` | 录播场次归档列表（query `roomId?`/`limit?`/`before?`，StartedAt 倒序） |
-| GET | `/api/recordings/{roomId}/transcripts` | roomId 视角场次及各场次任务（含 `autoEnqueueEnabled`） |
+| GET | `/api/recordings` | 录播场次归档列表（query `roomId?`/`limit?`/`before?`，StartedAt 倒序；过滤所有文件均不存在的空场次，files 收缩、补 anchorName/size） |
+| GET | `/api/recordings/{roomId}/transcripts` | roomId 视角场次及各场次任务（含 `autoEnqueueEnabled`；同样过滤空场次） |
+| GET | `/api/transcripts/candidate-rooms` | 候选主播列表（recordings 聚合 distinct roomId/最新 mid + anchorName，roomId 升序） |
 | POST | `/api/recordings/{roomId}/transcripts/settings` | 设置自动识别开关（body `{enable, modelId?}`；`enable=true` 时 `modelId` 必填且须为已启用模型，否则 400；upsert） |
+| DELETE | `/api/recordings/{roomId}/transcripts/settings` | 删除自动识别设置（物理删除，204/404；不影响已存在任务） |
 | POST | `/api/transcripts/enqueue` | 手动 enqueue（body `recordingId`/`modelId`；404 录播或模型不存在/被禁用；409 返回已有 taskId） |
 | GET | `/api/transcripts/task` | 任务列表（query `recordingId?`/`roomId?`/`status?`/`limit?`） |
 | GET | `/api/transcripts/task/{taskId}` | 任务详情 + 全量 segments |
@@ -57,6 +60,7 @@ graph LR
 
 - `ConnectionStrings:mongo`：MongoDB 连接串
 - `ConnectionStrings:messaging`：Redis 连接串
+- `RecordingService:BaseUrl`（节 `RecordingService`，默认 `http://recording/`）：recording 服务内网地址，供磁盘权威 file-stats 查询
 - `TranscriptApi` 节（`ValidateOnStart`）：`MaxPageSize`(200)
 - 健康检查端口：本地 launchSettings 8084
 

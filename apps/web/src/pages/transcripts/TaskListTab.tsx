@@ -10,6 +10,7 @@ import {
   retryTranscriptTask,
 } from '../../api/client'
 import type { components as transcriptComponents } from '../../api/schema-recording-transcript'
+import { formatBytes, formatDateTime } from '../../utils/format'
 
 type TranscriptTask = transcriptComponents['schemas']['TranscriptTask']
 type TranscriptSegment = transcriptComponents['schemas']['TranscriptSegment']
@@ -117,6 +118,7 @@ export function TaskListTab() {
   const [segments, setSegments] = useState<TranscriptSegment[]>([])
   const [segmentsLoading, setSegmentsLoading] = useState(false)
   const [segmentsError, setSegmentsError] = useState<string | null>(null)
+  const segmentsContainerRef = useRef<HTMLDivElement | null>(null)
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -164,7 +166,13 @@ export function TaskListTab() {
     for (const recording of recordings) {
       if (typeof recording.roomId === 'number' && !seen.has(recording.roomId)) {
         seen.add(recording.roomId)
-        options.push({ roomId: recording.roomId, label: String(recording.roomId) })
+        const anchorName = recording.anchorName?.trim()
+        options.push({
+          roomId: recording.roomId,
+          label: anchorName
+            ? `${anchorName}（${recording.roomId}）`
+            : String(recording.roomId),
+        })
       }
     }
     return options
@@ -224,6 +232,16 @@ export function TaskListTab() {
       source.close()
     }
   }, [selectedTaskId, refreshKey])
+
+  useEffect(() => {
+    const container = segmentsContainerRef.current
+    if (!container) {
+      return
+    }
+    if (container.scrollHeight - container.scrollTop - container.clientHeight < 40) {
+      container.scrollTop = container.scrollHeight
+    }
+  }, [segments])
 
   const handleTaskAction = (taskId: string | undefined) => {
     if (!taskId) {
@@ -355,7 +373,22 @@ export function TaskListTab() {
 
       {selectedTaskId && (
         <div style={{ marginTop: '1.5rem' }}>
-          <h3>识别结果</h3>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <h3 style={{ margin: '0 0 0.5rem' }}>识别结果</h3>
+            <button
+              onClick={() => setSelectedTaskId(null)}
+              aria-label="收起识别结果"
+              style={{ padding: '0.25rem 0.75rem' }}
+            >
+              收起
+            </button>
+          </div>
           {segmentsLoading && segments.length === 0 ? (
             <p>加载中...</p>
           ) : segmentsError && segments.length === 0 ? (
@@ -363,16 +396,18 @@ export function TaskListTab() {
           ) : segments.length === 0 ? (
             <p>暂无识别结果</p>
           ) : (
-            <ul style={{ margin: 0, paddingLeft: '1rem' }}>
-              {segments.map((segment) => (
-                <li key={segment.start}>
-                  <span style={{ color: '#94a3b8', marginRight: '0.5rem' }}>
-                    {formatPosition(segment.start)}
-                  </span>
-                  <span>{segment.text}</span>
-                </li>
-              ))}
-            </ul>
+            <div ref={segmentsContainerRef} style={{ maxHeight: '24rem', overflowY: 'auto' }}>
+              <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+                {segments.map((segment) => (
+                  <li key={segment.start}>
+                    <span style={{ color: '#94a3b8', marginRight: '0.5rem' }}>
+                      {formatPosition(segment.start)}
+                    </span>
+                    <span>{segment.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}
@@ -390,11 +425,21 @@ export function TaskListTab() {
             style={inputStyle}
           >
             <option value="">选择录播场次</option>
-            {recordings.map((recording) => (
-              <option key={recording.id} value={recording.id}>
-                {recording.title ?? recording.id}
-              </option>
-            ))}
+            {recordings.map((recording) => {
+              const startTime = recording.startedAt
+                ? formatDateTime(recording.startedAt)
+                : '-'
+              const endTime = recording.endedAt
+                ? formatDateTime(recording.endedAt)
+                : '进行中'
+              return (
+                <option key={recording.id} value={recording.id}>
+                  {`[${recording.anchorName ?? recording.roomId}][${formatBytes(recording.size)}] ${
+                    recording.title ?? recording.id
+                  } - ${startTime} - ${endTime}`}
+                </option>
+              )
+            })}
           </select>
 
           <select

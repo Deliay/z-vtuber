@@ -32,4 +32,11 @@ public sealed class TranscriptAutoEnqueueRepository(IMongoDatabase database)
 
     public async Task<TranscriptAutoEnqueueRecord?> GetByRoomIdAsync(long roomId, CancellationToken ct = default) =>
         await _collection.Find(r => r.RoomId == roomId).FirstOrDefaultAsync(ct);
+
+    /// <summary>物理删除指定房间的自动识别设置；返回是否删到记录。</summary>
+    public async Task<bool> DeleteByRoomIdAsync(long roomId, CancellationToken ct = default)
+    {
+        var result = await _collection.DeleteOneAsync(r => r.RoomId == roomId, ct);
+        return result.DeletedCount == 1;
+    }
 }

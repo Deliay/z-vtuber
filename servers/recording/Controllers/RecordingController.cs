@@ -3,6 +3,7 @@ using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Recording.Audio;
 using Z.Vtuber.Recording.Configuration;
+using Z.Vtuber.Recording.Contracts;
 
 namespace Z.Vtuber.Recording.Controllers;
 
@@ -14,11 +15,40 @@ public sealed class RecordingController(
     AudioStreamHub audio,
     RecordingOptions options) : ControllerBase
 {
+    internal const int MaxFileStatsItems = 100;
+
     [HttpGet("recording/status")]
     public async Task<IActionResult> GetStatus(CancellationToken ct)
     {
         var records = await statusRepository.GetAllAsync(ct);
         var items = records.Select(ToStatusDto).ToList();
+        return Ok(new { items });
+    }
+
+    [HttpPost("recordings/file-stats")]
+    public IActionResult GetFileStats([FromBody] RecordingFileStatsRequest? request)
+    {
+        if (request?.Items is null)
+        {
+            return BadRequest(new { error = "items is required" });
+        }
+
+        if (request.Items.Count > MaxFileStatsItems)
+        {
+            return BadRequest(new { error = $"items exceeds the limit of {MaxFileStatsItems}" });
+        }
+
+        var items = request.Items
+            .Select(item =>
+            {
+                var directory = Path.GetFullPath(RoomDirectory(item.RoomId));
+                var files = (item.Files ?? [])
+                    .Select(name => ToFileStat(directory, name))
+                    .ToArray();
+                return new { roomId = item.RoomId, files };
+            })
+            .ToArray();
+
         return Ok(new { items });
     }
 
@@ -170,6 +200,36 @@ public sealed class RecordingController(
         }
 
         return new HashSet<string>(record.Files, StringComparer.Ordinal);
+    }
+
+    /// <summary>按磁盘权威判定单个文件存在性与大小；非法文件名/越界/IO 异常一律按不存在处理。</summary>
+    private static object ToFileStat(string directory, string name)
+    {
+        if (!IsSafeFileName(name))
+        {
+            return new { name, exists = false, size = (long?)null };
+        }
+
+        var fullPath = Path.GetFullPath(Path.Combine(directory, name));
+        if (!fullPath.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return new { name, exists = false, size = (long?)null };
+        }
+
+        try
+        {
+            var fileInfo = new FileInfo(fullPath);
+            if (!fileInfo.Exists)
+            {
+                return new { name, exists = false, size = (long?)null };
+            }
+
+            return new { name, exists = true, size = (long?)fileInfo.Length };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new { name, exists = false, size = (long?)null };
+        }
     }
 
     internal static bool IsSafeFileName(string fileName)

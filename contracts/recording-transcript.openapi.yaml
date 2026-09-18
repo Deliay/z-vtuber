@@ -20,7 +20,11 @@ paths:
   /api/recordings:
     get:
       summary: 查询录播场次归档列表
-      description: 供「识别设置」的场次选择器使用，按 StartedAt 倒序返回。
+      description: >-
+        供「识别设置」的场次选择器使用，按 StartedAt 倒序返回。
+        以 recording 服务磁盘数据为准：「files 中所有文件均不存在」的空场次被过滤；
+        部分文件存在时返回的 files 收缩为实际存在的文件子集，size 为存在文件字节数之和。
+        recording 服务不可达时降级返回未过滤原始列表（size=null）。
       operationId: listRecordings
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -33,6 +37,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RecordingList"
+  /api/transcripts/candidate-rooms:
+    get:
+      summary: 查询候选主播列表
+      description: 供自动识别设置的「添加」选择器使用；从 recordings 聚合 distinct roomId 与各房间最新 mid，关联主播资料补 anchorName，按 roomId 升序返回。
+      operationId: listTranscriptCandidateRooms
+      responses:
+        "200":
+          description: 候选主播列表（roomId 升序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandidateRoomList"
   /api/transcripts/enqueue:
     post:
       summary: 手动发起转写任务
@@ -164,6 +180,9 @@ paths:
   /api/recordings/{roomId}/transcripts:
     get:
       summary: 按主播查询录播场次及转写任务
+      description: >-
+        该主播的录播场次及各场次 transcript 任务（含当前自动识别开关状态）。
+        与 GET /api/recordings 一致：所有文件均不存在的空场次被过滤；recording 服务不可达时降级返回未过滤列表。
       operationId: getRoomTranscripts
       parameters:
         - $ref: "#/components/parameters/RoomId"
@@ -197,6 +216,21 @@ paths:
           description: >-
             参数非法：请求体缺失；或 enable=true 时缺少 modelId、modelId 格式非法、
             指向不存在或未启用的模型
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: 删除指定主播的自动识别设置
+      description: 物理删除 transcript_auto_enqueue 记录；不影响该主播已存在的转写任务。
+      operationId: deleteTranscriptSettings
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+      responses:
+        "204":
+          description: 删除成功
+        "404":
+          description: 该主播的自动识别设置不存在
           content:
             application/json:
               schema:
@@ -501,6 +535,10 @@ components:
         mid:
           type: integer
           format: int64
+        anchorName:
+          type: string
+          nullable: true
+          description: 关联主播资料补全的名称；资料缺失为 null
         title:
           type: string
           nullable: true
@@ -508,6 +546,11 @@ components:
           type: array
           items:
             type: string
+        size:
+          type: integer
+          format: int64
+          nullable: true
+          description: 磁盘实际存在文件的总字节数；recording 服务不可达时为 null
         startedAt:
           type: string
           format: date-time
@@ -522,6 +565,25 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RecordingItem"
+    CandidateRoom:
+      type: object
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        mid:
+          type: integer
+          format: int64
+        anchorName:
+          type: string
+          nullable: true
+    CandidateRoomList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CandidateRoom"
     RoomTranscriptTaskRef:
       type: object
       properties:

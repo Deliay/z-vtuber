@@ -18,6 +18,9 @@ public sealed class FakeTranscriptTaskLock : ITranscriptTaskLock
     public bool Released { get; private set; }
     public int RenewalStarted;
 
+    /// <summary>释放时回调（供 provider 维护 HeldIds）。</summary>
+    public Action? OnRelease { get; set; }
+
     public Task<bool> CheckOwnershipAsync(CancellationToken ct = default)
     {
         if (!OwnershipResult)
@@ -33,6 +36,7 @@ public sealed class FakeTranscriptTaskLock : ITranscriptTaskLock
     public Task ReleaseAsync(CancellationToken ct = default)
     {
         Released = true;
+        OnRelease?.Invoke();
         return Task.CompletedTask;
     }
 
@@ -56,7 +60,12 @@ public sealed class FakeTranscriptTaskLockProvider : ITranscriptTaskLockProvider
             return Task.FromResult<ITranscriptTaskLock?>(null);
         }
 
-        LastHandle = new FakeTranscriptTaskLock { TaskId = taskId };
+        LastHandle = new FakeTranscriptTaskLock
+        {
+            TaskId = taskId,
+            OnRelease = () => HeldIds.Remove(taskId),
+        };
+        HeldIds.Add(taskId);
         return Task.FromResult<ITranscriptTaskLock?>(LastHandle);
     }
 
