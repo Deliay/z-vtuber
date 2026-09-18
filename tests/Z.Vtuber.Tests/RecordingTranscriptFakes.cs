@@ -1,8 +1,49 @@
 using Microsoft.Extensions.Logging;
 using Z.Vtuber.Common.Live;
 using Z.Vtuber.Recording.Recording;
+using Z.Vtuber.RecordingTranscript.Api.Clients;
 
 namespace Z.Vtuber.Tests;
+
+/// <summary>
+/// 假 file-stats 客户端：默认所有文件磁盘存在（size 取配置或 0），
+/// 可通过 <see cref="Missing"/> 标记不存在文件、<see cref="Throw"/> 模拟 recording 不可达。
+/// </summary>
+public sealed class FakeRecordingFileStatsClient : IRecordingFileStatsClient
+{
+    public bool Throw { get; set; }
+
+    public HashSet<(long RoomId, string FileName)> Missing { get; } = [];
+
+    public Dictionary<(long RoomId, string FileName), long> Sizes { get; } = [];
+
+    public List<RecordingFileStatsQuery> Queries { get; } = [];
+
+    public Task<IReadOnlyDictionary<(long RoomId, string FileName), RecordingFileStat>> GetFileStatsAsync(
+        IReadOnlyList<RecordingFileStatsQuery> queries, CancellationToken ct = default)
+    {
+        if (Throw)
+        {
+            throw new HttpRequestException("recording service unavailable");
+        }
+
+        Queries.AddRange(queries);
+        var result = new Dictionary<(long RoomId, string FileName), RecordingFileStat>();
+        foreach (var query in queries)
+        {
+            foreach (var file in query.Files)
+            {
+                var key = (query.RoomId, file);
+                var exists = !Missing.Contains(key);
+                result[key] = new RecordingFileStat(
+                    exists, exists ? Sizes.GetValueOrDefault(key) : null);
+            }
+        }
+
+        return Task.FromResult<IReadOnlyDictionary<(long RoomId, string FileName), RecordingFileStat>>(result);
+    }
+}
+
 
 /// <summary>内存事件发布器：记录发布的 started/finished 事件，可配置抛错以验证调用方容错。</summary>
 public sealed class FakeRecordingEventPublisher : IRecordingEventPublisher
