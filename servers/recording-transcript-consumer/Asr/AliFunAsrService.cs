@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -36,6 +37,7 @@ public sealed class AliFunAsrService : IStreamingAsrService
 {
     private const int SendChunkBytes = 32000;
     private const int ProgressLogEverySegments = 20;
+    private const int MaxRawLogLength = 2048;
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
 
     private readonly Uri _endpoint;
@@ -44,7 +46,37 @@ public sealed class AliFunAsrService : IStreamingAsrService
     private readonly string _model;
     private readonly IReadOnlyList<string> _context;
     private readonly TimeSpan _idleTimeout;
+    private readonly TimeSpan _startTimeout;
     private readonly ILogger _logger;
+
+    /// <summary>识别链路阶段，仅用于失败日志标注；跨任务共享读取，允许少量竞态。</summary>
+    private enum AsrPhase
+    {
+        Connecting,
+        Starting,
+        Streaming,
+        Finishing,
+    }
+
+    /// <summary>单次识别的运行统计：connect 起计时，send/receive/主枚举各写各字段，失败日志统一读取。</summary>
+    private sealed class RunStats
+    {
+        private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
+        private long _bytesSent;
+        private int _segmentsYielded;
+
+        public long ElapsedMs => _stopwatch.ElapsedMilliseconds;
+
+        public long BytesSent => Interlocked.Read(ref _bytesSent);
+
+        public int SegmentsYielded => Volatile.Read(ref _segmentsYielded);
+
+        public void AddBytes(int count) => Interlocked.Add(ref _bytesSent, count);
+
+        public void IncrementSegments() => Interlocked.Increment(ref _segmentsYielded);
+    }
+
+    private AsrPhase _phase = AsrPhase.Connecting;
 
     public AliFunAsrService(
         Uri endpoint,
@@ -53,7 +85,8 @@ public sealed class AliFunAsrService : IStreamingAsrService
         string model,
         IReadOnlyList<string> context,
         TimeSpan idleTimeout,
-        ILogger logger)
+        ILogger logger,
+        TimeSpan? startTimeout = null)
     {
         _endpoint = endpoint;
         _apiKey = apiKey;
@@ -61,12 +94,16 @@ public sealed class AliFunAsrService : IStreamingAsrService
         _model = model;
         _context = context;
         _idleTimeout = idleTimeout;
+        _startTimeout = startTimeout ?? StartTimeout;
         _logger = logger;
     }
 
     public async IAsyncEnumerable<StreamingAsrSegment> TranscribeAsync(
         Stream stream, [EnumeratorCancellation] CancellationToken ct = default)
     {
+        var stats = new RunStats();
+        _phase = AsrPhase.Connecting;
+
         using var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"bearer {_apiKey}");
         socket.Options.SetRequestHeader("X-DashScope-DataInspection", "enable");
@@ -74,11 +111,23 @@ public sealed class AliFunAsrService : IStreamingAsrService
         _logger.LogInformation(
             "FunASR connecting: endpoint={Endpoint} model={Model} offset={Offset}ms",
             _endpoint, _model, _offset);
-        await socket.ConnectAsync(_endpoint, ct);
+        try
+        {
+            await socket.ConnectAsync(_endpoint, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogFailure(
+                AsrPhase.Connecting, null, stats, "connect-failed",
+                $"endpoint={_endpoint} offset={_offset}ms error={ex.Message}");
+            throw;
+        }
+
         _logger.LogInformation("FunASR connected: endpoint={Endpoint}", _endpoint);
 
         var taskId = Guid.NewGuid().ToString("N");
         await SendTextAsync(socket, FunAsrProtocol.BuildRunTask(taskId, _model, _context), ct);
+        _phase = AsrPhase.Starting;
         _logger.LogInformation(
             "FunASR run-task sent: taskId={TaskId} model={Model} contextLines={ContextLines}",
             taskId, _model, _context.Count);
@@ -89,35 +138,26 @@ public sealed class AliFunAsrService : IStreamingAsrService
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         var receiveTask = Task.Run(
-            () => ReceiveLoopAsync(socket, channel.Writer, started, taskId, linkedCts.Token), linkedCts.Token);
+            () => ReceiveLoopAsync(socket, channel.Writer, started, taskId, stats, linkedCts.Token), linkedCts.Token);
         var sendTask = Task.Run(
-            () => SendAudioLoopAsync(socket, stream, taskId, started.Task, linkedCts.Token), linkedCts.Token);
+            () => SendAudioLoopAsync(socket, stream, taskId, started.Task, stats, linkedCts.Token), linkedCts.Token);
 
         // send/receive 任一任务异常（如无 task-started 超时、服务端停滞、websocket 异常关闭）都必须让主枚举
-        // 观测到，否则 channel 永不完成会导致任务永久悬挂并持续续期占住并发额度。
-        _ = Task.WhenAll(receiveTask, sendTask).ContinueWith(
-            t =>
-            {
-                if (t.IsFaulted && t.Exception is not null)
-                {
-                    channel.Writer.TryComplete(t.Exception.GetBaseException());
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+        // 立即观测到，否则 channel 永不完成会导致任务永久悬挂并持续续期占住并发额度。
+        // 注意：不能等 Task.WhenAll——两个任务中一方先失败时另一方可能仍在阻塞，会导致失败被延迟数秒才抛出。
+        _ = FaultChannelOnFailure(receiveTask, channel.Writer);
+        _ = FaultChannelOnFailure(sendTask, channel.Writer);
 
-        var segmentCount = 0;
         try
         {
             await foreach (var segment in channel.Reader.ReadAllAsync(ct))
             {
-                segmentCount++;
-                if (segmentCount % ProgressLogEverySegments == 0)
+                stats.IncrementSegments();
+                if (stats.SegmentsYielded % ProgressLogEverySegments == 0)
                 {
                     _logger.LogInformation(
                         "FunASR progress: taskId={TaskId} segments={Count} lastEnd={LastEnd}ms",
-                        taskId, segmentCount, segment.End);
+                        taskId, stats.SegmentsYielded, segment.End);
                 }
                 else
                 {
@@ -141,8 +181,24 @@ public sealed class AliFunAsrService : IStreamingAsrService
             }
 
             _logger.LogInformation(
-                "FunASR transcribe finished: taskId={TaskId} segments={Count}", taskId, segmentCount);
+                "FunASR transcribe finished: taskId={TaskId} segments={Count}", taskId, stats.SegmentsYielded);
         }
+    }
+
+    /// <summary>任一后台任务失败即用其根异常完成 channel，使主枚举立即抛出（而非等待所有任务收尾）。</summary>
+    private static Task FaultChannelOnFailure(Task task, ChannelWriter<StreamingAsrSegment> writer)
+    {
+        return task.ContinueWith(
+            t =>
+            {
+                if (t.IsFaulted && t.Exception is not null)
+                {
+                    writer.TryComplete(t.Exception.GetBaseException());
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private async Task ReceiveLoopAsync(
@@ -150,6 +206,7 @@ public sealed class AliFunAsrService : IStreamingAsrService
         ChannelWriter<StreamingAsrSegment> writer,
         TaskCompletionSource started,
         string taskId,
+        RunStats stats,
         CancellationToken ct)
     {
         var buffer = new byte[64 * 1024];
@@ -169,16 +226,13 @@ public sealed class AliFunAsrService : IStreamingAsrService
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
                         // 未收到 task-finished 的关闭属于异常终止，不得当作识别完成；带上 CloseStatus 便于排查
-                        _logger.LogWarning(
-                            "FunASR connection closed: taskId={TaskId} finishedNormally={Finished} closeStatus={CloseStatus} closeStatusDescription={CloseStatusDescription}",
-                            taskId,
-                            finishedNormally,
-                            result.CloseStatus,
-                            result.CloseStatusDescription);
+                        LogFailure(
+                            _phase, taskId, stats, "connection-closed",
+                            $"closeStatus={result.CloseStatus} closeStatusDescription={result.CloseStatusDescription} finishedNormally={finishedNormally}");
                         writer.TryComplete(finishedNormally
                             ? null
                             : new IOException(
-                                $"FunASR connection closed before task-finished (closeStatus={result.CloseStatus}, description={result.CloseStatusDescription})"));
+                                $"[{_phase}] FunASR connection closed before task-finished (closeStatus={result.CloseStatus}, description={result.CloseStatusDescription})"));
                         return;
                     }
 
@@ -222,9 +276,14 @@ public sealed class AliFunAsrService : IStreamingAsrService
                         writer.TryComplete();
                         return;
                     case FunAsrProtocol.EventTaskFailed:
-                        var error = FunAsrProtocol.ParseErrorMessage(json);
-                        _logger.LogWarning("FunASR task-failed: taskId={TaskId} error={Error}", taskId, error);
-                        writer.TryComplete(new InvalidOperationException(error));
+                        // task-failed 视为已进入识别链路；记录三方错误码/描述与原始报文（截断）供排查
+                        _phase = AsrPhase.Streaming;
+                        FunAsrProtocol.TryParseTaskFailed(json, out var errorCode, out var errorMessage);
+                        LogFailure(
+                            _phase, taskId, stats, "task-failed",
+                            $"errorCode={errorCode ?? "-"} errorMessage={errorMessage ?? "-"} raw={TruncateRaw(json)}");
+                        writer.TryComplete(new InvalidOperationException(
+                            $"[{_phase}] FunASR task failed ({errorCode}): {errorMessage}"));
                         return;
                     default:
                         _logger.LogDebug("FunASR unknown event ignored: taskId={TaskId} event={Event}", taskId, @event);
@@ -232,10 +291,10 @@ public sealed class AliFunAsrService : IStreamingAsrService
                 }
             }
 
-            _logger.LogWarning("FunASR connection ended before task-finished: taskId={TaskId}", taskId);
+            LogFailure(_phase, taskId, stats, "connection-ended", $"finishedNormally={finishedNormally}");
             writer.TryComplete(finishedNormally
                 ? null
-                : new IOException("FunASR connection ended before task-finished"));
+                : new IOException($"[{_phase}] FunASR connection ended before task-finished"));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -245,15 +304,15 @@ public sealed class AliFunAsrService : IStreamingAsrService
         catch (OperationCanceledException)
         {
             // idleCts 触发：服务端超过 AsrIdleTimeoutSeconds 无任何消息 → 识别卡死，FAILED 可重试
-            _logger.LogWarning(
-                "FunASR idle timeout after {Timeout}s: taskId={TaskId} (no server message, likely stuck)",
-                _idleTimeout.TotalSeconds, taskId);
+            LogFailure(
+                _phase, taskId, stats, "idle-timeout",
+                $"timeoutSeconds={_idleTimeout.TotalSeconds}");
             writer.TryComplete(new TimeoutException(
-                $"FunASR produced no message for {_idleTimeout.TotalSeconds}s; treating task as stuck"));
+                $"[{_phase}] FunASR produced no message for {_idleTimeout.TotalSeconds}s; treating task as stuck"));
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "FunASR websocket receive loop failed: taskId={TaskId}", taskId);
+            LogFailure(_phase, taskId, stats, "receive-loop-failed", $"error={ex.Message}", ex);
             writer.TryComplete(ex);
         }
         finally
@@ -270,25 +329,65 @@ public sealed class AliFunAsrService : IStreamingAsrService
         Stream stream,
         string taskId,
         Task started,
+        RunStats stats,
         CancellationToken ct)
     {
-        await started.WaitAsync(StartTimeout, ct);
+        try
+        {
+            await started.WaitAsync(_startTimeout, ct);
+        }
+        catch (TimeoutException)
+        {
+            LogFailure(
+                AsrPhase.Starting, taskId, stats, "task-started-timeout",
+                $"timeoutSeconds={_startTimeout.TotalSeconds}");
+            throw new TimeoutException(
+                $"[{AsrPhase.Starting}] FunASR task-started not received within {_startTimeout.TotalSeconds}s: taskId={taskId}");
+        }
+
+        _phase = AsrPhase.Streaming;
 
         var buffer = new byte[SendChunkBytes];
-        long totalBytes = 0;
         int read;
         while ((read = await stream.ReadAsync(buffer, ct)) > 0)
         {
             await socket.SendAsync(
                 new ArraySegment<byte>(buffer, 0, read), WebSocketMessageType.Binary, true, ct);
-            totalBytes += read;
-            _logger.LogDebug("FunASR audio sent: taskId={TaskId} bytes={Bytes}", taskId, totalBytes);
+            stats.AddBytes(read);
+            _logger.LogDebug("FunASR audio sent: taskId={TaskId} bytes={Bytes}", taskId, stats.BytesSent);
         }
 
         await SendTextAsync(socket, FunAsrProtocol.BuildFinishTask(taskId), ct);
+        _phase = AsrPhase.Finishing;
         _logger.LogInformation(
-            "FunASR finish-task sent: taskId={TaskId} audioBytes={Bytes}", taskId, totalBytes);
+            "FunASR finish-task sent: taskId={TaskId} audioBytes={Bytes}", taskId, stats.BytesSent);
     }
+
+    /// <summary>统一失败日志：固定输出 phase/taskId/model/elapsedMs/bytesSent/segmentsYielded，details 为场景特有字段。</summary>
+    private void LogFailure(
+        AsrPhase phase,
+        string? taskId,
+        RunStats stats,
+        string reason,
+        string details,
+        Exception? exception = null)
+    {
+        _logger.LogWarning(
+            exception,
+            "FunASR failure {Reason}: phase={Phase} taskId={TaskId} model={Model} elapsedMs={ElapsedMs} bytesSent={BytesSent} segmentsYielded={SegmentsYielded} {Details}",
+            reason,
+            phase,
+            taskId ?? "-",
+            _model,
+            stats.ElapsedMs,
+            stats.BytesSent,
+            stats.SegmentsYielded,
+            details);
+    }
+
+    /// <summary>原始报文超过上限即截断并追加标记，控制日志体积同时标明不完整。</summary>
+    private static string TruncateRaw(string raw) =>
+        raw.Length <= MaxRawLogLength ? raw : raw[..MaxRawLogLength] + "...(truncated)";
 
     private static Task SendTextAsync(ClientWebSocket socket, string json, CancellationToken ct) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, ct);
