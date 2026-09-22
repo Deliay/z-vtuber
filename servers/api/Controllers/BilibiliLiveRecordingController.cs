@@ -221,6 +221,64 @@ public class BilibiliLiveRecordingController(
         }
     }
 
+    [HttpGet("{roomId:long}/recordings/{fileName}/audio")]
+    public async Task<IActionResult> ProxyRecordingAudio(long roomId, string fileName, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient(RecordingClientName);
+        HttpResponseMessage response;
+        try
+        {
+            // query 原样透传；上游不支持 Range，本代理不透传 Range 语义
+            response = await client.GetAsync(
+                $"api/{roomId}/recordings/{Uri.EscapeDataString(fileName)}/audio{Request.QueryString}",
+                HttpCompletionOption.ResponseHeadersRead,
+                ct);
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 上游超时（非客户端取消）也应返回契约约定的 502
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return NotFound();
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            {
+                // 上游 400（文件名非法 / 区间参数非法 / 录制中）原样透传响应体，避免被归并为 502
+                var json = await response.Content.ReadAsStringAsync(ct);
+                var badRequest = Content(json, "application/json");
+                badRequest.StatusCode = StatusCodes.Status400BadRequest;
+                return badRequest;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+            }
+
+            // 片段供 <audio> 内联播放：仅透传 Content-Type 与 Cache-Control，
+            // 绝不设置 Content-Disposition（下载代理的 attachment 兜底不适用于本端点）
+            Response.StatusCode = (int)response.StatusCode;
+            Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
+            if (response.Headers.CacheControl is not null)
+            {
+                Response.Headers.CacheControl = response.Headers.CacheControl.ToString();
+            }
+
+            await response.Content.CopyToAsync(Response.Body, ct);
+            return new EmptyResult();
+        }
+    }
+
     [HttpGet("{roomId:long}/live-stream/audio")]
     public async Task<IActionResult> ProxyAudio(long roomId, CancellationToken ct)
     {

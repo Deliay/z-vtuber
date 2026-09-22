@@ -13,7 +13,8 @@ public sealed class RecordingController(
     RecordingStatusRepository statusRepository,
     RecordingRepository recordings,
     AudioStreamHub audio,
-    RecordingOptions options) : ControllerBase
+    RecordingOptions options,
+    IAudioClipExtractor? clipExtractor = null) : ControllerBase
 {
     internal const int MaxFileStatsItems = 100;
 
@@ -116,32 +117,64 @@ public sealed class RecordingController(
     [HttpGet("{roomId:long}/recordings/{fileName}")]
     public async Task<IActionResult> DownloadRecording(long roomId, string fileName, CancellationToken ct)
     {
-        if (!IsSafeFileName(fileName))
+        var (error, fullPath) = await ResolveRecordingFileAsync(roomId, fileName, ct);
+        if (error is not null)
         {
-            return BadRequest(new { error = "invalid fileName" });
-        }
-
-        var directory = Path.GetFullPath(RoomDirectory(roomId));
-        var fullPath = Path.GetFullPath(Path.Combine(directory, fileName));
-
-        // 解析后必须落在房间存储目录内
-        if (!fullPath.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-        {
-            return NotFound();
-        }
-
-        var recordingFiles = await GetRecordingFilesAsync(roomId, ct);
-        if (recordingFiles.Contains(fileName))
-        {
-            return BadRequest(new { error = "file is still recording and cannot be downloaded" });
-        }
-
-        if (!System.IO.File.Exists(fullPath))
-        {
-            return NotFound();
+            return error;
         }
 
         return PhysicalFile(fullPath, "application/octet-stream", fileName, enableRangeProcessing: true);
+    }
+
+    [HttpGet("{roomId:long}/recordings/{fileName}/audio")]
+    public async Task<IActionResult> DownloadRecordingAudioClip(
+        long roomId, string fileName, long? startMs, long? endMs, CancellationToken ct)
+    {
+        if (startMs is null || endMs is null)
+        {
+            return BadRequest(new { error = "startMs and endMs are required" });
+        }
+
+        if (startMs < 0)
+        {
+            return BadRequest(new { error = "startMs must be >= 0" });
+        }
+
+        if (endMs <= startMs)
+        {
+            return BadRequest(new { error = "endMs must be greater than startMs" });
+        }
+
+        if (endMs - startMs > options.AudioClipMaxDurationMs)
+        {
+            return BadRequest(new { error = $"clip duration must be <= {options.AudioClipMaxDurationMs} ms" });
+        }
+
+        var (error, fullPath) = await ResolveRecordingFileAsync(roomId, fileName, ct);
+        if (error is not null)
+        {
+            return error;
+        }
+
+        var extractor = clipExtractor
+            ?? throw new InvalidOperationException("IAudioClipExtractor is not configured");
+
+        // 片段即最小播放单元：不支持 Range（忽略请求头，始终 200 整片段），每次现算不缓存
+        Response.ContentType = extractor.ContentType;
+        Response.Headers.CacheControl = "no-store";
+        try
+        {
+            // -ss/-t 输入 seek + pipe:1 直写响应体；endMs 超文件长度由 ffmpeg 自然输出到结尾
+            await extractor.ExtractAsync(fullPath, startMs.Value, endMs.Value, Response.Body, ct);
+        }
+        catch (AudioClipFailedException)
+        {
+            // 零字节失败说明尚未写出任何响应体：清掉音频头信息后按契约返回 500
+            Response.ContentType = null;
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "audio clip failed" });
+        }
+
+        return new EmptyResult();
     }
 
     [HttpGet("{roomId:long}/stream/audio")]
@@ -181,6 +214,42 @@ public sealed class RecordingController(
     }
 
     private string RoomDirectory(long roomId) => Path.Combine(options.StorageDir, roomId.ToString());
+
+    /// <summary>
+    /// 下载与音频片段共用的文件解析，顺序与原下载端点完全一致：
+    /// IsSafeFileName 平文件名 400 → Path.GetFullPath 前缀校验 404 → 录制中 400 → File.Exists 404。
+    /// 返回 (null, fullPath) 表示可访问。
+    /// </summary>
+    private async Task<(IActionResult? Error, string FullPath)> ResolveRecordingFileAsync(
+        long roomId, string fileName, CancellationToken ct)
+    {
+        if (!IsSafeFileName(fileName))
+        {
+            return (BadRequest(new { error = "invalid fileName" }), string.Empty);
+        }
+
+        var directory = Path.GetFullPath(RoomDirectory(roomId));
+        var fullPath = Path.GetFullPath(Path.Combine(directory, fileName));
+
+        // 解析后必须落在房间存储目录内
+        if (!fullPath.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return (NotFound(), string.Empty);
+        }
+
+        var recordingFiles = await GetRecordingFilesAsync(roomId, ct);
+        if (recordingFiles.Contains(fileName))
+        {
+            return (BadRequest(new { error = "file is still recording and cannot be downloaded" }), string.Empty);
+        }
+
+        if (!System.IO.File.Exists(fullPath))
+        {
+            return (NotFound(), string.Empty);
+        }
+
+        return (null, fullPath);
+    }
 
     /// <summary>
     /// 当前场次「录制中」文件集合：state=recording 且心跳未超阈值时取当前场次产出文件名；否则为空集合。
