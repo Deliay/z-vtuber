@@ -150,6 +150,20 @@ export function recordingDownloadUrl(roomId: number, fileName: string): string {
   return `${BASE_URL}/b/live/${roomId}/recordings/${encodeURIComponent(fileName)}`
 }
 
+export function recordingAudioClipUrl(
+  roomId: number,
+  fileName: string,
+  startMs: number,
+  endMs: number,
+): string {
+  const query = new URLSearchParams({ startMs: String(startMs), endMs: String(endMs) })
+  return `${BASE_URL}/b/live/${roomId}/recordings/${encodeURIComponent(fileName)}/audio?${query}`
+}
+
+export function transcriptSubtitleUrl(taskId: string, format: 'srt' | 'ass'): string {
+  return `${BASE_URL}/transcripts/task/${encodeURIComponent(taskId)}/subtitle?format=${format}`
+}
+
 export async function listWeiboSubscriptions(): Promise<WeiboSubscriptionItem[]> {
   const data = await request<weiboComponents['schemas']['WeiboSubscriptionList']>(
     '/weibo/subscription',

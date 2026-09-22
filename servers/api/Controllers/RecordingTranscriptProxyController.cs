@@ -46,6 +46,10 @@ public class RecordingTranscriptProxyController(IHttpClientFactory httpClientFac
     public Task<IActionResult> StreamTranscriptSegments(string taskId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Get, $"api/transcripts/task/{Uri.EscapeDataString(taskId)}/sse", ct, streaming: true);
 
+    [HttpGet("transcripts/task/{taskId}/subtitle")]
+    public Task<IActionResult> DownloadTranscriptSubtitle(string taskId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Get, $"api/transcripts/task/{Uri.EscapeDataString(taskId)}/subtitle", ct);
+
     [HttpGet("transcripts/task/{taskId}")]
     public Task<IActionResult> GetTranscriptTask(string taskId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Get, $"api/transcripts/task/{Uri.EscapeDataString(taskId)}", ct);
@@ -122,6 +126,14 @@ public class RecordingTranscriptProxyController(IHttpClientFactory httpClientFac
             else if (response.Headers.CacheControl is not null)
             {
                 Response.Headers.CacheControl = response.Headers.CacheControl.ToString();
+            }
+
+            // 文件下载类响应（字幕等）：上游携带 Content-Disposition 时透传（含 filename*）；
+            // 上游不携带则不设置，既有 JSON/SSE 端点不受影响。
+            var contentDisposition = response.Content.Headers.ContentDisposition?.ToString();
+            if (!string.IsNullOrEmpty(contentDisposition))
+            {
+                Response.Headers.ContentDisposition = contentDisposition;
             }
 
             await response.Content.CopyToAsync(Response.Body, ct);

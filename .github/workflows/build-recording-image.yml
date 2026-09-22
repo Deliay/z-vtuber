@@ -19,6 +19,21 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # 构建期断言：试听链路依赖 libmp3lame（缺失时运行期降级 wav，见提案 §9.2）
+      - name: Build image for mp3 encoder assertion
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: servers/recording/Dockerfile
+          tags: z-vtuber-recording:mp3-assert
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+
+      - name: Assert ffmpeg mp3 encoder available
+        run: docker run --rm --entrypoint ffmpeg z-vtuber-recording:mp3-assert -encoders | grep -q mp3
+
       - name: Log in to registry
         uses: docker/login-action@v3
         with:

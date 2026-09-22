@@ -128,9 +128,14 @@ public sealed class AliFunAsrService : IStreamingAsrService
         var taskId = Guid.NewGuid().ToString("N");
         await SendTextAsync(socket, FunAsrProtocol.BuildRunTask(taskId, _model, _context), ct);
         _phase = AsrPhase.Starting;
+        var joinedContext = string.Join("\n", _context);
         _logger.LogInformation(
-            "FunASR run-task sent: taskId={TaskId} model={Model} contextLines={ContextLines}",
-            taskId, _model, _context.Count);
+            "FunASR run-task sent: taskId={TaskId} model={Model} contextLines={ContextLines} contextChars={ContextChars} context={Context}",
+            taskId,
+            _model,
+            _context.Count,
+            joinedContext.Length,
+            _context.Count == 0 ? "(空上下文)" : TruncateForLog(joinedContext));
 
         var channel = Channel.CreateUnbounded<StreamingAsrSegment>(
             new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
@@ -281,7 +286,7 @@ public sealed class AliFunAsrService : IStreamingAsrService
                         FunAsrProtocol.TryParseTaskFailed(json, out var errorCode, out var errorMessage);
                         LogFailure(
                             _phase, taskId, stats, "task-failed",
-                            $"errorCode={errorCode ?? "-"} errorMessage={errorMessage ?? "-"} raw={TruncateRaw(json)}");
+                            $"errorCode={errorCode ?? "-"} errorMessage={errorMessage ?? "-"} raw={TruncateForLog(json)}");
                         writer.TryComplete(new InvalidOperationException(
                             $"[{_phase}] FunASR task failed ({errorCode}): {errorMessage}"));
                         return;
@@ -385,9 +390,9 @@ public sealed class AliFunAsrService : IStreamingAsrService
             details);
     }
 
-    /// <summary>原始报文超过上限即截断并追加标记，控制日志体积同时标明不完整。</summary>
-    private static string TruncateRaw(string raw) =>
-        raw.Length <= MaxRawLogLength ? raw : raw[..MaxRawLogLength] + "...(truncated)";
+    /// <summary>日志文本（原始报文/识别上下文）超过上限即截断并追加标记，控制日志体积同时标明不完整。</summary>
+    internal static string TruncateForLog(string text) =>
+        text.Length <= MaxRawLogLength ? text : text[..MaxRawLogLength] + "...(truncated)";
 
     private static Task SendTextAsync(ClientWebSocket socket, string json, CancellationToken ct) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, ct);

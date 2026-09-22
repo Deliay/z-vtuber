@@ -115,6 +115,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transcripts/task/{taskId}/subtitle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 下载字幕文件（SRT/ASS）
+         * @description 按已入库 transcript_segments 渲染字幕文件（UTF-8 带 BOM），任意状态任务均可下载： DONE 返回完整字幕，RUNNING/PENDING/FAILED 返回已入库片段渲染的字幕，无片段时返回合法空字幕 （SRT 为空文本、ASS 含文件头）。
+         */
+        get: operations["downloadTranscriptSubtitle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/transcripts/task/{taskId}/retry": {
         parameters: {
             query?: never;
@@ -644,6 +664,57 @@ export interface operations {
                 };
             };
             /** @description 任务不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    downloadTranscriptSubtitle: {
+        parameters: {
+            query?: {
+                /** @description 字幕格式，srt（默认）| ass；其他取值返回 400 */
+                format?: "srt" | "ass";
+            };
+            header?: never;
+            path: {
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 字幕文件内容 */
+            200: {
+                headers: {
+                    /** @description srt 为 application/x-subrip; charset=utf-8，ass 为 text/x-ass; charset=utf-8 */
+                    "Content-Type"?: string;
+                    /** @description attachment; filename="<ascii 兜底>.<ext>"; filename*=UTF-8''<百分号编码> */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-subrip": string;
+                    "text/x-ass": string;
+                };
+            };
+            /** @description format 不支持（非 srt/ass） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example unsupported format */
+                        error: string;
+                    };
+                };
+            };
+            /** @description 任务不存在（含 taskId 非法） */
             404: {
                 headers: {
                     [name: string]: unknown;
