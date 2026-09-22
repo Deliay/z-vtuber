@@ -115,6 +115,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/{roomId}/recordings/{fileName}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 录播音频片段（试听）
+         * @description 按 startMs/endMs 从录播文件抽取音频片段并转码为浏览器可直接播放的格式流式返回。 片段即最小播放单元，不支持 HTTP Range 分段（忽略 Range 请求头，始终返回 200 完整片段）； endMs 超出文件实际长度时输出到文件结尾（不报错）；文件正在录制中返回 400（与下载端点同口径）。
+         */
+        get: operations["downloadRecordingAudioClip"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -415,6 +435,68 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    downloadRecordingAudioClip: {
+        parameters: {
+            query: {
+                /** @description 片段起点（整场录播文件时间轴毫秒，>= 0） */
+                startMs: number;
+                /** @description 片段终点（毫秒，必须大于 startMs；区间长度上限 Recording:AudioClipMaxDurationMs，默认 300000） */
+                endMs: number;
+            };
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+                /** @description 录播文件名（仅允许平文件名，禁止路径分隔符与穿越） */
+                fileName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 片段音频（mp3，单声道 44.1kHz 96kbps；未探测到 mp3 编码能力时降级 wav，语义不变） */
+            200: {
+                headers: {
+                    /** @description 固定 no-store，片段每次现算不缓存 */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
+                    "audio/wav": string;
+                };
+            };
+            /** @description fileName 非法 / 区间参数非法（endMs <= startMs、startMs < 0）/ 区间超上限 / 文件正在录制中 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
+                };
+            };
+            /** @description 文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description ffmpeg 抽取失败（如损坏文件） */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example audio clip failed */
+                        error: string;
+                    };
+                };
             };
         };
     };
