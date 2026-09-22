@@ -52,6 +52,10 @@ public sealed class RecordingOptions
     [Required]
     public string FfprobePath { get; set; } = "ffprobe";
 
+    /// <summary>单次音频片段（试听）时长上限（毫秒），超限 400。</summary>
+    [Range(1, 86_400_000)]
+    public int AudioClipMaxDurationMs { get; set; } = 300000;
+
     /// <summary>ffmpeg 可执行文件路径。</summary>
     [Required]
     public string FfmpegPath { get; set; } = "ffmpeg";

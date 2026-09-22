@@ -24,6 +24,7 @@ import {
   listRecordings,
   recordingAudioUrl,
   recordingDownloadUrl,
+  recordingAudioClipUrl,
   listWeiboCookieAccounts,
   createWeiboCookieAccount,
   getWeiboCookieAccount,
@@ -40,6 +41,7 @@ import {
   getTranscriptTask,
   retryTranscriptTask,
   transcriptSseUrl,
+  transcriptSubtitleUrl,
   openTranscriptStream,
   getTranscriptSettings,
   setRoomAutoEnqueue,
@@ -625,6 +627,15 @@ describe('API Client', () => {
         '/b/live/456/recordings/%5BRAW%5D%20a.flv',
       )
     })
+
+    it('recordingAudioClipUrl should build the audio clip url with encoded file name and ms query', () => {
+      expect(recordingAudioClipUrl(456, '[RAW] a.flv', 1000, 2500)).toBe(
+        '/api/b/live/456/recordings/%5BRAW%5D%20a.flv/audio?startMs=1000&endMs=2500',
+      )
+      expect(recordingAudioClipUrl(101, 'a.flv', 0, 1000)).toBe(
+        '/api/b/live/101/recordings/a.flv/audio?startMs=0&endMs=1000',
+      )
+    })
   })
 
   describe('Cookie Service', () => {
@@ -1079,6 +1090,15 @@ describe('API Client', () => {
 
     it('transcriptSseUrl should build the SSE endpoint url', () => {
       expect(transcriptSseUrl('t1')).toBe('/api/transcripts/task/t1/sse')
+    })
+
+    it('transcriptSubtitleUrl should build the subtitle download url with encoded taskId and format', () => {
+      expect(transcriptSubtitleUrl('t 1', 'srt')).toBe(
+        '/api/transcripts/task/t%201/subtitle?format=srt',
+      )
+      expect(transcriptSubtitleUrl('t1', 'ass')).toBe(
+        '/api/transcripts/task/t1/subtitle?format=ass',
+      )
     })
 
     it('openTranscriptStream should create an EventSource at the SSE url', () => {

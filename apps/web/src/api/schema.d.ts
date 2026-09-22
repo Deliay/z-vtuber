@@ -328,6 +328,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/b/live/{roomId}/recordings/{fileName}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 代理录播音频片段（试听）
+         * @description 代理 recording 服务的音频片段端点，query 原样透传；上游不支持 Range 分段，本代理不透传 Range 语义， 成功响应不设置 Content-Disposition（供 <audio> 内联播放）。
+         */
+        get: operations["proxyRoomRecordingAudioClip"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/b/live/{roomId}/live-stream/audio": {
         parameters: {
             query?: never;
@@ -414,6 +434,26 @@ export interface paths {
         };
         /** 查询转写任务详情与全量 segments（代理转写服务） */
         get: operations["getTranscriptTask"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transcripts/task/{taskId}/subtitle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 代理下载字幕文件（SRT/ASS）
+         * @description 代理 recording-transcript-api 的字幕下载端点，query 原样透传；200 透传 Content-Type 与 Content-Disposition。
+         */
+        get: operations["proxyTranscriptSubtitle"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1629,6 +1669,61 @@ export interface operations {
             };
         };
     };
+    proxyRoomRecordingAudioClip: {
+        parameters: {
+            query: {
+                /** @description 片段起点（整场录播文件时间轴毫秒，>= 0） */
+                startMs: number;
+                /** @description 片段终点（毫秒，必须大于 startMs；区间长度上限见 recording 服务配置） */
+                endMs: number;
+            };
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+                fileName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 片段音频（透传上游 Content-Type 与 Cache-Control） */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
+                    "audio/wav": string;
+                };
+            };
+            /** @description fileName 非法 / 区间参数非法 / 区间超上限 / 文件正在录制中（透传上游响应体） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
+                };
+            };
+            /** @description 文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description recording 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     proxyLiveAudio: {
         parameters: {
             query?: never;
@@ -1807,6 +1902,58 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecordingTranscriptTaskDetail"];
+                };
+            };
+            /** @description 任务不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
+                };
+            };
+            /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    proxyTranscriptSubtitle: {
+        parameters: {
+            query?: {
+                /** @description 字幕格式，srt（默认）| ass；其他取值返回 400 */
+                format?: "srt" | "ass";
+            };
+            header?: never;
+            path: {
+                taskId: components["parameters"]["TranscriptTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 字幕文件内容（透传 Content-Type 与 Content-Disposition） */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-subrip": string;
+                    "text/x-ass": string;
+                };
+            };
+            /** @description format 不支持（非 srt/ass） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptErrorResponse"];
                 };
             };
             /** @description 任务不存在 */
