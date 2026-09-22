@@ -192,7 +192,18 @@ public sealed class TranscriptEnqueueService(
 
         try
         {
-            return await tasks.InsertAsync(record, ct);
+            var taskId = await tasks.InsertAsync(record, ct);
+            // 入队创建提交信息（与 transcript-api 手动入队日志同字段名，便于检索对账）；绝不输出模型 ApiKey
+            logger.LogInformation(
+                "transcript task enqueued: taskId={TaskId} recordingId={RecordingId} roomId={RoomId} file={File} modelId={ModelId} mode={Mode} source={Source}",
+                taskId,
+                recording.Id,
+                recording.RoomId,
+                record.File,
+                model.Id,
+                mode,
+                source);
+            return taskId;
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {

@@ -40,6 +40,10 @@ builder.Services.AddSingleton(sp =>
     new AudioStreamHub(sp.GetRequiredService<RecordingOptions>().AudioBufferBytes));
 builder.Services.AddSingleton<RecordingStatusReporter>();
 
+// 试听链路：音频片段抽取（启动时探测 mp3 编码能力，缺失降级 wav）
+builder.Services.AddSingleton(new Mp3EncoderSupport());
+builder.Services.AddSingleton<IAudioClipExtractor, AudioClipExtractor>();
+
 builder.Services.AddHttpClient<IBiliLiveApi, BiliLiveApiClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);
@@ -62,6 +66,16 @@ builder.Services.AddHostedService<LiveStatusPoller>();
 builder.Services.AddControllers();
 
 var app = builder.Build();
+
+// 启动探测 mp3 编码能力：ffmpeg -encoders 缺 libmp3lame 记 Warn 并降级 wav（audio/wav，接口语义不变）
+var recordingOptions = app.Services.GetRequiredService<RecordingOptions>();
+var mp3Support = app.Services.GetRequiredService<Mp3EncoderSupport>();
+if (!mp3Support.Probe(recordingOptions.FfmpegPath))
+{
+    app.Services.GetRequiredService<ILogger<Program>>().LogWarning(
+        "ffmpeg at {FfmpegPath} has no libmp3lame encoder; recording audio clip endpoint degrades to wav (audio/wav).",
+        recordingOptions.FfmpegPath);
+}
 
 using (var scope = app.Services.CreateScope())
 {

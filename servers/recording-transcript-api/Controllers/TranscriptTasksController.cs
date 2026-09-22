@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -17,9 +19,13 @@ public class TranscriptTasksController(
     TranscriptTaskRepository tasks,
     TranscriptSegmentRepository segments,
     TranscriptModelRepository models,
-    TranscriptSegmentStream segmentStream) : ControllerBase
+    TranscriptSegmentStream segmentStream,
+    ILogger<TranscriptTasksController>? logger = null) : ControllerBase
 {
     internal const int DefaultLimit = 50;
+
+    private readonly ILogger<TranscriptTasksController> _logger =
+        logger ?? NullLogger<TranscriptTasksController>.Instance;
 
     [HttpPost("api/transcripts/enqueue")]
     public async Task<IActionResult> Enqueue([FromBody] EnqueueRequest? request, CancellationToken ct = default)
@@ -51,6 +57,7 @@ public class TranscriptTasksController(
         var existing = await tasks.GetByRecordingAndModelAsync(recordingId, modelId, ct);
         if (existing is not null)
         {
+            LogEnqueued(LogLevel.Debug, existing, " (idempotent hit, 409)");
             return Conflict(new EnqueueResponseDto(existing.Id.ToString(), existing.Status));
         }
 
@@ -78,14 +85,32 @@ public class TranscriptTasksController(
             var duplicate = await tasks.GetByRecordingAndModelAsync(recordingId, modelId, ct);
             if (duplicate is not null)
             {
+                LogEnqueued(LogLevel.Debug, duplicate, " (idempotent hit, 409)");
                 return Conflict(new EnqueueResponseDto(duplicate.Id.ToString(), duplicate.Status));
             }
 
             throw;
         }
 
+        LogEnqueued(LogLevel.Information, task, string.Empty);
         return Ok(new EnqueueResponseDto(task.Id.ToString(), task.Status));
     }
+
+    /// <summary>
+    /// 入队提交信息日志（Info=建任务成功，Debug=409 幂等命中）：只输出任务元信息，绝不输出模型 ApiKey。
+    /// </summary>
+    private void LogEnqueued(LogLevel level, TranscriptTaskRecord task, string suffix) =>
+        _logger.Log(
+            level,
+            "transcript task enqueued: taskId={TaskId} recordingId={RecordingId} roomId={RoomId} file={File} modelId={ModelId} mode={Mode} source={Source}{Suffix}",
+            task.Id,
+            task.RecordingId,
+            task.RoomId,
+            task.File,
+            task.ModelId,
+            task.Mode,
+            task.Source,
+            suffix);
 
     [HttpGet("api/transcripts/task")]
     public async Task<IActionResult> ListTasks(

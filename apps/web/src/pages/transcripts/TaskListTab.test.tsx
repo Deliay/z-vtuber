@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react'
 import { TaskListTab } from './TaskListTab'
 import * as client from '../../api/client'
 
@@ -34,6 +34,35 @@ class MockEventSource {
   }
 }
 
+class MockAudio extends EventTarget {
+  static instances: MockAudio[] = []
+  src = ''
+  paused = true
+  currentTime = 0
+  preload = ''
+  play = vi.fn((): Promise<void> => {
+    this.paused = false
+    return Promise.resolve()
+  })
+  pause = vi.fn((): void => {
+    this.paused = true
+  })
+  removeAttribute = vi.fn((name: string): void => {
+    if (name === 'src') {
+      this.src = ''
+    }
+  })
+
+  constructor() {
+    super()
+    MockAudio.instances.push(this)
+  }
+}
+
+type TaskItem = Awaited<ReturnType<typeof client.listTranscriptTasks>>[number]
+type SegmentItem = Awaited<ReturnType<typeof client.getTranscriptTask>>['segments'][number]
+type TaskDetail = Awaited<ReturnType<typeof client.getTranscriptTask>>
+
 vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>()
   return {
@@ -56,11 +85,53 @@ const mockGetRoomTranscripts = vi.mocked(client.getRoomTranscripts)
 const mockEnqueue = vi.mocked(client.enqueueTranscript)
 const mockRetry = vi.mocked(client.retryTranscriptTask)
 
+const panelTask: TaskItem = {
+  id: 't1',
+  status: 'DONE',
+  title: '场次1',
+  roomId: 101,
+  file: '[RAW] a.flv',
+  createdAt: '2026-09-02T00:00:00Z',
+}
+
+const panelSegments: SegmentItem[] = [
+  { start: 0, end: 1000, text: '第一句' },
+  { start: 1000, end: 2500, text: '第二句' },
+]
+
+async function getAudio(): Promise<MockAudio> {
+  await waitFor(() => {
+    expect(MockAudio.instances.length).toBeGreaterThan(0)
+  })
+  return MockAudio.instances[0]
+}
+
+function emitAudioEvent(audio: MockAudio, type: string): void {
+  act(() => {
+    audio.dispatchEvent(new Event(type))
+  })
+}
+
+async function openTaskPanel(listTasks: TaskItem[], detail: TaskDetail) {
+  mockListTasks.mockResolvedValue(listTasks)
+  mockGetTask.mockResolvedValue(detail)
+  const view = render(<TaskListTab />)
+  fireEvent.click(await screen.findByText('查看'))
+  if (detail.segments.length > 0) {
+    await screen.findByText(detail.segments[0].text)
+  } else {
+    await screen.findByText('暂无识别结果')
+  }
+  return view
+}
+
 describe('TaskListTab', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     MockEventSource.instances = []
+    MockAudio.instances = []
     vi.stubGlobal('EventSource', MockEventSource)
+    vi.stubGlobal('Audio', MockAudio)
     mockListTasks.mockResolvedValue([])
     mockGetTask.mockResolvedValue({ task: {}, segments: [] })
     mockListRecordings.mockResolvedValue([
@@ -378,5 +449,140 @@ describe('TaskListTab', () => {
     expect(container).not.toBeNull()
     expect(container?.style.maxHeight).toBe('24rem')
     expect(container?.style.overflowY).toBe('auto')
+  })
+
+  it('should play a segment clip, switch source and stop on the second click', async () => {
+    await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
+
+    const audio = await getAudio()
+    const [first, second] = screen.getAllByRole('listitem')
+
+    fireEvent.click(within(first).getByRole('button', { name: '播放' }))
+    expect(audio.src).toBe(
+      '/api/b/live/101/recordings/%5BRAW%5D%20a.flv/audio?startMs=0&endMs=1000',
+    )
+    expect(audio.play).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(within(second).getByRole('button', { name: '播放' }))
+    expect(audio.src).toBe(
+      '/api/b/live/101/recordings/%5BRAW%5D%20a.flv/audio?startMs=1000&endMs=2500',
+    )
+    expect(audio.play).toHaveBeenCalledTimes(2)
+    expect(within(first).getByRole('button', { name: '播放' })).toBeInTheDocument()
+    expect(within(second).getByRole('button', { name: '停止' })).toBeInTheDocument()
+
+    fireEvent.click(within(second).getByRole('button', { name: '停止' }))
+    expect(audio.pause).toHaveBeenCalled()
+    expect(audio.src).toBe('')
+  })
+
+  it('should show 音频暂不可用 when the audio emits an error', async () => {
+    await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
+    const audio = await getAudio()
+    const [first] = screen.getAllByRole('listitem')
+
+    fireEvent.click(within(first).getByRole('button', { name: '播放' }))
+    emitAudioEvent(audio, 'error')
+
+    expect(await screen.findByText('音频暂不可用')).toBeInTheDocument()
+    expect(within(first).getByRole('button', { name: '播放' })).toBeInTheDocument()
+  })
+
+  it('should disable the play buttons when the task file is empty', async () => {
+    const taskWithoutFile: TaskItem = { ...panelTask, file: null }
+    await openTaskPanel([taskWithoutFile], { task: taskWithoutFile, segments: [panelSegments[0]] })
+
+    const button = within(screen.getAllByRole('listitem')[0]).getByRole('button', {
+      name: '播放',
+    })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', '音频暂不可用')
+  })
+
+  it('should pause and clear src when the selected task switches', async () => {
+    const otherTask: TaskItem = {
+      ...panelTask,
+      id: 't2',
+      title: '场次2',
+      file: 'b.flv',
+      createdAt: '2026-09-01T00:00:00Z',
+    }
+    mockListTasks.mockResolvedValue([panelTask, otherTask])
+    mockGetTask.mockImplementation(async (taskId: string) => ({
+      task: { id: taskId },
+      segments: [{ start: 0, end: 1000, text: taskId === 't2' ? 'T2句子' : '第一句' }],
+    }))
+
+    render(<TaskListTab />)
+    fireEvent.click(await screen.findByRole('button', { name: '查看任务-t1' }))
+    await screen.findByText('第一句')
+
+    const audio = await getAudio()
+    const [first] = screen.getAllByRole('listitem')
+    fireEvent.click(within(first).getByRole('button', { name: '播放' }))
+    expect(audio.src).toContain('startMs=0&endMs=1000')
+
+    fireEvent.click(screen.getByRole('button', { name: '查看任务-t2' }))
+
+    await waitFor(() => {
+      expect(audio.pause).toHaveBeenCalled()
+    })
+    expect(audio.src).toBe('')
+  })
+
+  it('should pause and clear src when the panel is collapsed', async () => {
+    await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
+    const audio = await getAudio()
+    const [first] = screen.getAllByRole('listitem')
+    fireEvent.click(within(first).getByRole('button', { name: '播放' }))
+
+    fireEvent.click(screen.getByRole('button', { name: '收起识别结果' }))
+
+    await waitFor(() => {
+      expect(audio.pause).toHaveBeenCalled()
+    })
+    expect(audio.src).toBe('')
+    expect(screen.queryByText('识别结果')).not.toBeInTheDocument()
+  })
+
+  it('should pause and clear src when the tab unmounts', async () => {
+    const { unmount } = await openTaskPanel([panelTask], {
+      task: panelTask,
+      segments: panelSegments,
+    })
+    const audio = await getAudio()
+    const [first] = screen.getAllByRole('listitem')
+    fireEvent.click(within(first).getByRole('button', { name: '播放' }))
+
+    unmount()
+
+    expect(audio.pause).toHaveBeenCalled()
+    expect(audio.src).toBe('')
+  })
+
+  it('should render subtitle download links next to the collapse button', async () => {
+    await openTaskPanel([panelTask], { task: panelTask, segments: [panelSegments[0]] })
+
+    const srt = screen.getByRole('link', { name: '下载 SRT' })
+    const ass = screen.getByRole('link', { name: '下载 ASS' })
+    expect(srt).toHaveAttribute('href', '/api/transcripts/task/t1/subtitle?format=srt')
+    expect(ass).toHaveAttribute('href', '/api/transcripts/task/t1/subtitle?format=ass')
+    expect(srt).toHaveAttribute('download')
+    expect(ass).toHaveAttribute('download')
+    expect(srt).not.toHaveAttribute('aria-disabled')
+    expect(ass).not.toHaveAttribute('aria-disabled')
+  })
+
+  it('should disable subtitle download links when there are no segments', async () => {
+    await openTaskPanel([panelTask], { task: panelTask, segments: [] })
+
+    const srt = screen.getByRole('link', { name: '下载 SRT' })
+    const ass = screen.getByRole('link', { name: '下载 ASS' })
+    expect(srt).toHaveAttribute('href', '/api/transcripts/task/t1/subtitle?format=srt')
+    expect(ass).toHaveAttribute('href', '/api/transcripts/task/t1/subtitle?format=ass')
+    expect(srt).toHaveAttribute('aria-disabled', 'true')
+    expect(srt).toHaveAttribute('title', '暂无识别结果')
+    expect(ass).toHaveAttribute('aria-disabled', 'true')
+    expect(ass).toHaveAttribute('title', '暂无识别结果')
   })
 })

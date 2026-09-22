@@ -36,3 +36,14 @@ export function formatDateTime(iso: string): string {
     pad(date.getMinutes()),
   ].join('-')
 }
+
+/** 毫秒 → `m:ss`（识别结果片段/进度时间展示）。 */
+export function formatPosition(position?: number | null): string {
+  if (position === undefined || position === null) {
+    return '-'
+  }
+  const totalSeconds = Math.floor(position / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}

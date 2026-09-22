@@ -8,9 +8,11 @@ import {
   getRoomTranscripts,
   enqueueTranscript,
   retryTranscriptTask,
+  transcriptSubtitleUrl,
 } from '../../api/client'
 import type { components as transcriptComponents } from '../../api/schema-recording-transcript'
-import { formatBytes, formatDateTime } from '../../utils/format'
+import { formatBytes, formatDateTime, formatPosition } from '../../utils/format'
+import { SegmentAudioPlayer } from './SegmentAudioPlayer'
 
 type TranscriptTask = transcriptComponents['schemas']['TranscriptTask']
 type TranscriptSegment = transcriptComponents['schemas']['TranscriptSegment']
@@ -72,16 +74,6 @@ function mergeSegments(
   return [...byStart.values()].sort((a, b) => a.start - b.start)
 }
 
-function formatPosition(position?: number | null): string {
-  if (position === undefined || position === null) {
-    return '-'
-  }
-  const totalSeconds = Math.floor(position / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${minutes}:${String(seconds).padStart(2, '0')}`
-}
-
 function parseExistingTaskId(error: unknown): string | undefined {
   const apiError = error as { status?: number; serverMessage?: string }
   if (apiError.status !== 409) {
@@ -113,6 +105,10 @@ export function TaskListTab() {
   const [roomError, setRoomError] = useState<string | null>(null)
 
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  const selectedTask = useMemo(
+    () => tasks.find((item) => item.id === selectedTaskId) ?? null,
+    [tasks, selectedTaskId],
+  )
   const [refreshKey, setRefreshKey] = useState(0)
   const loadedTaskIdRef = useRef<string | null>(null)
   const [segments, setSegments] = useState<TranscriptSegment[]>([])
@@ -371,7 +367,7 @@ export function TaskListTab() {
         <p style={{ color: '#f87171', fontSize: '0.875rem' }}>任务刷新失败，展示的是上次结果</p>
       )}
 
-      {selectedTaskId && (
+      {selectedTaskId && selectedTask && (
         <div style={{ marginTop: '1.5rem' }}>
           <div
             style={{
@@ -381,13 +377,41 @@ export function TaskListTab() {
             }}
           >
             <h3 style={{ margin: '0 0 0.5rem' }}>识别结果</h3>
-            <button
-              onClick={() => setSelectedTaskId(null)}
-              aria-label="收起识别结果"
-              style={{ padding: '0.25rem 0.75rem' }}
+            <div
+              style={{
+                display: 'flex',
+                gap: '0.5rem',
+                alignItems: 'center',
+                marginBottom: '0.5rem',
+              }}
             >
-              收起
-            </button>
+              {(['srt', 'ass'] as const).map((format) => {
+                const disabled = segments.length === 0
+                return (
+                  <a
+                    key={format}
+                    href={transcriptSubtitleUrl(selectedTaskId, format)}
+                    download
+                    aria-disabled={disabled ? true : undefined}
+                    title={disabled ? '暂无识别结果' : undefined}
+                    style={{
+                      padding: '0.25rem 0.5rem',
+                      color: disabled ? '#64748b' : '#38bdf8',
+                      textDecoration: 'none',
+                    }}
+                  >
+                    {format === 'srt' ? '下载 SRT' : '下载 ASS'}
+                  </a>
+                )
+              })}
+              <button
+                onClick={() => setSelectedTaskId(null)}
+                aria-label="收起识别结果"
+                style={{ padding: '0.25rem 0.75rem' }}
+              >
+                收起
+              </button>
+            </div>
           </div>
           {segmentsLoading && segments.length === 0 ? (
             <p>加载中...</p>
@@ -396,18 +420,11 @@ export function TaskListTab() {
           ) : segments.length === 0 ? (
             <p>暂无识别结果</p>
           ) : (
-            <div ref={segmentsContainerRef} style={{ maxHeight: '24rem', overflowY: 'auto' }}>
-              <ul style={{ margin: 0, paddingLeft: '1rem' }}>
-                {segments.map((segment) => (
-                  <li key={segment.start}>
-                    <span style={{ color: '#94a3b8', marginRight: '0.5rem' }}>
-                      {formatPosition(segment.start)}
-                    </span>
-                    <span>{segment.text}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <SegmentAudioPlayer
+              task={selectedTask}
+              segments={segments}
+              containerRef={segmentsContainerRef}
+            />
           )}
         </div>
       )}

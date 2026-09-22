@@ -401,4 +401,107 @@ public class BilibiliLiveRecordingControllerTests(MongoDbFixture fixture) : ICla
         Assert.Equal("video/x-flv", controller.Response.ContentType);
         Assert.Equal("no-store", controller.Response.Headers.CacheControl.ToString());
     }
+
+    private static HttpResponseMessage AudioClipUpstreamResponse(byte[] payload)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) };
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
+        response.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
+        return response;
+    }
+
+    [Fact]
+    public async Task ProxyRecordingAudio_ForwardsQueryStringAndFileNameWithoutRangeHeader()
+    {
+        var handler = new StubHandler { Handler = _ => AudioClipUpstreamResponse([1, 2, 3]) };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+        controller.HttpContext.Request.QueryString = new QueryString("?startMs=1000&endMs=2500");
+        controller.HttpContext.Request.Headers.Range = "bytes=0-99";
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ProxyRecordingAudio(900030, "a b.flv", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(
+            "/api/900030/recordings/a%20b.flv/audio?startMs=1000&endMs=2500",
+            handler.Requests[0]);
+        // 上游片段端点不支持 Range，本代理不透传该请求头
+        Assert.Null(handler.RangeHeaders[0]);
+    }
+
+    [Fact]
+    public async Task ProxyRecordingAudio_200_StreamsBodyWithoutContentDisposition()
+    {
+        var payload = new byte[] { 1, 2, 3, 4, 5 };
+        var handler = new StubHandler { Handler = _ => AudioClipUpstreamResponse(payload) };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ProxyRecordingAudio(900031, "a.flv", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+        Assert.Equal("audio/mpeg", controller.Response.ContentType);
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl.ToString());
+        // 红线：片段供 <audio> 内联播放，绝不设置 Content-Disposition（对照下载代理的 attachment 兜底）
+        Assert.False(controller.Response.Headers.ContainsKey("Content-Disposition"));
+        Assert.Equal(payload, await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Theory]
+    [InlineData("""{"error":"endMs must be greater than startMs"}""")]
+    [InlineData("""{"error":"file is still recording and cannot be downloaded"}""")]
+    public async Task ProxyRecordingAudio_UpstreamBadRequest_Passthrough(string body)
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            },
+        };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.ProxyRecordingAudio(900032, "a.flv", CancellationToken.None);
+
+        var content = Assert.IsType<ContentResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, content.StatusCode);
+        Assert.Equal(body, content.Content);
+        Assert.Equal("application/json", content.ContentType);
+    }
+
+    [Fact]
+    public async Task ProxyRecordingAudio_NotFound_Passthrough()
+    {
+        var handler = new StubHandler { Handler = _ => new HttpResponseMessage(HttpStatusCode.NotFound) };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.ProxyRecordingAudio(900033, "missing.flv", CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task ProxyRecordingAudio_UpstreamServerError_Returns502()
+    {
+        var handler = new StubHandler { Handler = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError) };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.ProxyRecordingAudio(900034, "a.flv", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task ProxyRecordingAudio_RecordingUnreachable_Returns502()
+    {
+        var handler = new StubHandler { Handler = _ => throw new HttpRequestException("boom") };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.ProxyRecordingAudio(900035, "a.flv", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+    }
 }

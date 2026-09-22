@@ -108,6 +108,16 @@ public sealed class TranscriptTaskRunner(
                 context = [];
             }
 
+            // 组装完成即落日志（截断口径与 AliFunAsrService.TruncateForLog 一致），
+            // 使 ASR 连接失败（未走到 run-task 提交）时上下文仍可核查
+            var joinedContext = string.Join("\n", context);
+            logger.LogInformation(
+                "transcript context assembled: taskId={TaskId} lines={Lines} chars={Chars} context={Context}",
+                task.Id,
+                context.Count,
+                joinedContext.Length,
+                context.Count == 0 ? "(空上下文)" : AliFunAsrService.TruncateForLog(joinedContext));
+
             var asr = asrFactory.Create(model, offset, context);
             await foreach (var segment in asr.TranscribeAsync(source.Audio, ct).WithCancellation(ct))
             {

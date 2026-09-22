@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Z.Vtuber.Controllers;
@@ -265,5 +266,157 @@ public class RecordingTranscriptProxyControllerTests
         Assert.IsType<EmptyResult>(result);
         Assert.Equal(StatusCodes.Status404NotFound, controller.Response.StatusCode);
         Assert.Contains("transcript settings not found", await ReadBodyAsync(controller.HttpContext));
+    }
+
+    // ---- Plan 1.5：字幕代理 + Content-Disposition 透传 ----
+
+    [Fact]
+    public async Task Subtitle_ProxiesQueryAndPassesThroughContentDisposition()
+    {
+        var payload = Encoding.UTF8.GetBytes(
+            "1\n00:00:01,000 --> 00:00:02,000\n第一句\n\n");
+        string? upstreamDisposition = null;
+        var handler = new StubHandler
+        {
+            Handler = _ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(payload),
+                };
+                response.Content.Headers.ContentType =
+                    new MediaTypeHeaderValue("application/x-subrip") { CharSet = "utf-8" };
+                response.Content.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
+                {
+                    FileName = "sub.srt",
+                };
+                upstreamDisposition = response.Content.Headers.ContentDisposition.ToString();
+                return response;
+            },
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.QueryString = new QueryString("?format=srt");
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DownloadTranscriptSubtitle("t1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("/api/transcripts/task/t1/subtitle?format=srt", handler.Requests[0]);
+        Assert.Equal("GET", handler.Methods[0]);
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+        Assert.StartsWith("application/x-subrip", controller.Response.ContentType);
+
+        var disposition = controller.Response.Headers.ContentDisposition.ToString();
+        Assert.Equal(upstreamDisposition, disposition);
+        Assert.Contains("sub.srt", disposition);
+
+        var body = await ReadBodyAsync(controller.HttpContext);
+        Assert.Contains("第一句", body);
+    }
+
+    [Fact]
+    public async Task Subtitle_UpstreamWithoutContentDisposition_HeaderNotSet()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK);
+                response.Content = new StringContent("", Encoding.UTF8, "application/x-subrip");
+                return response;
+            },
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DownloadTranscriptSubtitle("t1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.False(controller.Response.Headers.ContainsKey("ContentDisposition"));
+    }
+
+    [Fact]
+    public async Task Subtitle_UnsupportedFormat_Passthrough400WithoutContentDisposition()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.BadRequest, """{"error":"unsupported format"}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.QueryString = new QueryString("?format=ssa");
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DownloadTranscriptSubtitle("t1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("/api/transcripts/task/t1/subtitle?format=ssa", handler.Requests[0]);
+        Assert.Equal(StatusCodes.Status400BadRequest, controller.Response.StatusCode);
+        Assert.Contains("unsupported format", await ReadBodyAsync(controller.HttpContext));
+        Assert.False(controller.Response.Headers.ContainsKey("ContentDisposition"));
+    }
+
+    [Fact]
+    public async Task Subtitle_NotFound_Passthrough404()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.NotFound, """{"error":"task not found"}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DownloadTranscriptSubtitle("missing", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status404NotFound, controller.Response.StatusCode);
+        Assert.Contains("task not found", await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task Subtitle_Unreachable_Returns502()
+    {
+        var handler = new StubHandler { Handler = _ => throw new HttpRequestException("boom") };
+        var controller = CreateController(new HttpClient(handler));
+
+        var result = await controller.DownloadTranscriptSubtitle("t1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+        Assert.Contains(
+            "transcript service unavailable",
+            JsonSerializer.SerializeToElement(status.Value).GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task JsonAndSse_WithoutContentDisposition_HeaderNotSet()
+    {
+        // 既有 JSON 端点不回归：上游无 Content-Disposition → 不设置
+        var jsonHandler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"items":[]}""") };
+        var jsonController = CreateController(new HttpClient(jsonHandler));
+        jsonController.HttpContext.Response.Body = new MemoryStream();
+
+        await jsonController.ListRecordings(CancellationToken.None);
+        Assert.False(jsonController.Response.Headers.ContainsKey("ContentDisposition"));
+
+        // 既有 SSE 端点不回归：不设置 Content-Disposition，事件流照常转发
+        var sseHandler = new StubHandler
+        {
+            Handler = _ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("data: {\"start\":1}\n\n", Encoding.UTF8),
+                };
+                response.Content.Headers.ContentType = new MediaTypeHeaderValue("text/event-stream");
+                return response;
+            },
+        };
+        var sseController = CreateController(new HttpClient(sseHandler));
+        sseController.HttpContext.Response.Body = new MemoryStream();
+
+        await sseController.StreamTranscriptSegments("abc", CancellationToken.None);
+        Assert.Equal("text/event-stream", sseController.Response.ContentType);
+        Assert.False(sseController.Response.Headers.ContainsKey("ContentDisposition"));
+        Assert.Contains("data:", await ReadBodyAsync(sseController.HttpContext));
     }
 }
