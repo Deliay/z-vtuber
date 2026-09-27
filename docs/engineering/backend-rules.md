@@ -19,7 +19,7 @@ dotnet new webapi -n Z.Vtuber -o servers/api --no-https --use-controllers
 
 ```
 servers/
-├── Z.Vtuber.slnx                # 解决方案：api/common/crawler/cookie/recording/recording-transcript-* + tests + apphost
+├── Z.Vtuber.slnx                # 解决方案：api/common/crawler/cookie/recording/recording-transcript-*/training + tests + apphost
 ├── api/                         # 纯 API 服务（Z.Vtuber）
 │   ├── Controllers/             # API 控制器
 │   ├── Live/LiveEventBus.cs     # SSE 订阅门控（Redis pub/sub 驱动，按需订阅/退订）
@@ -61,13 +61,21 @@ servers/
 │   ├── Configuration/           # TranscriptConsumerOptions / RecordingServiceOptions
 │   ├── Program.cs               # Web 宿主 + /health 健康检查
 │   └── Z.Vtuber.RecordingTranscript.Consumer.csproj
-└── recording-transcript-api/    # 转写查询服务（Z.Vtuber.RecordingTranscript.Api，本地 8084）
-    ├── Controllers/             # recordings/tasks/settings/models
-    ├── Sse/TranscriptSegmentStream.cs # replay + Redis 订阅 + 去重
-    ├── Contracts/               # Dtos/TranscriptMapping
-    ├── Configuration/           # TranscriptApiOptions
+├── recording-transcript-api/    # 转写查询服务（Z.Vtuber.RecordingTranscript.Api，本地 8084）
+│   ├── Controllers/             # recordings/tasks/settings/models
+│   ├── Sse/TranscriptSegmentStream.cs # replay + Redis 订阅 + 去重
+│   ├── Contracts/               # Dtos/TranscriptMapping
+│   ├── Configuration/           # TranscriptApiOptions
+│   ├── Program.cs               # Web 宿主 + /health 健康检查
+│   └── Z.Vtuber.RecordingTranscript.Api.csproj
+└── training/                    # AI 训练服务（Z.Vtuber.Training，本地 8086，音频数据集）
+    ├── Controllers/             # 数据集 CRUD / 条目列表·更新·批量删除 / 从识别结果导入
+    ├── Clients/                 # ITranscriptApiClient（named client TranscriptService）
+    ├── Contracts/               # Dtos/TrainingMapping（AudioKey = transcript:{taskId}:{原始startMs}）
+    ├── Configuration/           # TrainingOptions
     ├── Program.cs               # Web 宿主 + /health 健康检查
-    └── Z.Vtuber.RecordingTranscript.Api.csproj
+    ├── Dockerfile               # 镜像流水线 .github/workflows/build-training-image.yml
+    └── Z.Vtuber.Training.csproj
 ```
 
 > 归属约定：仅被一方使用的代码归该方；被双方使用的代码入 `common`。抓取专用在 `servers/crawler`，对外接口与 SSE 在 `servers/api`。`ICookieNavProbeService` 契约在 common，具体实现（依赖抓取通道）在 crawler。

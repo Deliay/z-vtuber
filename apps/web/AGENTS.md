@@ -26,7 +26,8 @@ src/
 │   ├── schema-notify.d.ts # OpenAPI 生成的类型定义（通知，自动生成勿手改）
 │   ├── schema-cookie.d.ts # OpenAPI 生成的类型定义（Cookie 服务，自动生成勿手改）
 │   ├── schema-recording.d.ts # OpenAPI 生成的类型定义（录播服务，自动生成勿手改）
-│   └── schema-recording-transcript.d.ts # OpenAPI 生成的类型定义（录播转写服务，自动生成勿手改）
+│   ├── schema-recording-transcript.d.ts # OpenAPI 生成的类型定义（录播转写服务，自动生成勿手改）
+│   └── schema-training.d.ts # OpenAPI 生成的类型定义（训练服务，自动生成勿手改）
 ├── pages/
 │   ├── subscription/
 │   │   ├── SubscriptionPage.tsx      # 订阅管理页
@@ -40,7 +41,7 @@ src/
 │   ├── recording/
 │       ├── RecordingStatusPage.tsx      # 录制状态页（三态 + 实例/场次/文件名 + 轮询刷新 + 历史录播列表/下载/实时音频入口；历史录播列表展示文件名、格式化大小与所属场次标题）
 │       └── RecordingStatusPage.test.tsx # 录制状态页测试
-│   └── transcripts/
+│   ├── transcripts/
 │       ├── TranscriptsPage.tsx          # 语音转写页（「任务列表」/「设置」两 Tab 切换）
 │       ├── TaskListTab.tsx              # 任务列表 Tab（任务状态/场次/模型/进度 + 选中任务 segments，EventSource 实时追加、断开自动重连、限高容器滚动与底部自动跟随、「收起」按钮；识别结果标题行提供「下载 SRT」「下载 ASS」（`<a download>` 指向 `/api/transcripts/task/{taskId}/subtitle`，无片段 `aria-disabled` 置灰）；手动发起识别：场次选项按 `[{主播名}][{大小}] {场次名} - 起 - 止（结束为空显示「进行中」）` 展示 + 模型 enqueue 后刷新任务；场次任务：按主播（显示 `主播名（roomId）`）查看场次/任务 + 失败重试；识别结果标题行另有「播放偏移」设置（秒输入、0.1 精度、可正可负，保存 `Math.round(seconds*1000)` 调 PUT，成功后清空已合并片段并重拉详情、重建 SSE；非法输入或服务端 400 提示「偏移无效」，400 保持原值））
 │       ├── TaskListTab.test.tsx         # 任务列表 Tab 测试（含播放/切源/停止、错误态、下载链接与置灰）
@@ -49,8 +50,19 @@ src/
 │       ├── SettingsTab.tsx              # 设置 Tab（识别设置：主播开关 + 添加自动识别（从候选主播下拉选择、识别模型必选、未绑定展示「待完善」并引导补选、可删除（二次确认））；模型设置：增删改/启停/识别模型(model)/并发，无默认模型标记）
 │       ├── SettingsTab.test.tsx         # 设置 Tab 测试
 │       └── TranscriptsPage.test.tsx     # 语音转写页测试
+│   └── training/
+│       ├── DatasetsPage.tsx             # 音频数据集页（「音频数据集」Tab + 数据集选择器 + 导入入口 + 条目列表；未选中数据集时不显示「从 Transcript 导入」，空态引导导入）
+│       ├── DatasetSelector.tsx          # 数据集下拉 + 新建/重命名/删除（confirm 二次确认）；重名提示「数据集名字已存在」且不生效；首次加载自动选中首个数据集
+│       ├── TranscriptImportDialog.tsx   # 从识别结果导入对话框（仅列 status=DONE 任务，确认后调 import 并反馈 imported/skipped，取消不请求，400/502 错误提示）
+│       ├── DatasetItemList.tsx          # 七字段条目列表（audioKey 不可编辑；audioUri/text/startMs/endMs 内联编辑保存，`m:ss`/`m:ss.S` ↔ 毫秒、endMs 可置空、非法时间提示不保存；勾选多选 + 批量删除 confirm；分组切换 不分组/按来源/按类型 + 分组头全选联动）
+│       ├── DatasetItemWaveform.tsx      # wavesurfer.js 波形试听（url 由 `trainingAudioClipUrl` 拼区间，endMs 空取 startMs+300000 并标注试听预览上限 5 分钟；加载失败/uri 不可解析提示「音频不可用」且不阻断列表）
+│       ├── waveformLoader.ts            # 波形加载器抽象（可注入/可 mock，单测不依赖真实 wavesurfer）
+│       ├── DatasetsPage.test.tsx        # 数据集页测试
+│       ├── TranscriptImportDialog.test.tsx # 导入对话框测试
+│       ├── DatasetItemList.test.tsx     # 列表编辑/多选/分组测试
+│       └── DatasetItemWaveform.test.tsx # 波形 url 拼接与降级测试
 ├── utils/
-│   └── format.ts          # 共用格式化（formatBytes 人类可读大小 / formatDateTime yyyy-mm-dd-HH-mm / formatPosition ms → m:ss 片段时间定位）
+│   └── format.ts          # 共用格式化（formatBytes 人类可读大小 / formatDateTime yyyy-mm-dd-HH-mm / formatPosition ms → m:ss 片段时间定位 / parsePosition `m:ss`、`m:ss.S` → 毫秒，非法返回 null）
 ├── test/
 │   └── setup.ts           # 测试配置文件
 ├── App.tsx                # 主应用组件（布局+路由）
@@ -62,14 +74,16 @@ src/
 ## 开发流程
 
 - TDD 开发（先写测试再实现）
-- 契约式开发（基于 OpenAPI 契约生成客户端；`codegen` 同时从 `contracts/bilibili-crawler.openapi.yaml`、`contracts/weibo-crawler.openapi.yaml`、`contracts/notifier.openapi.yaml`、`contracts/cookie.openapi.yaml`、`contracts/recording.openapi.yaml` 与 `contracts/recording-transcript.openapi.yaml` 生成 `schema.d.ts`、`schema-weibo.d.ts`、`schema-notify.d.ts`、`schema-cookie.d.ts`、`schema-recording.d.ts` 与 `schema-recording-transcript.d.ts`）
+- 契约式开发（基于 OpenAPI 契约生成客户端；`codegen` 同时从 `contracts/bilibili-crawler.openapi.yaml`、`contracts/weibo-crawler.openapi.yaml`、`contracts/notifier.openapi.yaml`、`contracts/cookie.openapi.yaml`、`contracts/recording.openapi.yaml`、`contracts/recording-transcript.openapi.yaml` 与 `contracts/training.openapi.yaml` 生成 `schema.d.ts`、`schema-weibo.d.ts`、`schema-notify.d.ts`、`schema-cookie.d.ts`、`schema-recording.d.ts`、`schema-recording-transcript.d.ts` 与 `schema-training.d.ts`）
 - Cookie 管理页（`CookiePage.tsx`）：扫码登录化、多平台 — 顶部「新增微博帐号」「新增Bilibili帐号」双按钮分别发起对应平台扫码登录（QR 码轮询 + 自动关闭 + 按平台区分的扫码文案），列表展示平台列/昵称/ID/Session 状态/Cookie 状态/最近刷新时间/最近登录时间，支持按平台删除帐号
 - 通知管理页（`NotificationPage.tsx`）：新增绑定弹窗的通知类型为下拉（「bilibili帐号失效通知」→ `bilibili_cookie_invalid`、「微博帐号失效通知」→ `weibo_cookie_invalid`），绑定列表展示类型中文名（存量 `cookie_invalid` 按 bilibili 处理）
 - 后台聚合：订阅管理页使用 `listBackstageSubscriptions` 聚合接口展示主播昵称列
 - 订阅管理页（`SubscriptionPage.tsx`）：新增订阅表单含平台选择（B站/微博）；选微博时仅填 uid；B 站订阅类型含 `录播`；列表含平台标识列，存量条目默认 B站；取消/创建按平台调用对应接口
 - 录制状态页（`RecordingStatusPage.tsx`）：按录播订阅展示三态（未开播/录制中/录制出错）、录制实例 hostname、场次名与文件名；周期轮询刷新；录制中提供实时音频入口，文件提供下载链接；历史录播列表经 `listRecordings` 展示文件名、格式化大小与所属场次标题（不含录制中文件）
 - 语音转写页（`TranscriptsPage.tsx`）：「任务列表」Tab 经 `listTranscriptTasks`/`getTranscriptTask` 展示任务与 segments，选中任务用 `openTranscriptStream`（原生 `EventSource`，本仓库首个前端 SSE 用法，断开自动重连）实时追加到限高滚动容器（`maxHeight`+`overflowY:auto`，停留底部时自动跟随），并可「收起」；识别结果由 `SegmentAudioPlayer` 承载——每句可试听该句语音（片段 URL 带 `startMs`/`endMs`，区间与展示起止时间一致、同一时刻只播一句），标题行提供「下载 SRT」「下载 ASS」；标题行另提供「播放偏移」设置（`updateTranscriptTaskOffset` 保存成功后以响应更新任务、清空已合并片段并重拉详情、重建 SSE，识别结果/试听/字幕下载同步生效，保存前本地校验 ±24h 与非数字，失败提示「偏移无效」）；经 `listTranscriptRecordings`+`enqueueTranscript` 手动发起（场次选项 `[{主播名}][{大小}] {场次名} - 开始 - 结束`，进行中显示「进行中」、主播名缺失兜底 roomId）、`getRoomTranscripts`/`retryTranscriptTask` 查看场次任务与失败重试（主播选择器显示 `主播名（roomId）`）；「设置」Tab 经 `getTranscriptSettings`/`setRoomAutoEnqueue(roomId, enable, modelId?)` 管理自动识别开关，添加时从 `getTranscriptCandidateRooms()` 候选主播下拉选择（候选为空禁用并提示），每条设置可 `deleteTranscriptSettings(roomId)` 删除（`window.confirm` 二次确认；未绑定设置的房间展示「待完善」并引导补选），模型经 `listTranscriptModels`/`createTranscriptModel`/`updateTranscriptModel` 管理（`model` 识别模型必填，无默认模型概念，apiKey 不回显）
-- `api/client.ts` 另提供 `updateTranscriptTaskOffset(taskId, offsetMs)`（PUT `/transcripts/task/{taskId}/offset`，body `{offsetMs}`，400 抛 `ApiError{status, serverMessage}`）与 URL 构造器 `recordingAudioClipUrl(roomId, fileName, startMs, endMs)`（试听片段 `/api/b/live/{roomId}/recordings/{file}/audio`）与 `transcriptSubtitleUrl(taskId, format)`（字幕下载 `/api/transcripts/task/{taskId}/subtitle?format=srt|ass`），均 `encodeURIComponent` + `URLSearchParams`
+- 主菜单分组（`App.tsx`）：`menuGroups` 结构（缺省组不渲染分组标题，既有 5 个菜单项渲染不变），新增分组「训练」→「数据集」（`PageKey` `training-datasets`）
+- 音频数据集页（`pages/training/DatasetsPage.tsx`）：本期唯一 Tab「音频数据集」；`DatasetSelector` 承载数据集下拉 + 新建/重命名/删除（`window.confirm` 二次确认，重名提示「数据集名字已存在」且不生效，首次加载自动选中首个），**未选中数据集时不显示「从 Transcript 导入」按钮**、空态引导导入；`TranscriptImportDialog` 仅列 `status=DONE` 任务，确认后导入并反馈 `{imported, skipped}`，取消不请求，400/502 错误提示；`DatasetItemList` 七字段表格（`audioKey` 不可编辑）支持 audioUri/text/startMs/endMs 内联编辑（`m:ss`/`m:ss.S` ↔ 毫秒、`endMs` 可置空、非法时间提示且不保存）、勾选多选 + 批量删除（confirm）、分组切换（不分组/按来源/按类型）与分组头全选联动；`DatasetItemWaveform` 以 wavesurfer.js 绘制波形（**wavesurfer.js 为本仓库唯一新增 npm 依赖**，经 `waveformLoader.ts` 抽象便于注入/mock），`endMs` 空取 `startMs+300000` 并标注试听预览上限 5 分钟，加载失败或 `audioUri` 不可解析提示「音频不可用」且不阻断列表操作
+- `api/client.ts` 另提供 `updateTranscriptTaskOffset(taskId, offsetMs)`（PUT `/transcripts/task/{taskId}/offset`，body `{offsetMs}`，400 抛 `ApiError{status, serverMessage}`）与 URL 构造器 `recordingAudioClipUrl(roomId, fileName, startMs, endMs)`（试听片段 `/api/b/live/{roomId}/recordings/{file}/audio`）与 `transcriptSubtitleUrl(taskId, format)`（字幕下载 `/api/transcripts/task/{taskId}/subtitle?format=srt|ass`），均 `encodeURIComponent` + `URLSearchParams`；训练端点封装 `listTrainingDatasets(type)`、`createTrainingDataset`、`renameTrainingDataset`、`deleteTrainingDataset`、`listTrainingDatasetItems(datasetId, {audioType?, source?})`、`importTrainingDatasetItems(datasetId, {taskId})`、`updateTrainingDatasetItem(datasetId, itemId, patch)`（`endMs: null` 必须序列化为显式 JSON `null` 以置空，缺失字段不改）、`batchDeleteTrainingDatasetItems(datasetId, itemIds)`，以及 URL 构造器 `trainingAudioClipUrl(audioUri, startMs, endMs)`（解析 `b/live/{roomId}/recordings/{file}` 复用 `recordingAudioClipUrl`；`endMs` 空取 `startMs + 300000` 预览上限；uri 空或不可解析返回 `null`）
 - 参考：`docs/engineering/common-rules.md`
 
 ## 常用命令
