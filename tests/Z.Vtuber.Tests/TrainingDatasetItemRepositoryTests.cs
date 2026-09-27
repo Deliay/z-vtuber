@@ -296,4 +296,57 @@ public class TrainingDatasetItemRepositoryTests(MongoDbFixture fixture) : IClass
         // 幂等：再次删除返回 0
         Assert.Equal(0, await repository.DeleteByDatasetAsync(datasetId));
     }
+
+    [Fact]
+    public async Task GetById_LocatesItemWithinDataset_WithoutListingWholeDataset()
+    {
+        var repository = Repository;
+        var datasetId = ObjectId.GenerateNewId();
+        var otherDatasetId = ObjectId.GenerateNewId();
+        var target = Item(datasetId, "transcript:task-1:1000", startMs: 1000);
+        await repository.InsertManyIgnoreDuplicatesAsync(
+            [target, Item(datasetId, "transcript:task-1:2000", startMs: 2000)]);
+        await repository.InsertManyIgnoreDuplicatesAsync([Item(otherDatasetId, "transcript:task-1:1000")]);
+
+        var loaded = await repository.GetByIdAsync(datasetId, target.Id);
+
+        Assert.NotNull(loaded);
+        Assert.Equal("transcript:task-1:1000", loaded!.AudioKey);
+        Assert.Equal(1000, loaded.StartMs);
+
+        // 定位口径 = (datasetId, itemId)：跨数据集同 id 与数据集内未知 id 均为 null
+        Assert.Null(await repository.GetByIdAsync(otherDatasetId, target.Id));
+        Assert.Null(await repository.GetByIdAsync(datasetId, ObjectId.GenerateNewId()));
+    }
+
+    [Fact]
+    public async Task InsertMany_NonDuplicateWriteError_ThrowsInsteadOfCountingAsSkipped()
+    {
+        var repository = Repository;
+        var datasetId = ObjectId.GenerateNewId();
+
+        // 先建集合，再挂一条校验规则，制造「非唯一键冲突」的服务端写失败（code 121）
+        await repository.InsertManyIgnoreDuplicatesAsync([Item(datasetId, "transcript:task-1:0")]);
+        fixture.Database.RunCommand<BsonDocument>(new BsonDocument
+        {
+            { "collMod", MongoCollectionNames.TrainingDatasetItems },
+            { "validator", new BsonDocument("$expr", new BsonDocument("$ne", new BsonArray
+            {
+                "$AudioType", "forbidden",
+            })) },
+            { "validationLevel", "strict" },
+        });
+
+        var invalid = Item(datasetId, "transcript:task-1:1000", audioType: "forbidden");
+
+        var exception = await Assert.ThrowsAnyAsync<MongoBulkWriteException>(
+            () => repository.InsertManyIgnoreDuplicatesAsync([invalid]));
+
+        // 非 DuplicateKey 失败必须原样上抛，不得被当成「去重跳过」静默上报
+        Assert.NotEmpty(exception.WriteErrors);
+        Assert.DoesNotContain(exception.WriteErrors, e => e.Category == ServerErrorCategory.DuplicateKey);
+
+        // 该条目未落库：只剩集合创建时写入的那一条
+        Assert.Single(await repository.ListAsync(datasetId));
+    }
 }

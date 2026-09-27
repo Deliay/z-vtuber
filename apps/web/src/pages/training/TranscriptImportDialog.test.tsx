@@ -106,7 +106,7 @@ describe('TranscriptImportDialog', () => {
     expect(screen.getByRole('button', { name: '确认导入' })).toBeDisabled()
   })
 
-  it('should surface the server message when the import fails with 400', async () => {
+  it('should surface a readable message when the import fails with 400', async () => {
     mockListTasks.mockResolvedValue([doneTask])
     mockImport.mockRejectedValue(apiError(400, '{"error":"task not done"}'))
 
@@ -115,11 +115,12 @@ describe('TranscriptImportDialog', () => {
     fireEvent.change(await screen.findByLabelText('识别任务'), { target: { value: 't1' } })
     fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('task not done')
+    // 原始报文 {"error":"task not done"} 不能直接给用户看，须映射为可读文案
+    expect(await screen.findByRole('alert')).toHaveTextContent('该识别任务尚未完成，无法导入')
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
-  it('should surface the server message when the transcript service is unavailable (502)', async () => {
+  it('should surface a readable message when the transcript service is unavailable (502)', async () => {
     mockListTasks.mockResolvedValue([doneTask])
     mockImport.mockRejectedValue(
       apiError(502, '{"error":"transcript service unavailable"}'),
@@ -130,8 +131,6 @@ describe('TranscriptImportDialog', () => {
     fireEvent.change(await screen.findByLabelText('识别任务'), { target: { value: 't1' } })
     fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'transcript service unavailable',
-    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('识别服务暂不可用，请稍后重试')
   })
 })

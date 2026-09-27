@@ -25,6 +25,7 @@ import {
   recordingAudioUrl,
   recordingDownloadUrl,
   recordingAudioClipUrl,
+  apiErrorMessage,
   listWeiboCookieAccounts,
   createWeiboCookieAccount,
   getWeiboCookieAccount,
@@ -1494,6 +1495,38 @@ describe('API Client', () => {
       expect(trainingAudioClipUrl('b/live/101/recordings/', 0, null)).toBeNull()
       expect(trainingAudioClipUrl('b/live/abc/recordings/a.flv', 0, null)).toBeNull()
       expect(trainingAudioClipUrl('https://example.com/a.flv', 0, null)).toBeNull()
+    })
+  })
+
+  describe('apiErrorMessage', () => {
+    it('should extract the error field from a JSON error body and map it to a readable message', () => {
+      expect(apiErrorMessage({ serverMessage: '{"error":"task not done"}' })).toBe(
+        '该识别任务尚未完成，无法导入',
+      )
+      expect(apiErrorMessage({ serverMessage: '{"error":"dataset name exists"}' })).toBe(
+        '数据集名字已存在',
+      )
+      expect(apiErrorMessage({ serverMessage: '{"error":"invalid time range"}' })).toBe(
+        '时间区间非法（开始不小于 0，结束须晚于开始）',
+      )
+      expect(
+        apiErrorMessage({ serverMessage: '{"error":"transcript service unavailable"}' }),
+      ).toBe('识别服务暂不可用，请稍后重试')
+    })
+
+    it('should keep an unmapped error code or a non-JSON body as-is', () => {
+      expect(apiErrorMessage({ serverMessage: '{"error":"some future error"}' })).toBe(
+        'some future error',
+      )
+      expect(apiErrorMessage({ serverMessage: 'plain text from gateway' })).toBe(
+        'plain text from gateway',
+      )
+    })
+
+    it('should fall back when there is no server message', () => {
+      expect(apiErrorMessage(undefined)).toBe('操作失败')
+      expect(apiErrorMessage({}, '导入失败')).toBe('导入失败')
+      expect(apiErrorMessage({ serverMessage: '' }, '导入失败')).toBe('导入失败')
     })
   })
 })

@@ -172,4 +172,31 @@ public class TrainingDatasetRepositoryTests(MongoDbFixture fixture) : IClassFixt
         Assert.False(deleted);
         Assert.Single(await repository.ListAsync(AudioType));
     }
+
+    [Fact]
+    public async Task GetById_Existing_ReturnsRecord()
+    {
+        var repository = Repository;
+        var inserted = await repository.InsertAsync(Dataset("单条读取"));
+
+        var loaded = await repository.GetByIdAsync(inserted.Id);
+
+        Assert.NotNull(loaded);
+        Assert.Equal(inserted.Id, loaded!.Id);
+        Assert.Equal("单条读取", loaded.Name);
+        // Mongo 的 BSON DateTime 仅毫秒精度，落库会截断到毫秒
+        var truncated = new DateTime(
+            inserted.CreatedAt.Ticks / TimeSpan.TicksPerMillisecond * TimeSpan.TicksPerMillisecond,
+            inserted.CreatedAt.Kind);
+        Assert.Equal(truncated, loaded.CreatedAt);
+    }
+
+    [Fact]
+    public async Task GetById_UnknownId_ReturnsNull()
+    {
+        var repository = Repository;
+        await repository.InsertAsync(Dataset("唯一"));
+
+        Assert.Null(await repository.GetByIdAsync(ObjectId.GenerateNewId()));
+    }
 }
