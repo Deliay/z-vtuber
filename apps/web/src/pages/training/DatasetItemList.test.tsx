@@ -321,6 +321,59 @@ describe('DatasetItemList', () => {
     expect(screen.queryByText('类型: transcript（3 条）')).not.toBeInTheDocument()
   })
 
+  it('should expand the waveform in a row right below the clicked item, inside the table', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    fireEvent.click(screen.getByText('transcript:t1:0'))
+
+    const container = await screen.findByTestId('waveform-container')
+    const expandRow = container.closest('tr')
+    const dataRow = screen.getByText('transcript:t1:0').closest('tr')
+    expect(expandRow).not.toBeNull()
+    // 紧贴被点击条目行正下方，且位于表格内（而非表格后的兄弟节点）
+    expect(expandRow?.previousElementSibling).toBe(dataRow)
+    expect(screen.getByRole('table').contains(expandRow)).toBe(true)
+    // 展开行以 colSpan 覆盖全列，不破坏 colgroup/table-layout:fixed 对齐
+    expect(expandRow?.querySelector('td')).toHaveAttribute('colspan', '9')
+  })
+
+  it('should keep only one waveform expanded at a time when switching items', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    fireEvent.click(screen.getByText('transcript:t1:0'))
+    await screen.findByTestId('waveform-container')
+    expect(screen.getAllByTestId('waveform-container')).toHaveLength(1)
+
+    fireEvent.click(screen.getByText('transcript:t1:61000'))
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId('waveform-container')).toHaveLength(1),
+    )
+    const expandRow = screen.getByTestId('waveform-container').closest('tr')
+    const dataRow = screen.getByText('transcript:t1:61000').closest('tr')
+    expect(expandRow?.previousElementSibling).toBe(dataRow)
+  })
+
+  it('should expand the waveform under the clicked row in group mode too', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    fireEvent.change(screen.getByLabelText('分组方式'), { target: { value: 'source' } })
+    await screen.findByText('来源: t1（2 条）')
+
+    fireEvent.click(screen.getByText('transcript:t1:61000'))
+
+    const container = await screen.findByTestId('waveform-container')
+    const expandRow = container.closest('tr')
+    const dataRow = screen.getByText('transcript:t1:61000').closest('tr')
+    expect(expandRow?.previousElementSibling).toBe(dataRow)
+  })
+
   it('should select a whole group from the group header and batch delete it', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { loader } = createLoader()

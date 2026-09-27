@@ -78,40 +78,70 @@ export function TranscriptImportDialog({
 
   return (
     <div
-      role="dialog"
-      aria-label="从 Transcript 导入"
-      className="transcript-import-dialog"
+      className="transcript-import-overlay"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1000,
+      }}
+      // 点击遮罩关闭（面板内的点击已 stopPropagation，不会误触）
+      onClick={onClose}
     >
-      <h3>从 Transcript 导入</h3>
-
-      <label htmlFor="import-task">识别任务</label>
-      <select
-        id="import-task"
-        value={taskId}
-        onChange={(event) => setTaskId(event.target.value)}
+      <div
+        role="dialog"
+        aria-label="从 Transcript 导入"
+        aria-modal="true"
+        className="transcript-import-dialog"
+        style={{
+          backgroundColor: '#1e293b',
+          color: '#e2e8f0',
+          padding: '1.5rem',
+          borderRadius: '0.5rem',
+          minWidth: '400px',
+          maxWidth: '90vw',
+          maxHeight: '90vh',
+          overflow: 'auto',
+        }}
+        onClick={(event) => event.stopPropagation()}
       >
-        <option value="">请选择识别任务</option>
-        {tasks.map((task) => (
-          <option key={task.id} value={task.id}>
-            {taskLabel(task)}
-          </option>
-        ))}
-      </select>
+        <h3>从 Transcript 导入</h3>
 
-      {tasks.length === 0 && !error && (
-        <div style={{ color: '#94a3b8' }}>暂无已识别完成的任务</div>
-      )}
-      {error && <div role="alert">{error}</div>}
-      {result && (
-        <div role="status">
-          已导入 {result.imported} 条，跳过 {result.skipped} 条
-        </div>
-      )}
+        <label htmlFor="import-task">识别任务</label>
+        <select
+          id="import-task"
+          value={taskId}
+          onChange={(event) => setTaskId(event.target.value)}
+        >
+          <option value="">请选择识别任务</option>
+          {tasks.map((task) => (
+            <option key={task.id} value={task.id}>
+              {taskLabel(task)}
+            </option>
+          ))}
+        </select>
 
-      <button onClick={handleImport} disabled={!taskId || busy}>
-        确认导入
-      </button>
-      <button onClick={onClose}>{result ? '完成' : '取消'}</button>
+        {tasks.length === 0 && !error && (
+          <div style={{ color: '#94a3b8' }}>暂无已识别完成的任务</div>
+        )}
+        {error && <div role="alert">{error}</div>}
+        {result && (
+          <div role="status">
+            已导入 {result.imported} 条，跳过 {result.skipped} 条
+          </div>
+        )}
+
+        <button onClick={handleImport} disabled={!taskId || busy}>
+          确认导入
+        </button>
+        <button onClick={onClose}>{result ? '完成' : '取消'}</button>
+      </div>
     </div>
   )
 }

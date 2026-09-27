@@ -202,16 +202,37 @@ describe('DatasetsPage', () => {
     expect(mockListItems).not.toHaveBeenCalled()
   })
 
-  it('should open the import dialog listing only DONE transcripts', async () => {
+  it('should open the import dialog as a modal above the page, listing only DONE transcripts', async () => {
     render(<DatasetsPage />)
     await screen.findByLabelText('数据集')
 
     fireEvent.click(screen.getByRole('button', { name: '从 Transcript 导入' }))
 
-    expect(
-      await screen.findByRole('dialog', { name: '从 Transcript 导入' }),
-    ).toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog', { name: '从 Transcript 导入' })
+    expect(dialog).toBeInTheDocument()
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    // 模态遮罩：全屏 fixed + 半透明遮罩 + 居中容器（按结构样式契约断言）
+    const overlay = dialog.parentElement as HTMLElement
+    expect(overlay.style.position).toBe('fixed')
+    expect(overlay.style.backgroundColor).toContain('rgba(0, 0, 0, 0.5)')
+    expect(overlay.style.justifyContent).toBe('center')
     expect(mockListTasks).toHaveBeenCalledWith({ status: 'DONE' })
+  })
+
+  it('should close the import dialog by clicking the overlay', async () => {
+    render(<DatasetsPage />)
+    await screen.findByLabelText('数据集')
+
+    fireEvent.click(screen.getByRole('button', { name: '从 Transcript 导入' }))
+    const dialog = await screen.findByRole('dialog', { name: '从 Transcript 导入' })
+
+    fireEvent.click(dialog.parentElement as HTMLElement)
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('dialog', { name: '从 Transcript 导入' }),
+      ).not.toBeInTheDocument()
+    })
   })
 
   it('should guide the user to import when the selected dataset has no items', async () => {

@@ -206,6 +206,19 @@ export function DatasetItemList({
     }
   }
 
+  /**
+   * 展开行：承载被点击条目的波形试听，紧贴在条目行正下方（随表格滚动），
+   * `colSpan` 覆盖全列、不破坏 `colgroup`/`table-layout:fixed` 列宽约束。
+   * 点击行内编辑控件的 `stopPropagation` 保持不变（点编辑不误触发展开/收起冲突）。
+   */
+  const renderWaveformExpandRow = (item: TrainingDatasetItem) => (
+    <tr key={`waveform-${item.id}`} className="dataset-item-waveform-row">
+      <td colSpan={9} style={{ padding: 0 }}>
+        <DatasetItemWaveform item={item} loader={waveformLoader} />
+      </td>
+    </tr>
+  )
+
   const renderRow = (item: TrainingDatasetItem) => {
     const editing = editingId === item.id
     return (
@@ -290,7 +303,13 @@ export function DatasetItemList({
     )
   }
 
-  const previewItem = items.find((item) => item.id === previewId)
+  /** 条目行 + （命中时）紧贴其下的波形展开行；同一时刻仅 `previewId` 对应一行展开。 */
+  const renderRowWithWaveform = (item: TrainingDatasetItem) => (
+    <Fragment key={item.id}>
+      {renderRow(item)}
+      {previewId === item.id && renderWaveformExpandRow(item)}
+    </Fragment>
+  )
 
   return (
     <div className="dataset-item-list">
@@ -371,18 +390,14 @@ export function DatasetItemList({
                             </label>
                           </th>
                         </tr>
-                        {groupItems.map(renderRow)}
+                        {groupItems.map(renderRowWithWaveform)}
                       </Fragment>
                     )
                   })
-                : items.map(renderRow)}
+                : items.map(renderRowWithWaveform)}
             </tbody>
           </table>
         </>
-      )}
-
-      {previewItem && (
-        <DatasetItemWaveform item={previewItem} loader={waveformLoader} />
       )}
     </div>
   )

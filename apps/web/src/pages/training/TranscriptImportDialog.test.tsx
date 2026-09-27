@@ -55,6 +55,40 @@ describe('TranscriptImportDialog', () => {
     mockImport.mockResolvedValue({ imported: 0, skipped: 0 })
   })
 
+  it('should render as a centred modal overlay above the page', async () => {
+    mockListTasks.mockResolvedValue([doneTask])
+
+    renderDialog()
+
+    const dialog = await screen.findByRole('dialog', { name: '从 Transcript 导入' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+
+    // 全屏半透明遮罩 + flex 居中面板 + 高层级（按结构样式契约断言，不绑死像素值）
+    const overlay = dialog.parentElement as HTMLElement
+    expect(overlay).not.toBeNull()
+    expect(overlay.style.position).toBe('fixed')
+    expect(overlay.style.backgroundColor).toContain('rgba(0, 0, 0, 0.5)')
+    expect(overlay.style.display).toBe('flex')
+    expect(overlay.style.justifyContent).toBe('center')
+    expect(overlay.style.alignItems).toBe('center')
+    expect(overlay.style.zIndex).not.toBe('')
+  })
+
+  it('should close on overlay click but not when clicking inside the panel', async () => {
+    mockListTasks.mockResolvedValue([doneTask])
+    const props = renderDialog()
+
+    const dialog = await screen.findByRole('dialog', { name: '从 Transcript 导入' })
+    const overlay = dialog.parentElement as HTMLElement
+
+    fireEvent.click(dialog)
+    expect(props.onClose).not.toHaveBeenCalled()
+
+    fireEvent.click(overlay)
+    expect(props.onClose).toHaveBeenCalledTimes(1)
+    expect(mockImport).not.toHaveBeenCalled()
+  })
+
   it('should only offer transcripts whose status is DONE', async () => {
     mockListTasks.mockResolvedValue([doneTask, runningTask])
 

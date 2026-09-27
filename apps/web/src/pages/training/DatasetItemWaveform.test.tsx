@@ -81,16 +81,90 @@ describe('DatasetItemWaveform', () => {
     expect(screen.getByText('试听预览上限 5 分钟')).toBeInTheDocument()
   })
 
-  it('should play the clip range and stop on demand', async () => {
+  it('should auto-play as soon as the waveform is ready, and allow stop/replay', async () => {
     const { loader, play, stop } = createLoader()
 
     render(<DatasetItemWaveform item={item} loader={loader} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '播放' }))
-    expect(play).toHaveBeenCalledTimes(1)
+    // 就绪即自动播放（无需再点「播放」）
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1))
 
-    fireEvent.click(screen.getByRole('button', { name: '停止' }))
+    fireEvent.click(await screen.findByRole('button', { name: '停止' }))
     expect(stop).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '播放' }))
+    expect(play).toHaveBeenCalledTimes(2)
+  })
+
+  it('should auto-play the 5 minute fallback clip when endMs is empty', async () => {
+    const { loader, load, play } = createLoader()
+
+    render(<DatasetItemWaveform item={{ ...item, endMs: null }} loader={loader} />)
+
+    // 兜底区间仍传给 loader（0 基相对时间轴由 loader 计算），并就绪自动播放
+    await screen.findByTestId('waveform-container')
+    expect(load.mock.calls[0][0].endMs).toBe(1000 + 300000)
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1))
+  })
+
+  it('should not cross-play when switching to another item, and destroy the previous player', async () => {
+    const first = { play: vi.fn(), stop: vi.fn(), destroy: vi.fn() }
+    const second = { play: vi.fn(), stop: vi.fn(), destroy: vi.fn() }
+    const load = vi
+      .fn()
+      .mockImplementationOnce((options: WaveformLoadOptions) => {
+        options.onReady?.()
+        return first
+      })
+      .mockImplementationOnce((options: WaveformLoadOptions) => {
+        options.onReady?.()
+        return second
+      })
+    const loader: WaveformLoader = { load }
+
+    const { rerender } = render(<DatasetItemWaveform item={item} loader={loader} />)
+    await waitFor(() => expect(first.play).toHaveBeenCalledTimes(1))
+
+    rerender(
+      <DatasetItemWaveform
+        item={{ ...item, id: 'i2', audioKey: 'transcript:t1:2000', startMs: 2000, endMs: 3500 }}
+        loader={loader}
+      />,
+    )
+
+    // 旧实例被销毁且不再播放；新实例各自自动播放一次
+    await waitFor(() => expect(second.play).toHaveBeenCalledTimes(1))
+    expect(first.destroy).toHaveBeenCalledTimes(1)
+    expect(first.play).toHaveBeenCalledTimes(1)
+  })
+
+  it('should not replay after unmount', async () => {
+    const { loader, play } = createLoader()
+
+    const { unmount } = render(<DatasetItemWaveform item={item} loader={loader} />)
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1))
+
+    unmount()
+
+    expect(play).toHaveBeenCalledTimes(1)
+  })
+
+  it('should keep the controls usable and hint non-blockingly when play() rejects', async () => {
+    const play = vi.fn(() => Promise.reject(new Error('blocked')))
+    const stop = vi.fn()
+    const destroy = vi.fn()
+    const load = vi.fn((options: WaveformLoadOptions) => {
+      options.onReady?.()
+      return { play, stop, destroy }
+    })
+    const loader: WaveformLoader = { load }
+
+    render(<DatasetItemWaveform item={item} loader={loader} />)
+
+    expect(await screen.findByText('音频暂不可用，请点击播放重试')).toBeInTheDocument()
+    // 非阻断：播放/停止控件仍在
+    expect(screen.getByRole('button', { name: '播放' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument()
   })
 
   it('should show 音频不可用 when the waveform fails to load, keeping the container', async () => {

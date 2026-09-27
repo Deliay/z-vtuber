@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { trainingAudioClipUrl } from '../../api/client'
 import {
   WAVEFORM_PREVIEW_MAX_MS,
@@ -21,6 +21,9 @@ type LoadStatus = 'loading' | 'ready' | 'error'
 /**
  * 单条音频数据的波形试听：区间 url 走 `trainingAudioClipUrl`
  * （`endMs` 为空时按试听预览上限 5 分钟兜底）；
+ * 加载就绪后**自动开始播放**（播放区间仍是片段相对时间轴 `0 → (endMs-startMs)/1000`，
+ * 由 `waveformLoader` 负责），「播放/停止」按钮用于重播/中止；
+ * 播放失败（`play()` reject/抛错）非阻断提示（参考 `SegmentAudioPlayer` 的 400/404 降级先例）；
  * 加载失败或 uri 不可解析 → 提示「音频不可用」，非阻断列表其他操作。
  */
 export function DatasetItemWaveform({
@@ -30,12 +33,28 @@ export function DatasetItemWaveform({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const playerRef = useRef<WaveformPlayer | null>(null)
   const [status, setStatus] = useState<LoadStatus>('loading')
+  const [playFailed, setPlayFailed] = useState(false)
 
   const url = trainingAudioClipUrl(item.audioUri, item.startMs, item.endMs)
   const previewEndMs =
     item.endMs === null || item.endMs === undefined || item.endMs <= 0
       ? item.startMs + WAVEFORM_PREVIEW_MAX_MS
       : item.endMs
+
+  /** 播放指定片段；`play()` 失败（抛错/reject）非阻断（仅提示，不打断其他操作）。 */
+  const startPlayback = useCallback((player: WaveformPlayer | null) => {
+    if (!player) return
+    setPlayFailed(false)
+    try {
+      const result = player.play() as unknown
+      // 兼容同步返回 void 的假实现与返回 Promise 的真实实现
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        ;(result as Promise<void>).catch(() => setPlayFailed(true))
+      }
+    } catch {
+      setPlayFailed(true)
+    }
+  }, [])
 
   useEffect(() => {
     const container = containerRef.current
@@ -46,14 +65,23 @@ export function DatasetItemWaveform({
     }
 
     setStatus('loading')
-    let player: WaveformPlayer
+    setPlayFailed(false)
+    let player: WaveformPlayer | null = null
+    // 本次加载是否仍为当前实例：切换条目/卸载后置 false，自动播放不串播上一条
+    let active = true
     try {
       player = loader.load({
         container,
         url,
         startMs: item.startMs,
         endMs: previewEndMs,
-        onReady: () => setStatus('ready'),
+        // 就绪即自动播放；微任务延迟确保 player 已赋值（同步假实现与异步 wavesurfer 一致）
+        onReady: () => {
+          setStatus('ready')
+          queueMicrotask(() => {
+            if (active) startPlayback(player)
+          })
+        },
         onError: () => setStatus('error'),
       })
     } catch {
@@ -64,18 +92,22 @@ export function DatasetItemWaveform({
 
     playerRef.current = player
     return () => {
+      active = false
       playerRef.current = null
-      player.destroy()
+      player?.destroy()
     }
-  }, [loader, url, item.startMs, previewEndMs])
+  }, [loader, url, item.startMs, previewEndMs, startPlayback])
 
   return (
     <div className="dataset-item-waveform">
       <div data-testid="waveform-container" ref={containerRef} />
       {status === 'error' && <div role="alert">音频不可用</div>}
+      {status === 'ready' && playFailed && (
+        <div role="alert">音频暂不可用，请点击播放重试</div>
+      )}
       {status === 'ready' && (
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-          <button onClick={() => playerRef.current?.play()}>播放</button>
+          <button onClick={() => startPlayback(playerRef.current)}>播放</button>
           <button onClick={() => playerRef.current?.stop()}>停止</button>
         </div>
       )}
