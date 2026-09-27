@@ -114,7 +114,8 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     private async Task<TranscriptTaskRecord> SeedTaskAsync(
         ObjectId recordingId, ObjectId modelId, long roomId,
         string status = TranscriptTaskStatus.Pending, string? error = null,
-        string mode = TranscriptTaskModes.File, string source = TranscriptTaskSources.Manual)
+        string mode = TranscriptTaskModes.File, string source = TranscriptTaskSources.Manual,
+        long offsetMs = 0)
     {
         var now = DateTime.UtcNow;
         var task = new TranscriptTaskRecord
@@ -128,6 +129,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
             Source = source,
             Status = status,
             Error = error,
+            OffsetMs = offsetMs,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -644,6 +646,75 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
         Assert.Contains(": heartbeat", content);
         Assert.Equal(1, CountOccurrences(content, "\"start\":1000"));
         Assert.Equal(1, CountOccurrences(content, "\"start\":2000"));
+    }
+
+    [Fact]
+    public async Task Sse_OffsetShiftsReplayAndLiveDataAndKeepsRawStartTimeAsDedupKey()
+    {
+        var recording = await SeedRecordingAsync(700083, 555, "场次", "[RAW] a.flv");
+        var model = await SeedModelAsync();
+        var task = await SeedTaskAsync(
+            recording.Id, model.Id, 700083, TranscriptTaskStatus.Running, offsetMs: 2500);
+        await Segments.InsertAsync(new TranscriptSegmentRecord
+        {
+            TaskId = task.Id,
+            StartTime = 1000,
+            EndTime = 1500,
+            Text = "replay-segment",
+        });
+
+        var stream = new TranscriptSegmentStream(
+            Segments, Tasks, redis.Connection, NullLogger<TranscriptSegmentStream>.Instance);
+
+        using var body = new MemoryStream();
+        var context = new DefaultHttpContext { Response = { Body = body } };
+
+        var originalInterval = TranscriptSegmentStream.HeartbeatInterval;
+        TranscriptSegmentStream.HeartbeatInterval = TimeSpan.FromMilliseconds(100);
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var streamTask = stream.StreamAsync(context.Response, task.Id, cts.Token);
+
+            await Task.Delay(300);
+
+            var publisher = redis.Connection.GetSubscriber();
+            var channel = new RedisChannel(
+                RecordingEventChannels.SegmentChannel(task.Id.ToString()),
+                RedisChannel.PatternMode.Literal);
+            await publisher.PublishAsync(channel, JsonSerializer.Serialize(
+                new TranscriptSegmentEvent(task.Id.ToString(), 2000, 2500, "live-segment")));
+            // 与 replay 片段同原始 StartTime：去重键为原始值，重复事件不重发
+            await publisher.PublishAsync(channel, JsonSerializer.Serialize(
+                new TranscriptSegmentEvent(task.Id.ToString(), 1000, 1500, "duplicate-segment")));
+
+            await Task.Delay(300);
+            await Tasks.SetStatusAsync(task.Id, TranscriptTaskStatus.Done);
+
+            var completed = await Task.WhenAny(streamTask, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(streamTask, completed);
+            await streamTask;
+        }
+        finally
+        {
+            TranscriptSegmentStream.HeartbeatInterval = originalInterval;
+        }
+
+        body.Position = 0;
+        using var reader = new StreamReader(body, Encoding.UTF8);
+        var content = await reader.ReadToEndAsync();
+
+        // replay 与实时事件写出时统一 +offsetMs
+        Assert.Equal(1, CountOccurrences(content, "\"start\":3500"));
+        Assert.Equal(1, CountOccurrences(content, "\"end\":4000"));
+        Assert.Equal(1, CountOccurrences(content, "\"start\":4500"));
+        // 未加偏移的原始值不得出现（去重键为原始值，写出为展示值）
+        Assert.DoesNotContain("\"start\":1000", content);
+        Assert.DoesNotContain("\"start\":2000", content);
+        Assert.Contains("replay-segment", content);
+        Assert.Contains("live-segment", content);
+        Assert.DoesNotContain("duplicate-segment", content);
+        Assert.Contains("event: done", content);
     }
 
     [Fact]

@@ -115,6 +115,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transcripts/task/{taskId}/offset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 设置任务播放偏移
+         * @description 任务级播放偏移（毫秒，可正可负，0.1 秒精度），统一作用于任务详情 segments、SSE 实时推送与 SRT/ASS 字幕导出的展示时间；仅写入 transcript_tasks.OffsetMs，识别链路与落库数据不受影响， 历史任务默认 0 行为不变。
+         */
+        put: operations["updateTranscriptTaskOffset"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/transcripts/task/{taskId}/subtitle": {
         parameters: {
             query?: never;
@@ -323,6 +343,12 @@ export interface components {
              * @description 断点位置（毫秒），始终为句尾
              */
             position?: number;
+            /**
+             * Format: int64
+             * @description 任务播放偏移（毫秒，可正可负，范围 ±86400000），详情 segments、SSE 与字幕导出 统一在展示时间上叠加该偏移；历史任务缺省为 0
+             * @default 0
+             */
+            offsetMs: number;
             /** @description FAILED 原因 */
             error?: string | null;
             /** Format: date-time */
@@ -330,18 +356,26 @@ export interface components {
             /** Format: date-time */
             updatedAt?: string;
         };
+        UpdateTranscriptTaskOffsetRequest: {
+            /**
+             * Format: int64
+             * @description 播放偏移（毫秒），可正可负，范围 ±86400000（±24h），超出范围返回 400
+             * @example 2500
+             */
+            offsetMs: number;
+        };
         TranscriptTaskList: {
             items?: components["schemas"]["TranscriptTask"][];
         };
         TranscriptSegment: {
             /**
              * Format: int64
-             * @description 整场录播时间轴上的句首（毫秒，含续跑 offset）
+             * @description 含任务播放偏移的展示时间（毫秒）= 整场录播时间轴上的句首（含续跑 offset）+ 任务播放偏移
              */
             start: number;
             /**
              * Format: int64
-             * @description 整场录播时间轴上的句尾（毫秒）
+             * @description 含任务播放偏移的展示时间（毫秒）= 整场录播时间轴上的句尾 + 任务播放偏移
              */
             end: number;
             text: string;
@@ -664,6 +698,50 @@ export interface operations {
                 };
             };
             /** @description 任务不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateTranscriptTaskOffset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTranscriptTaskOffsetRequest"];
+            };
+        };
+        responses: {
+            /** @description 设置成功，返回更新后的任务（含 offsetMs） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscriptTask"];
+                };
+            };
+            /** @description offsetMs 缺失或超出 ±86400000（±24h），错误信息 offsetMs out of range */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 任务不存在（含 taskId 非法） */
             404: {
                 headers: {
                     [name: string]: unknown;

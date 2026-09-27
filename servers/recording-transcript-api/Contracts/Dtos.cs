@@ -67,6 +67,7 @@ public sealed record TranscriptTaskDto(
     [property: JsonPropertyName("source")] string Source,
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("position")] long Position,
+    [property: JsonPropertyName("offsetMs")] long OffsetMs,
     [property: JsonPropertyName("error")] string? Error,
     [property: JsonPropertyName("createdAt")] DateTime CreatedAt,
     [property: JsonPropertyName("updatedAt")] DateTime UpdatedAt);
@@ -74,6 +75,9 @@ public sealed record TranscriptTaskDto(
 public sealed record TranscriptTaskDetailDto(
     [property: JsonPropertyName("task")] TranscriptTaskDto Task,
     [property: JsonPropertyName("segments")] IReadOnlyList<TranscriptSegmentDto> Segments);
+
+public sealed record UpdateTranscriptTaskOffsetRequest(
+    [property: JsonPropertyName("offsetMs")] long? OffsetMs);
 
 public sealed record TranscriptSettingsItemDto(
     [property: JsonPropertyName("roomId")] long RoomId,

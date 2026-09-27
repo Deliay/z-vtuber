@@ -74,6 +74,7 @@ vi.mock('../../api/client', async (importOriginal) => {
     getRoomTranscripts: vi.fn(),
     enqueueTranscript: vi.fn(),
     retryTranscriptTask: vi.fn(),
+    updateTranscriptTaskOffset: vi.fn(),
   }
 })
 
@@ -84,8 +85,10 @@ const mockListModels = vi.mocked(client.listTranscriptModels)
 const mockGetRoomTranscripts = vi.mocked(client.getRoomTranscripts)
 const mockEnqueue = vi.mocked(client.enqueueTranscript)
 const mockRetry = vi.mocked(client.retryTranscriptTask)
+const mockUpdateOffset = vi.mocked(client.updateTranscriptTaskOffset)
 
 const panelTask: TaskItem = {
+  offsetMs: 0,
   id: 't1',
   status: 'DONE',
   title: '场次1',
@@ -133,7 +136,7 @@ describe('TaskListTab', () => {
     vi.stubGlobal('EventSource', MockEventSource)
     vi.stubGlobal('Audio', MockAudio)
     mockListTasks.mockResolvedValue([])
-    mockGetTask.mockResolvedValue({ task: {}, segments: [] })
+    mockGetTask.mockResolvedValue({ task: { offsetMs: 0 }, segments: [] })
     mockListRecordings.mockResolvedValue([
       { id: 'r1', roomId: 101, mid: 1, title: '晚间歌回', files: [], startedAt: '2026-09-16T12:00:00Z' },
     ])
@@ -172,15 +175,16 @@ describe('TaskListTab', () => {
       ],
     })
     mockEnqueue.mockResolvedValue({ taskId: 't2', status: 'PENDING' })
-    mockRetry.mockResolvedValue({ id: 't1', status: 'RUNNING' })
+    mockRetry.mockResolvedValue({ id: 't1', status: 'RUNNING', offsetMs: 0 })
+    mockUpdateOffset.mockResolvedValue({ id: 't1', offsetMs: 0 })
   })
 
   it('should render task list with in-progress tasks first', async () => {
     mockListTasks.mockResolvedValue([
-      { id: 'a', status: 'DONE', title: '已完成场次', modelName: '模型A', position: 100, createdAt: '2026-09-01T00:00:00Z' },
-      { id: 'b', status: 'RUNNING', title: '识别中场次', modelName: '模型B', position: 200, createdAt: '2026-09-02T00:00:00Z' },
-      { id: 'c', status: 'PENDING', title: '等待中场次', modelName: '模型C', position: 0, createdAt: '2026-09-03T00:00:00Z' },
-      { id: 'd', status: 'FAILED', title: '失败场次', modelName: '模型D', position: 0, createdAt: '2026-09-04T00:00:00Z' },
+      { id: 'a', status: 'DONE', title: '已完成场次', modelName: '模型A', position: 100, createdAt: '2026-09-01T00:00:00Z', offsetMs: 0 },
+      { id: 'b', status: 'RUNNING', title: '识别中场次', modelName: '模型B', position: 200, createdAt: '2026-09-02T00:00:00Z', offsetMs: 0 },
+      { id: 'c', status: 'PENDING', title: '等待中场次', modelName: '模型C', position: 0, createdAt: '2026-09-03T00:00:00Z', offsetMs: 0 },
+      { id: 'd', status: 'FAILED', title: '失败场次', modelName: '模型D', position: 0, createdAt: '2026-09-04T00:00:00Z', offsetMs: 0 },
     ])
 
     render(<TaskListTab />)
@@ -197,10 +201,10 @@ describe('TaskListTab', () => {
 
   it('should append live segments, dedupe and refill on reconnect replay', async () => {
     mockListTasks.mockResolvedValue([
-      { id: 't1', status: 'RUNNING', title: '场次1', modelName: '默认模型', position: 1000, createdAt: '2026-09-02T00:00:00Z' },
+      { id: 't1', status: 'RUNNING', title: '场次1', modelName: '默认模型', position: 1000, createdAt: '2026-09-02T00:00:00Z', offsetMs: 0 },
     ])
     mockGetTask.mockResolvedValue({
-      task: { id: 't1' },
+      task: { id: 't1', offsetMs: 0 },
       segments: [
         { start: 0, end: 1000, text: '第一句' },
         { start: 1000, end: 2000, text: '第二句' },
@@ -239,10 +243,10 @@ describe('TaskListTab', () => {
 
   it('should re-fetch the selected task when the refresh button is clicked', async () => {
     mockListTasks.mockResolvedValue([
-      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },
+      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z', offsetMs: 0 },
     ])
     mockGetTask.mockResolvedValue({
-      task: { id: 't1' },
+      task: { id: 't1', offsetMs: 0 },
       segments: [{ start: 0, end: 1000, text: '第一句' }],
     })
 
@@ -264,9 +268,9 @@ describe('TaskListTab', () => {
 
   it('should close the EventSource on unmount', async () => {
     mockListTasks.mockResolvedValue([
-      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },
+      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z', offsetMs: 0 },
     ])
-    mockGetTask.mockResolvedValue({ task: { id: 't1' }, segments: [] })
+    mockGetTask.mockResolvedValue({ task: { id: 't1', offsetMs: 0 }, segments: [] })
 
     const { unmount } = render(<TaskListTab />)
 
@@ -295,7 +299,7 @@ describe('TaskListTab', () => {
     mockListTasks
       .mockResolvedValueOnce([])
       .mockResolvedValue([
-        { id: 't2', status: 'PENDING', title: '新任务', modelName: '默认模型', createdAt: '2026-09-16T00:00:00Z' },
+        { id: 't2', status: 'PENDING', title: '新任务', modelName: '默认模型', createdAt: '2026-09-16T00:00:00Z', offsetMs: 0 },
       ])
 
     render(<TaskListTab />)
@@ -407,10 +411,10 @@ describe('TaskListTab', () => {
 
   it('should collapse the detail and close the EventSource when clicking 收起', async () => {
     mockListTasks.mockResolvedValue([
-      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },
+      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z', offsetMs: 0 },
     ])
     mockGetTask.mockResolvedValue({
-      task: { id: 't1' },
+      task: { id: 't1', offsetMs: 0 },
       segments: [{ start: 0, end: 1000, text: '第一句' }],
     })
 
@@ -433,10 +437,10 @@ describe('TaskListTab', () => {
 
   it('should constrain and scroll the segments container', async () => {
     mockListTasks.mockResolvedValue([
-      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z' },
+      { id: 't1', status: 'RUNNING', title: '场次1', createdAt: '2026-09-02T00:00:00Z', offsetMs: 0 },
     ])
     mockGetTask.mockResolvedValue({
-      task: { id: 't1' },
+      task: { id: 't1', offsetMs: 0 },
       segments: [{ start: 0, end: 1000, text: '第一句' }],
     })
 
@@ -509,7 +513,7 @@ describe('TaskListTab', () => {
     }
     mockListTasks.mockResolvedValue([panelTask, otherTask])
     mockGetTask.mockImplementation(async (taskId: string) => ({
-      task: { id: taskId },
+      task: { id: taskId, offsetMs: 0 },
       segments: [{ start: 0, end: 1000, text: taskId === 't2' ? 'T2句子' : '第一句' }],
     }))
 
@@ -584,5 +588,80 @@ describe('TaskListTab', () => {
     expect(srt).toHaveAttribute('title', '暂无识别结果')
     expect(ass).toHaveAttribute('aria-disabled', 'true')
     expect(ass).toHaveAttribute('title', '暂无识别结果')
+  })
+
+  it('should show the playback offset entry with the current effective value', async () => {
+    const offsetTask: TaskItem = { ...panelTask, offsetMs: 2500 }
+    await openTaskPanel([offsetTask], { task: offsetTask, segments: panelSegments })
+
+    expect(screen.getByText('播放偏移')).toBeInTheDocument()
+    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue(2.5)
+    expect(screen.getByRole('button', { name: '保存播放偏移' })).toBeInTheDocument()
+  })
+
+  it('should save 2.5s as offsetMs=2500, then refetch the detail and rebuild the stream', async () => {
+    mockUpdateOffset.mockResolvedValue({ ...panelTask, offsetMs: 2500 })
+    await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
+    expect(MockEventSource.instances).toHaveLength(1)
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '2.5' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    await waitFor(() => {
+      expect(mockUpdateOffset).toHaveBeenCalledWith('t1', 2500)
+    })
+    await waitFor(() => {
+      expect(mockGetTask).toHaveBeenCalledTimes(2)
+    })
+    expect(MockEventSource.instances).toHaveLength(2)
+    expect(MockEventSource.instances[0].closed).toBe(true)
+    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue(2.5)
+  })
+
+  it('should save a negative offset as offsetMs=-1500', async () => {
+    mockUpdateOffset.mockResolvedValue({ ...panelTask, offsetMs: -1500 })
+    await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '-1.5' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    await waitFor(() => {
+      expect(mockUpdateOffset).toHaveBeenCalledWith('t1', -1500)
+    })
+  })
+
+  it('should reject an invalid offset without sending a request', async () => {
+    await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '999999' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    expect(await screen.findByText('偏移无效')).toBeInTheDocument()
+    expect(mockUpdateOffset).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: 'abc' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    expect(await screen.findByText('偏移无效')).toBeInTheDocument()
+    expect(mockUpdateOffset).not.toHaveBeenCalled()
+  })
+
+  it('should keep the current value and show 偏移无效 when the server rejects with 400', async () => {
+    mockUpdateOffset.mockRejectedValue(
+      Object.assign(new Error('bad request'), {
+        status: 400,
+        serverMessage: '{"error":"offsetMs out of range"}',
+      }),
+    )
+    const offsetTask: TaskItem = { ...panelTask, offsetMs: 2500 }
+    await openTaskPanel([offsetTask], { task: offsetTask, segments: panelSegments })
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    expect(await screen.findByText('偏移无效')).toBeInTheDocument()
+    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue(2.5)
+    expect(mockGetTask).toHaveBeenCalledTimes(1)
+    expect(MockEventSource.instances).toHaveLength(1)
   })
 })

@@ -120,6 +120,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/transcripts/task/{taskId}/offset:
+    put:
+      summary: 设置任务播放偏移
+      description: >-
+        任务级播放偏移（毫秒，可正可负，0.1 秒精度），统一作用于任务详情 segments、SSE 实时推送与
+        SRT/ASS 字幕导出的展示时间；仅写入 transcript_tasks.OffsetMs，识别链路与落库数据不受影响，
+        历史任务默认 0 行为不变。
+      operationId: updateTranscriptTaskOffset
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTranscriptTaskOffsetRequest"
+      responses:
+        "200":
+          description: 设置成功，返回更新后的任务（含 offsetMs）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranscriptTask"
+        "400":
+          description: offsetMs 缺失或超出 ±86400000（±24h），错误信息 offsetMs out of range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: 任务不存在（含 taskId 非法）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/transcripts/task/{taskId}/subtitle:
     get:
       summary: 下载字幕文件（SRT/ASS）
@@ -485,6 +520,13 @@ components:
           type: integer
           format: int64
           description: 断点位置（毫秒），始终为句尾
+        offsetMs:
+          type: integer
+          format: int64
+          default: 0
+          description: >-
+            任务播放偏移（毫秒，可正可负，范围 ±86400000），详情 segments、SSE 与字幕导出
+            统一在展示时间上叠加该偏移；历史任务缺省为 0
         error:
           type: string
           nullable: true
@@ -495,6 +537,15 @@ components:
         updatedAt:
           type: string
           format: date-time
+    UpdateTranscriptTaskOffsetRequest:
+      type: object
+      required: [offsetMs]
+      properties:
+        offsetMs:
+          type: integer
+          format: int64
+          description: 播放偏移（毫秒），可正可负，范围 ±86400000（±24h），超出范围返回 400
+          example: 2500
     TranscriptTaskList:
       type: object
       properties:
@@ -509,11 +560,11 @@ components:
         start:
           type: integer
           format: int64
-          description: 整场录播时间轴上的句首（毫秒，含续跑 offset）
+          description: 含任务播放偏移的展示时间（毫秒）= 整场录播时间轴上的句首（含续跑 offset）+ 任务播放偏移
         end:
           type: integer
           format: int64
-          description: 整场录播时间轴上的句尾（毫秒）
+          description: 含任务播放偏移的展示时间（毫秒）= 整场录播时间轴上的句尾 + 任务播放偏移
         text:
           type: string
     TranscriptTaskDetail:

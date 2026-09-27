@@ -50,6 +50,9 @@ public sealed class TranscriptTaskRecord
 
     public long Position { get; set; }
 
+    /// <summary>任务播放偏移（毫秒，可正可负，默认 0）；详情/SSE/字幕三出口在展示时间上叠加该偏移。</summary>
+    public long OffsetMs { get; set; }
+
     public string Status { get; set; } = TranscriptTaskStatus.Pending;
 
     public string? Error { get; set; }

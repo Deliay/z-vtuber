@@ -28,6 +28,9 @@ export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudi
 
   const canPlay = Boolean(task.file) && typeof task.roomId === 'number'
 
+  // 负偏移可能把整句推到时间轴起点之前：end <= 0 的片段没有可试听的音频区间
+  const canPlaySegment = (segment: TranscriptSegment) => canPlay && segment.end > 0
+
   // 共享单例 audio：挂载时创建并挂载生命周期监听，卸载时停止并释放。
   useEffect(() => {
     const audio = new Audio()
@@ -93,12 +96,15 @@ export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudi
 
   const playSegment = (segment: TranscriptSegment) => {
     const audio = audioRef.current
-    if (!audio || !canPlay || !task.file || typeof task.roomId !== 'number') {
+    if (!audio || !canPlaySegment(segment) || !task.file || typeof task.roomId !== 'number') {
       return
     }
     setAudioError(false)
     setCurrentTime(0)
-    audio.src = recordingAudioClipUrl(task.roomId, task.file, segment.start, segment.end)
+    // 展示时间可能为负（负偏移）：试听区间钳到 [0, 正无穷)，展示起止时间不变
+    const startMs = Math.max(0, segment.start)
+    const endMs = Math.max(startMs, segment.end)
+    audio.src = recordingAudioClipUrl(task.roomId, task.file, startMs, endMs)
     setPlayingSegment(segment)
     const playResult = audio.play()
     if (playResult !== undefined && typeof playResult.catch === 'function') {
@@ -200,8 +206,8 @@ export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudi
               >
                 <button
                   onClick={() => handleToggleSegment(segment)}
-                  disabled={!canPlay}
-                  title={canPlay ? undefined : AUDIO_UNAVAILABLE}
+                  disabled={!canPlaySegment(segment)}
+                  title={canPlaySegment(segment) ? undefined : AUDIO_UNAVAILABLE}
                   style={{ marginRight: '0.5rem', padding: '0.125rem 0.25rem' }}
                 >
                   {isPlaying ? '停止' : '播放'}

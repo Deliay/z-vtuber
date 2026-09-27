@@ -60,7 +60,9 @@ public class TranscriptSubtitleController(
         }
 
         var segmentList = await segments.ListByTaskAsync(id, ct);
-        var dtos = segmentList.Select(TranscriptMapping.ToSegmentDto).ToList();
+        var dtos = segmentList
+            .Select(s => TranscriptMapping.ToSegmentDto(s, task.OffsetMs))
+            .ToList();
         var text = renderAss
             ? SubtitleRenderer.RenderAss(dtos)
             : SubtitleRenderer.RenderSrt(dtos);
