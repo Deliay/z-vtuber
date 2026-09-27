@@ -39,6 +39,7 @@ const task: TranscriptTask = {
   roomId: 101,
   title: '晚间歌回',
   file: '[RAW] a.flv',
+  offsetMs: 0,
 }
 
 const segments: TranscriptSegment[] = [
@@ -236,5 +237,47 @@ describe('SegmentAudioPlayer', () => {
     expect(container).toBe(containerRef.current)
     expect(container?.style.maxHeight).toBe('24rem')
     expect(container?.style.overflowY).toBe('auto')
+  })
+
+  it('clamps the clip range to the non-negative timeline for offset-shifted segments', () => {
+    render(
+      <SegmentAudioPlayer
+        task={{ ...task, offsetMs: -2000 }}
+        segments={[{ start: -500, end: 1200, text: '前移句' }]}
+      />,
+    )
+    const audio = getAudio()
+
+    playRow(screen.getAllByRole('listitem')[0])
+
+    expect(audio.src).toBe(
+      '/api/b/live/101/recordings/%5BRAW%5D%20a.flv/audio?startMs=0&endMs=1200',
+    )
+  })
+
+  it('disables playback when the whole shifted segment is before the timeline start', () => {
+    render(
+      <SegmentAudioPlayer
+        task={{ ...task, offsetMs: -3000 }}
+        segments={[{ start: -2000, end: -800, text: '越界句' }]}
+      />,
+    )
+
+    const button = screen.getAllByRole('button', { name: '播放' })[0]
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', '音频暂不可用')
+  })
+
+  it('disables playback when the shifted segment ends at the timeline start', () => {
+    render(
+      <SegmentAudioPlayer
+        task={{ ...task, offsetMs: -3000 }}
+        segments={[{ start: -1000, end: 0, text: '零长句' }]}
+      />,
+    )
+
+    const button = screen.getAllByRole('button', { name: '播放' })[0]
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', '音频暂不可用')
   })
 })

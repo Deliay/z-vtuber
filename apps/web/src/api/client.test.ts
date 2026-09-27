@@ -40,6 +40,7 @@ import {
   listTranscriptTasks,
   getTranscriptTask,
   retryTranscriptTask,
+  updateTranscriptTaskOffset,
   transcriptSseUrl,
   transcriptSubtitleUrl,
   openTranscriptStream,
@@ -1086,6 +1087,40 @@ describe('API Client', () => {
         expect.stringContaining('/transcripts/task/t1/retry'),
         expect.objectContaining({ method: 'POST' }),
       )
+    })
+
+    it('updateTranscriptTaskOffset should PUT /transcripts/task/{taskId}/offset with offsetMs', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ id: 't1', offsetMs: 2500 }),
+      })
+
+      const result = await updateTranscriptTaskOffset('t1', 2500)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/transcripts/task/t1/offset'),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ offsetMs: 2500 }),
+        }),
+      )
+      expect(result).toEqual({ id: 't1', offsetMs: 2500 })
+    })
+
+    it('updateTranscriptTaskOffset should throw ApiError with the server message on 400', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: () => Promise.resolve('{"error":"offsetMs out of range"}'),
+      })
+
+      const error = await updateTranscriptTaskOffset('t1', 99999999).catch(
+        (e) => e as { status?: number; serverMessage?: string },
+      )
+
+      expect(error.status).toBe(400)
+      expect(error.serverMessage).toContain('offsetMs out of range')
     })
 
     it('transcriptSseUrl should build the SSE endpoint url', () => {

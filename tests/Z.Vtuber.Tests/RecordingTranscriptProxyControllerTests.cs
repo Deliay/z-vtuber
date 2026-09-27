@@ -216,6 +216,93 @@ public class RecordingTranscriptProxyControllerTests
         Assert.Equal("/api/transcripts/models/m1", handler.Requests[0]);
     }
 
+    // ---- Plan 1.5：播放偏移代理镜像 ----
+
+    [Fact]
+    public async Task UpdateOffset_ForwardsPutMethodBodyAndContentType()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.OK, """{"id":"t1","offsetMs":2500}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.Method = HttpMethods.Put;
+        controller.HttpContext.Request.ContentType = "application/json";
+        controller.HttpContext.Request.Body = new MemoryStream(
+            Encoding.UTF8.GetBytes("""{"offsetMs":2500}"""));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.UpdateTranscriptTaskOffset("t1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("PUT", handler.Methods[0]);
+        Assert.Equal("/api/transcripts/task/t1/offset", handler.Requests[0]);
+        Assert.Equal("application/json", handler.ContentTypes[0]);
+        Assert.Contains("offsetMs", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task UpdateOffset_OutOfRange_Passthrough400()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.BadRequest, """{"error":"offsetMs out of range"}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.Method = HttpMethods.Put;
+        controller.HttpContext.Request.ContentType = "application/json";
+        controller.HttpContext.Request.Body = new MemoryStream(
+            Encoding.UTF8.GetBytes("""{"offsetMs":99999999}"""));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.UpdateTranscriptTaskOffset("t1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, controller.Response.StatusCode);
+        Assert.Contains("offsetMs out of range", await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task UpdateOffset_NotFound_Passthrough404()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.NotFound, """{"error":"task not found"}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.Method = HttpMethods.Put;
+        controller.HttpContext.Request.ContentType = "application/json";
+        controller.HttpContext.Request.Body = new MemoryStream(
+            Encoding.UTF8.GetBytes("""{"offsetMs":2500}"""));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.UpdateTranscriptTaskOffset("missing", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("/api/transcripts/task/missing/offset", handler.Requests[0]);
+        Assert.Equal(StatusCodes.Status404NotFound, controller.Response.StatusCode);
+        Assert.Contains("task not found", await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task UpdateOffset_Unreachable_Returns502()
+    {
+        var handler = new StubHandler { Handler = _ => throw new HttpRequestException("boom") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.Method = HttpMethods.Put;
+        controller.HttpContext.Request.ContentType = "application/json";
+        controller.HttpContext.Request.Body = new MemoryStream(
+            Encoding.UTF8.GetBytes("""{"offsetMs":2500}"""));
+
+        var result = await controller.UpdateTranscriptTaskOffset("t1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+        Assert.Contains(
+            "transcript service unavailable",
+            JsonSerializer.SerializeToElement(status.Value).GetProperty("error").GetString());
+    }
+
     [Fact]
     public async Task CandidateRooms_ProxiesToTranscriptService()
     {

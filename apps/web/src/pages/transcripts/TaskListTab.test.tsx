@@ -74,6 +74,7 @@ vi.mock('../../api/client', async (importOriginal) => {
     getRoomTranscripts: vi.fn(),
     enqueueTranscript: vi.fn(),
     retryTranscriptTask: vi.fn(),
+    updateTranscriptTaskOffset: vi.fn(),
   }
 })
 
@@ -84,6 +85,7 @@ const mockListModels = vi.mocked(client.listTranscriptModels)
 const mockGetRoomTranscripts = vi.mocked(client.getRoomTranscripts)
 const mockEnqueue = vi.mocked(client.enqueueTranscript)
 const mockRetry = vi.mocked(client.retryTranscriptTask)
+const mockUpdateOffset = vi.mocked(client.updateTranscriptTaskOffset)
 
 const panelTask: TaskItem = {
   id: 't1',
@@ -173,6 +175,7 @@ describe('TaskListTab', () => {
     })
     mockEnqueue.mockResolvedValue({ taskId: 't2', status: 'PENDING' })
     mockRetry.mockResolvedValue({ id: 't1', status: 'RUNNING' })
+    mockUpdateOffset.mockResolvedValue({ id: 't1', offsetMs: 0 })
   })
 
   it('should render task list with in-progress tasks first', async () => {
@@ -584,5 +587,80 @@ describe('TaskListTab', () => {
     expect(srt).toHaveAttribute('title', '暂无识别结果')
     expect(ass).toHaveAttribute('aria-disabled', 'true')
     expect(ass).toHaveAttribute('title', '暂无识别结果')
+  })
+
+  it('should show the playback offset entry with the current effective value', async () => {
+    const offsetTask: TaskItem = { ...panelTask, offsetMs: 2500 }
+    await openTaskPanel([offsetTask], { task: offsetTask, segments: panelSegments })
+
+    expect(screen.getByText('播放偏移')).toBeInTheDocument()
+    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue('2.5')
+    expect(screen.getByRole('button', { name: '保存播放偏移' })).toBeInTheDocument()
+  })
+
+  it('should save 2.5s as offsetMs=2500, then refetch the detail and rebuild the stream', async () => {
+    mockUpdateOffset.mockResolvedValue({ ...panelTask, offsetMs: 2500 })
+    await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
+    expect(MockEventSource.instances).toHaveLength(1)
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '2.5' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    await waitFor(() => {
+      expect(mockUpdateOffset).toHaveBeenCalledWith('t1', 2500)
+    })
+    await waitFor(() => {
+      expect(mockGetTask).toHaveBeenCalledTimes(2)
+    })
+    expect(MockEventSource.instances).toHaveLength(2)
+    expect(MockEventSource.instances[0].closed).toBe(true)
+    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue('2.5')
+  })
+
+  it('should save a negative offset as offsetMs=-1500', async () => {
+    mockUpdateOffset.mockResolvedValue({ ...panelTask, offsetMs: -1500 })
+    await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '-1.5' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    await waitFor(() => {
+      expect(mockUpdateOffset).toHaveBeenCalledWith('t1', -1500)
+    })
+  })
+
+  it('should reject an invalid offset without sending a request', async () => {
+    await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '999999' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    expect(await screen.findByText('偏移无效')).toBeInTheDocument()
+    expect(mockUpdateOffset).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: 'abc' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    expect(await screen.findByText('偏移无效')).toBeInTheDocument()
+    expect(mockUpdateOffset).not.toHaveBeenCalled()
+  })
+
+  it('should keep the current value and show 偏移无效 when the server rejects with 400', async () => {
+    mockUpdateOffset.mockRejectedValue(
+      Object.assign(new Error('bad request'), {
+        status: 400,
+        serverMessage: '{"error":"offsetMs out of range"}',
+      }),
+    )
+    const offsetTask: TaskItem = { ...panelTask, offsetMs: 2500 }
+    await openTaskPanel([offsetTask], { task: offsetTask, segments: panelSegments })
+
+    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
+
+    expect(await screen.findByText('偏移无效')).toBeInTheDocument()
+    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue('2.5')
+    expect(mockGetTask).toHaveBeenCalledTimes(1)
+    expect(MockEventSource.instances).toHaveLength(1)
   })
 })
