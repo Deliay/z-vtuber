@@ -31,7 +31,8 @@ AI 训练模块第一期「音频数据集」的独立服务：数据集管理�
     删除（先 `DeleteByDatasetAsync` 级联清条目再删数据集，204/404）
   - `TrainingDatasetItemsController`（`[Route("api/training/datasets/{datasetId}/items")]`，接口 5-8）：
     列表（`audioType?`/`source?` 过滤，`CreatedAt`、`AudioKey` 升序，本期全量不分页）、导入、更新、批量删除；
-    错误体统一 `{"error": "..."}`，`datasetId`/`itemId`/`taskId` 非法 ObjectId 一律按「不存在」→ 404
+    错误体统一 `{"error": "..."}`，`datasetId`/`itemId`/`taskId` 非法 ObjectId 一律按「不存在」→ 404；
+    存在性判定与更新前现值回读走仓储 `GetByIdAsync` 单读，不为读一条而全量列举
   - 导入（`POST .../items/import`）：数据集 404 → 任务不存在 404 → `Status != DONE` 400 `task not done` →
     `TrainingMapping.ToImportItem` 逐 segment 映射 → `InsertManyIgnoreDuplicatesAsync` → 200 `{imported, skipped}`；
     上游传输/超时异常 → 502 `transcript service unavailable`；Info 日志
