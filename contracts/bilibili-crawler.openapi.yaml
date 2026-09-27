@@ -824,8 +824,277 @@ paths:
                 $ref: "#/components/schemas/RecordingTranscriptErrorResponse"
         "502":
           description: transcript 服务不可达
+  /api/training/datasets:
+    get:
+      summary: 查询数据集列表（代理训练服务）
+      description: 代理 training 服务，query 原样透传；按 CreatedAt 升序全量返回。
+      operationId: listTrainingDatasets
+      parameters:
+        - $ref: "#/components/parameters/TrainingTypeQuery"
+      responses:
+        "200":
+          description: 数据集列表（CreatedAt 升序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetList"
+        "400":
+          description: 数据集类型缺失或不支持
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+    post:
+      summary: 新建数据集（代理训练服务）
+      description: 代理 training 服务，body 原样透传；同类型重名返回 409。
+      operationId: createTrainingDataset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetCreateRequest"
+      responses:
+        "201":
+          description: 数据集已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDataset"
+        "400":
+          description: 名字或类型非法
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "409":
+          description: 数据集重名
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+  /api/training/datasets/{datasetId}:
+    put:
+      summary: 重命名数据集（代理训练服务）
+      operationId: renameTrainingDataset
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetRenameRequest"
+      responses:
+        "200":
+          description: 重命名成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDataset"
+        "400":
+          description: 名字非法
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "404":
+          description: 数据集不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "409":
+          description: 数据集重名
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+    delete:
+      summary: 删除数据集（代理训练服务）
+      description: 代理 training 服务，级联删除该数据集全部条目。
+      operationId: deleteTrainingDataset
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+      responses:
+        "204":
+          description: 已删除（含条目级联清空）
+        "404":
+          description: 数据集不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+  /api/training/datasets/{datasetId}/items:
+    get:
+      summary: 查询数据集条目列表（代理训练服务）
+      description: 代理 training 服务，query 原样透传；按 CreatedAt、AudioKey 升序全量返回。
+      operationId: listTrainingDatasetItems
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+        - $ref: "#/components/parameters/TrainingAudioTypeQuery"
+        - $ref: "#/components/parameters/TrainingSourceQuery"
+      responses:
+        "200":
+          description: 条目列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetItemList"
+        "404":
+          description: 数据集不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+  /api/training/datasets/{datasetId}/items/import:
+    post:
+      summary: 从识别结果导入条目（代理训练服务）
+      description: 代理 training 服务，body 原样透传；仅 DONE 任务可导入，重复条目按音频标识去重。
+      operationId: importTrainingDatasetItems
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetImportRequest"
+      responses:
+        "200":
+          description: 导入完成
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetImportResult"
+        "400":
+          description: 任务未完成（task not done）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "404":
+          description: 数据集或任务不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达（或上游 transcript 服务不可达）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+  /api/training/datasets/{datasetId}/items/batch-delete:
+    post:
+      summary: 批量删除条目（代理训练服务）
+      description: 代理 training 服务，body 原样透传；部分 id 不存在时仍删除其余。
+      operationId: batchDeleteTrainingDatasetItems
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetBatchDeleteRequest"
+      responses:
+        "200":
+          description: 实际删除条数
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetBatchDeleteResult"
+        "404":
+          description: 数据集不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+  /api/training/datasets/{datasetId}/items/{itemId}:
+    put:
+      summary: 更新条目（代理训练服务）
+      description: 代理 training 服务，body 原样透传；缺失字段不变，endMs 显式 null 置空。
+      operationId: updateTrainingDatasetItem
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+        - $ref: "#/components/parameters/TrainingItemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetItemUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetItem"
+        "400":
+          description: 时间范围或字段非法
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "404":
+          description: 数据集或条目不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
 components:
   parameters:
+    TrainingDatasetId:
+      name: datasetId
+      in: path
+      required: true
+      description: 数据集 id（ObjectId）
+      schema:
+        type: string
+    TrainingItemId:
+      name: itemId
+      in: path
+      required: true
+      description: 条目 id（ObjectId）
+      schema:
+        type: string
+    TrainingTypeQuery:
+      name: type
+      in: query
+      required: true
+      description: 数据集类型，本期固定 audio
+      schema:
+        type: string
+    TrainingAudioTypeQuery:
+      name: audioType
+      in: query
+      required: false
+      description: 按音频类型过滤（如 transcript）
+      schema:
+        type: string
+    TrainingSourceQuery:
+      name: source
+      in: query
+      required: false
+      description: 按音频来源过滤（如某个 transcript 任务 id）
+      schema:
+        type: string
     Mid:
       name: mid
       in: path
@@ -1726,3 +1995,146 @@ components:
           format: int64
           description: 播放偏移（毫秒），可正可负，范围 ±86400000（±24h），超出范围返回 400
           example: 2500
+    TrainingErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    TrainingDataset:
+      type: object
+      required: [id, name, type, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: 数据集名字（trim 后非空，长度 ≤ 128）
+        type:
+          type: string
+          description: 数据集类型，本期固定 audio
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TrainingDatasetList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 按 CreatedAt 升序
+          items:
+            $ref: "#/components/schemas/TrainingDataset"
+    TrainingDatasetCreateRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: 本期固定 audio
+    TrainingDatasetRenameRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+    TrainingDatasetItem:
+      type: object
+      required: [id, datasetId, audioType, source, audioUri, audioKey, startMs, text, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        datasetId:
+          type: string
+        audioType:
+          type: string
+          description: 音频类型，本期支持 transcript（开放枚举）
+        source:
+          type: string
+          description: 音频来源（transcript 类型 = 识别任务 id）
+        audioUri:
+          type: string
+          description: 音频地址（b/live/{roomId}/recordings/{fileName}），为空表示暂无可用音频
+        audioKey:
+          type: string
+          description: 数据集内唯一的音频标识，带类型前缀 transcript:{taskId}:{原始startMs}（原始 start 不含播放偏移）
+        startMs:
+          type: integer
+          format: int64
+          description: 开始时间（毫秒，含任务播放偏移的展示口径），不可为负
+        endMs:
+          type: integer
+          format: int64
+          nullable: true
+          description: 结束时间（毫秒）；null = 到音频末尾
+        text:
+          type: string
+        extensions:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: 扩展信息承载（预留：情感识别/二次 ASR 等加工结果）
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TrainingDatasetItemList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 按 CreatedAt、AudioKey 升序
+          items:
+            $ref: "#/components/schemas/TrainingDatasetItem"
+    TrainingDatasetImportRequest:
+      type: object
+      required: [taskId]
+      properties:
+        taskId:
+          type: string
+          description: 识别任务 id（仅 status=DONE 的任务可导入）
+    TrainingDatasetImportResult:
+      type: object
+      required: [imported, skipped]
+      properties:
+        imported:
+          type: integer
+        skipped:
+          type: integer
+    TrainingDatasetItemUpdateRequest:
+      type: object
+      description: 缺失字段保持不变；endMs 传 null 表示置空；audioUri/text/startMs 传 null 返回 400
+      properties:
+        audioUri:
+          type: string
+        text:
+          type: string
+        startMs:
+          type: integer
+          format: int64
+        endMs:
+          type: integer
+          format: int64
+          nullable: true
+    TrainingDatasetBatchDeleteRequest:
+      type: object
+      required: [itemIds]
+      properties:
+        itemIds:
+          type: array
+          items:
+            type: string
+    TrainingDatasetBatchDeleteResult:
+      type: object
+      required: [deleted]
+      properties:
+        deleted:
+          type: integer

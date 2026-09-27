@@ -635,6 +635,131 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询数据集列表（代理训练服务）
+         * @description 代理 training 服务，query 原样透传；按 CreatedAt 升序全量返回。
+         */
+        get: operations["listTrainingDatasets"];
+        put?: never;
+        /**
+         * 新建数据集（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；同类型重名返回 409。
+         */
+        post: operations["createTrainingDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 重命名数据集（代理训练服务） */
+        put: operations["renameTrainingDataset"];
+        post?: never;
+        /**
+         * 删除数据集（代理训练服务）
+         * @description 代理 training 服务，级联删除该数据集全部条目。
+         */
+        delete: operations["deleteTrainingDataset"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询数据集条目列表（代理训练服务）
+         * @description 代理 training 服务，query 原样透传；按 CreatedAt、AudioKey 升序全量返回。
+         */
+        get: operations["listTrainingDatasetItems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}/items/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 从识别结果导入条目（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；仅 DONE 任务可导入，重复条目按音频标识去重。
+         */
+        post: operations["importTrainingDatasetItems"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}/items/batch-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批量删除条目（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；部分 id 不存在时仍删除其余。
+         */
+        post: operations["batchDeleteTrainingDatasetItems"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}/items/{itemId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 更新条目（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；缺失字段不变，endMs 显式 null 置空。
+         */
+        put: operations["updateTrainingDatasetItem"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1074,9 +1199,103 @@ export interface components {
              */
             offsetMs: number;
         };
+        TrainingErrorResponse: {
+            error: string;
+        };
+        TrainingDataset: {
+            id: string;
+            /** @description 数据集名字（trim 后非空，长度 ≤ 128） */
+            name: string;
+            /** @description 数据集类型，本期固定 audio */
+            type: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TrainingDatasetList: {
+            /** @description 按 CreatedAt 升序 */
+            items: components["schemas"]["TrainingDataset"][];
+        };
+        TrainingDatasetCreateRequest: {
+            name: string;
+            /** @description 本期固定 audio */
+            type: string;
+        };
+        TrainingDatasetRenameRequest: {
+            name: string;
+        };
+        TrainingDatasetItem: {
+            id: string;
+            datasetId: string;
+            /** @description 音频类型，本期支持 transcript（开放枚举） */
+            audioType: string;
+            /** @description 音频来源（transcript 类型 = 识别任务 id） */
+            source: string;
+            /** @description 音频地址（b/live/{roomId}/recordings/{fileName}），为空表示暂无可用音频 */
+            audioUri: string;
+            /** @description 数据集内唯一的音频标识，带类型前缀 transcript:{taskId}:{原始startMs}（原始 start 不含播放偏移） */
+            audioKey: string;
+            /**
+             * Format: int64
+             * @description 开始时间（毫秒，含任务播放偏移的展示口径），不可为负
+             */
+            startMs: number;
+            /**
+             * Format: int64
+             * @description 结束时间（毫秒）；null = 到音频末尾
+             */
+            endMs?: number | null;
+            text: string;
+            /** @description 扩展信息承载（预留：情感识别/二次 ASR 等加工结果） */
+            extensions?: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TrainingDatasetItemList: {
+            /** @description 按 CreatedAt、AudioKey 升序 */
+            items: components["schemas"]["TrainingDatasetItem"][];
+        };
+        TrainingDatasetImportRequest: {
+            /** @description 识别任务 id（仅 status=DONE 的任务可导入） */
+            taskId: string;
+        };
+        TrainingDatasetImportResult: {
+            imported: number;
+            skipped: number;
+        };
+        /** @description 缺失字段保持不变；endMs 传 null 表示置空；audioUri/text/startMs 传 null 返回 400 */
+        TrainingDatasetItemUpdateRequest: {
+            audioUri?: string;
+            text?: string;
+            /** Format: int64 */
+            startMs?: number;
+            /** Format: int64 */
+            endMs?: number | null;
+        };
+        TrainingDatasetBatchDeleteRequest: {
+            itemIds: string[];
+        };
+        TrainingDatasetBatchDeleteResult: {
+            deleted: number;
+        };
     };
     responses: never;
     parameters: {
+        /** @description 数据集 id（ObjectId） */
+        TrainingDatasetId: string;
+        /** @description 条目 id（ObjectId） */
+        TrainingItemId: string;
+        /** @description 数据集类型，本期固定 audio */
+        TrainingTypeQuery: string;
+        /** @description 按音频类型过滤（如 transcript） */
+        TrainingAudioTypeQuery: string;
+        /** @description 按音频来源过滤（如某个 transcript 任务 id） */
+        TrainingSourceQuery: string;
         Mid: number;
         RoomId: number;
         /** @description 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整文件 */
@@ -2415,6 +2634,387 @@ export interface operations {
                 };
             };
             /** @description transcript 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTrainingDatasets: {
+        parameters: {
+            query: {
+                /** @description 数据集类型，本期固定 audio */
+                type: components["parameters"]["TrainingTypeQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 数据集列表（CreatedAt 升序） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingDatasetList"];
+                };
+            };
+            /** @description 数据集类型缺失或不支持 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createTrainingDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingDatasetCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 数据集已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingDataset"];
+                };
+            };
+            /** @description 名字或类型非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 数据集重名 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    renameTrainingDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingDatasetRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description 重命名成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingDataset"];
+                };
+            };
+            /** @description 名字非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 数据集不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 数据集重名 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteTrainingDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除（含条目级联清空） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 数据集不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTrainingDatasetItems: {
+        parameters: {
+            query?: {
+                /** @description 按音频类型过滤（如 transcript） */
+                audioType?: components["parameters"]["TrainingAudioTypeQuery"];
+                /** @description 按音频来源过滤（如某个 transcript 任务 id） */
+                source?: components["parameters"]["TrainingSourceQuery"];
+            };
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 条目列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingDatasetItemList"];
+                };
+            };
+            /** @description 数据集不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importTrainingDatasetItems: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingDatasetImportRequest"];
+            };
+        };
+        responses: {
+            /** @description 导入完成 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingDatasetImportResult"];
+                };
+            };
+            /** @description 任务未完成（task not done） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 数据集或任务不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达（或上游 transcript 服务不可达） */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+        };
+    };
+    batchDeleteTrainingDatasetItems: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingDatasetBatchDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description 实际删除条数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingDatasetBatchDeleteResult"];
+                };
+            };
+            /** @description 数据集不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateTrainingDatasetItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+                /** @description 条目 id（ObjectId） */
+                itemId: components["parameters"]["TrainingItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingDatasetItemUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingDatasetItem"];
+                };
+            };
+            /** @description 时间范围或字段非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 数据集或条目不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
             502: {
                 headers: {
                     [name: string]: unknown;

@@ -30,6 +30,18 @@ body {
   gap: 0.5rem;
 }
 
+.menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.menu-group-label {
+  padding: 0.5rem 1rem 0;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
 .menu-item {
   padding: 0.75rem 1rem;
   border-radius: 0.375rem;
