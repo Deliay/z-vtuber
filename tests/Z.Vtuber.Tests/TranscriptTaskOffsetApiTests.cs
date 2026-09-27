@@ -8,6 +8,7 @@ using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.RecordingTranscript.Api.Configuration;
+using Z.Vtuber.RecordingTranscript.Api.Contracts;
 using Z.Vtuber.RecordingTranscript.Api.Controllers;
 using Z.Vtuber.RecordingTranscript.Api.Sse;
 

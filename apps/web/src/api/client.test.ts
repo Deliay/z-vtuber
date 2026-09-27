@@ -1115,9 +1115,10 @@ describe('API Client', () => {
         text: () => Promise.resolve('{"error":"offsetMs out of range"}'),
       })
 
-      const error = await updateTranscriptTaskOffset('t1', 99999999).catch(
-        (e) => e as { status?: number; serverMessage?: string },
-      )
+      const error = (await updateTranscriptTaskOffset('t1', 99999999).catch((e) => e)) as {
+        status?: number
+        serverMessage?: string
+      }
 
       expect(error.status).toBe(400)
       expect(error.serverMessage).toContain('offsetMs out of range')

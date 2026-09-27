@@ -404,6 +404,19 @@ export async function retryTranscriptTask(taskId: string): Promise<TranscriptTas
   )
 }
 
+export async function updateTranscriptTaskOffset(
+  taskId: string,
+  offsetMs: number,
+): Promise<TranscriptTask> {
+  return request<TranscriptTask>(
+    `/transcripts/task/${encodeURIComponent(taskId)}/offset`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ offsetMs }),
+    },
+  )
+}
+
 export function transcriptSseUrl(taskId: string): string {
   return `${BASE_URL}/transcripts/task/${encodeURIComponent(taskId)}/sse`
 }
