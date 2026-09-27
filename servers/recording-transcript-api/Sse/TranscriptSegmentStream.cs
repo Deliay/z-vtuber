@@ -32,6 +32,10 @@ public class TranscriptSegmentStream(
         var taskKey = taskId.ToString();
         var seen = new HashSet<long>();
 
+        // 订阅建立前先读一次任务播放偏移：整条流按同一口径写出（流存续期间变更不重读，
+        // web 保存偏移后会主动断开重连）；去重键仍为原始 StartTime。
+        var offsetMs = await LoadOffsetAsync(taskId, ct);
+
         var channel = new RedisChannel(
             RecordingEventChannels.SegmentChannel(taskKey),
             RedisChannel.PatternMode.Literal);
@@ -64,15 +68,20 @@ public class TranscriptSegmentStream(
                     continue;
                 }
 
-                await WriteSegmentAsync(response, segment.StartTime, segment.EndTime, segment.Text, ct);
+                await WriteSegmentAsync(
+                    response,
+                    segment.StartTime + offsetMs,
+                    segment.EndTime + offsetMs,
+                    segment.Text,
+                    ct);
             }
 
-            await DrainAsync(response, queue, seen, taskKey, ct);
+            await DrainAsync(response, queue, seen, taskKey, offsetMs, ct);
 
             var task = await taskRepository.GetByIdAsync(taskId, ct);
             if (task is null || IsTerminal(task.Status))
             {
-                await DrainAsync(response, queue, seen, taskKey, ct);
+                await DrainAsync(response, queue, seen, taskKey, offsetMs, ct);
                 await WriteDoneAsync(response, task?.Status ?? TranscriptTaskStatus.Done, ct);
                 return;
             }
@@ -86,10 +95,10 @@ public class TranscriptSegmentStream(
                 if (completed == delayTask)
                 {
                     await WriteHeartbeatAsync(response, ct);
-                    await DrainAsync(response, queue, seen, taskKey, ct);
+                    await DrainAsync(response, queue, seen, taskKey, offsetMs, ct);
                     if (await TryWriteDoneIfTerminalAsync(response, taskId, ct))
                     {
-                        await DrainAsync(response, queue, seen, taskKey, ct);
+                        await DrainAsync(response, queue, seen, taskKey, offsetMs, ct);
                         break;
                     }
 
@@ -101,11 +110,11 @@ public class TranscriptSegmentStream(
                     break;
                 }
 
-                await DrainAsync(response, queue, seen, taskKey, ct);
+                await DrainAsync(response, queue, seen, taskKey, offsetMs, ct);
 
                 if (await TryWriteDoneIfTerminalAsync(response, taskId, ct))
                 {
-                    await DrainAsync(response, queue, seen, taskKey, ct);
+                    await DrainAsync(response, queue, seen, taskKey, offsetMs, ct);
                     break;
                 }
             }
@@ -120,6 +129,10 @@ public class TranscriptSegmentStream(
         ObjectId taskId, CancellationToken ct) =>
         segmentRepository.ListByTaskAsync(taskId, ct);
 
+    /// <summary>读取任务播放偏移（建立流时读一次；任务缺失时按 0 处理，由后续终态分支收口）。</summary>
+    private async Task<long> LoadOffsetAsync(ObjectId taskId, CancellationToken ct) =>
+        (await taskRepository.GetByIdAsync(taskId, ct))?.OffsetMs ?? 0;
+
     private static bool IsTerminal(string status) =>
         status is TranscriptTaskStatus.Done or TranscriptTaskStatus.Failed;
 
@@ -128,16 +141,18 @@ public class TranscriptSegmentStream(
         Channel<TranscriptSegmentEvent> queue,
         HashSet<long> seen,
         string taskKey,
+        long offsetMs,
         CancellationToken ct)
     {
         while (queue.Reader.TryRead(out var evt))
         {
+            // 去重键保持原始 StartTime：偏移只影响写出值，不改变同一句的身份判定
             if (!string.Equals(evt.TaskId, taskKey, StringComparison.Ordinal) || !seen.Add(evt.Start))
             {
                 continue;
             }
 
-            await WriteSegmentAsync(response, evt.Start, evt.End, evt.Text, ct);
+            await WriteSegmentAsync(response, evt.Start + offsetMs, evt.End + offsetMs, evt.Text, ct);
         }
     }
 

@@ -9,6 +9,7 @@ import {
   enqueueTranscript,
   retryTranscriptTask,
   transcriptSubtitleUrl,
+  updateTranscriptTaskOffset,
 } from '../../api/client'
 import type { components as transcriptComponents } from '../../api/schema-recording-transcript'
 import { formatBytes, formatDateTime, formatPosition } from '../../utils/format'
@@ -47,6 +48,14 @@ const inputStyle: React.CSSProperties = {
   color: '#e2e8f0',
   border: '1px solid #475569',
   borderRadius: '0.25rem',
+}
+
+/** 播放偏移合法范围 ±24h（秒），与契约 UpdateTranscriptTaskOffsetRequest 一致。 */
+const MAX_OFFSET_SECONDS = 86_400
+
+/** 任务播放偏移（毫秒）→ 输入框秒值回显（0.1 秒精度无损）。 */
+function formatOffsetSeconds(offsetMs: number | undefined): string {
+  return String((offsetMs ?? 0) / 1000)
 }
 
 function sortTasks(tasks: TranscriptTask[]): TranscriptTask[] {
@@ -115,6 +124,16 @@ export function TaskListTab() {
   const [segmentsLoading, setSegmentsLoading] = useState(false)
   const [segmentsError, setSegmentsError] = useState<string | null>(null)
   const segmentsContainerRef = useRef<HTMLDivElement | null>(null)
+
+  const [offsetDraft, setOffsetDraft] = useState('')
+  const [offsetError, setOffsetError] = useState<string | null>(null)
+  const [offsetSaving, setOffsetSaving] = useState(false)
+
+  // 当前生效偏移回显：选中任务或服务端偏移变化时同步输入框（用户编辑过程不被打断）
+  useEffect(() => {
+    setOffsetDraft(formatOffsetSeconds(selectedTask?.offsetMs))
+    setOffsetError(null)
+  }, [selectedTask?.id, selectedTask?.offsetMs])
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -304,6 +323,40 @@ export function TaskListTab() {
     }
   }
 
+  const handleSaveOffset = async () => {
+    if (!selectedTaskId || offsetSaving) {
+      return
+    }
+
+    const raw = offsetDraft.trim()
+    const seconds = Number(raw)
+    if (raw === '' || !Number.isFinite(seconds) || Math.abs(seconds) > MAX_OFFSET_SECONDS) {
+      setOffsetError('偏移无效')
+      return
+    }
+
+    setOffsetSaving(true)
+    try {
+      const updated = await updateTranscriptTaskOffset(
+        selectedTaskId,
+        Math.round(seconds * 1000),
+      )
+      setTasks((prev) =>
+        prev.map((item) => (item.id === selectedTaskId ? { ...item, ...updated } : item)),
+      )
+      setOffsetError(null)
+      // 偏移变更后旧口径片段会残留：清空已合并片段，重拉详情并重建 SSE（refreshKey 触发既有 effect）
+      setSegments([])
+      setRefreshKey((key) => key + 1)
+    } catch {
+      // 服务端 400（越界等）：提示无效并保持原值
+      setOffsetError('偏移无效')
+      setOffsetDraft(formatOffsetSeconds(selectedTask?.offsetMs))
+    } finally {
+      setOffsetSaving(false)
+    }
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
@@ -385,6 +438,35 @@ export function TaskListTab() {
                 marginBottom: '0.5rem',
               }}
             >
+              <label
+                htmlFor="transcript-offset"
+                style={{ color: '#94a3b8', fontSize: '0.875rem', marginBottom: 0 }}
+              >
+                播放偏移
+              </label>
+              <input
+                id="transcript-offset"
+                aria-label="播放偏移（秒）"
+                type="number"
+                step={0.1}
+                value={offsetDraft}
+                onChange={(event) => {
+                  setOffsetDraft(event.target.value)
+                  setOffsetError(null)
+                }}
+                style={{ ...inputStyle, width: '6rem', padding: '0.25rem 0.5rem' }}
+              />
+              <span style={{ color: '#64748b', fontSize: '0.875rem' }}>
+                秒（正值=识别提前需后移）
+              </span>
+              <button
+                onClick={handleSaveOffset}
+                aria-label="保存播放偏移"
+                disabled={offsetSaving}
+                style={{ padding: '0.25rem 0.5rem' }}
+              >
+                保存
+              </button>
               {(['srt', 'ass'] as const).map((format) => {
                 const disabled = segments.length === 0
                 return (
@@ -413,6 +495,11 @@ export function TaskListTab() {
               </button>
             </div>
           </div>
+          {offsetError && (
+            <p role="alert" style={{ color: '#f87171', margin: '0 0 0.5rem' }}>
+              {offsetError}
+            </p>
+          )}
           {segmentsLoading && segments.length === 0 ? (
             <p>加载中...</p>
           ) : segmentsError && segments.length === 0 ? (

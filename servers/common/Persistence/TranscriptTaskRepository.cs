@@ -85,6 +85,16 @@ public sealed class TranscriptTaskRepository(IMongoDatabase database)
         return _collection.UpdateOneAsync(t => t.Id == id, update, cancellationToken: ct);
     }
 
+    /// <summary>更新任务播放偏移（毫秒，可正可负）；返回是否命中任务（不存在返回 false）。</summary>
+    public async Task<bool> UpdateOffsetAsync(ObjectId id, long offsetMs, CancellationToken ct = default)
+    {
+        var update = Builders<TranscriptTaskRecord>.Update
+            .Set(t => t.OffsetMs, offsetMs)
+            .Set(t => t.UpdatedAt, DateTime.UtcNow);
+        var result = await _collection.UpdateOneAsync(t => t.Id == id, update, cancellationToken: ct);
+        return result.MatchedCount > 0;
+    }
+
     public Task<long> CountByModelAndStatusAsync(ObjectId modelId, string status, CancellationToken ct = default) =>
         _collection.CountDocumentsAsync(
             t => t.ModelId == modelId && t.Status == status, cancellationToken: ct);

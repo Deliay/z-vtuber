@@ -58,6 +58,10 @@ public class RecordingTranscriptProxyController(IHttpClientFactory httpClientFac
     public Task<IActionResult> RetryTranscriptTask(string taskId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, $"api/transcripts/task/{Uri.EscapeDataString(taskId)}/retry", ct);
 
+    [HttpPut("transcripts/task/{taskId}/offset")]
+    public Task<IActionResult> UpdateTranscriptTaskOffset(string taskId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Put, $"api/transcripts/task/{Uri.EscapeDataString(taskId)}/offset", ct);
+
     [HttpGet("transcripts/settings")]
     public Task<IActionResult> ListTranscriptSettings(CancellationToken ct) =>
         ForwardAsync(HttpMethod.Get, "api/transcripts/settings", ct);

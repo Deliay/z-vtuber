@@ -160,6 +160,80 @@ public class TranscriptTaskRepositoryTests(MongoDbFixture fixture) : IClassFixtu
     }
 
     [Fact]
+    public async Task UpdateOffset_SetsOffsetAndRefreshesUpdatedAt()
+    {
+        var repository = Tasks;
+        var id = await repository.InsertAsync(
+            TaskRecord(ObjectId.GenerateNewId(), ObjectId.GenerateNewId()));
+        var before = (await repository.GetByIdAsync(id))!.UpdatedAt;
+
+        await Task.Delay(15);
+        var matched = await repository.UpdateOffsetAsync(id, 2500);
+
+        Assert.True(matched);
+        var record = await repository.GetByIdAsync(id);
+        Assert.Equal(2500, record!.OffsetMs);
+        Assert.True(record.UpdatedAt > before);
+    }
+
+    [Fact]
+    public async Task UpdateOffset_NegativeOffset_PersistsNegativeValue()
+    {
+        var repository = Tasks;
+        var id = await repository.InsertAsync(
+            TaskRecord(ObjectId.GenerateNewId(), ObjectId.GenerateNewId()));
+
+        await repository.UpdateOffsetAsync(id, -2500);
+
+        var record = await repository.GetByIdAsync(id);
+        Assert.Equal(-2500, record!.OffsetMs);
+    }
+
+    [Fact]
+    public async Task UpdateOffset_UnknownId_ReturnsFalseAndWritesNothing()
+    {
+        var repository = Tasks;
+        var recordingId = ObjectId.GenerateNewId();
+        var id = await repository.InsertAsync(TaskRecord(recordingId, ObjectId.GenerateNewId()));
+
+        var matched = await repository.UpdateOffsetAsync(ObjectId.GenerateNewId(), 2500);
+
+        Assert.False(matched);
+        Assert.Equal(0, (await repository.GetByIdAsync(id))!.OffsetMs);
+    }
+
+    [Fact]
+    public async Task LegacyDocWithoutOffsetMsField_DeserializesAsZero()
+    {
+        // 存量文档缺 OffsetMs 字段：无迁移，反序列化默认 0
+        var collection = fixture.Database
+            .GetCollection<MongoDB.Bson.BsonDocument>(MongoCollectionNames.TranscriptTasks);
+        var id = ObjectId.GenerateNewId();
+        var now = DateTime.UtcNow;
+        await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument
+        {
+            { "_id", id },
+            { "RecordingId", ObjectId.GenerateNewId() },
+            { "RoomId", 100L },
+            { "File", "a.flv" },
+            { "ModelId", ObjectId.GenerateNewId() },
+            { "Type", TranscriptTaskTypes.Recording },
+            { "Mode", TranscriptTaskModes.File },
+            { "Source", TranscriptTaskSources.Manual },
+            { "Position", 4321L },
+            { "Status", TranscriptTaskStatus.Done },
+            { "CreatedAt", now },
+            { "UpdatedAt", now },
+        });
+
+        var record = await Tasks.GetByIdAsync(id);
+
+        Assert.NotNull(record);
+        Assert.Equal(0, record!.OffsetMs);
+        Assert.Equal(4321, record.Position);
+    }
+
+    [Fact]
     public async Task CountByModelAndStatus_CountsOnlyMatching()
     {
         var repository = Tasks;

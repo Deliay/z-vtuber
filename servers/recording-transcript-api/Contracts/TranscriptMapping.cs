@@ -35,12 +35,18 @@ internal static class TranscriptMapping
         task.Source,
         task.Status,
         task.Position,
+        task.OffsetMs,
         task.Error,
         task.CreatedAt,
         task.UpdatedAt);
 
-    public static TranscriptSegmentDto ToSegmentDto(TranscriptSegmentRecord segment) =>
-        new(segment.StartTime, segment.EndTime, segment.Text);
+    /// <summary>
+    /// 片段 → DTO：在展示时间上叠加任务播放偏移。
+    /// 负值不钳制（保持 start 单射，避免多句同钳 0 在 web 以 start 为键的合并中互相覆盖）；
+    /// 钳 0 只发生在字幕渲染（既有）与前端试听区间。
+    /// </summary>
+    public static TranscriptSegmentDto ToSegmentDto(TranscriptSegmentRecord segment, long offsetMs = 0) =>
+        new(segment.StartTime + offsetMs, segment.EndTime + offsetMs, segment.Text);
 
     public static TranscriptModelDto ToModelDto(TranscriptModelRecord model) => new(
         model.Id.ToString(),
