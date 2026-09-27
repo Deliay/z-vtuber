@@ -28,6 +28,11 @@ public static class TranscriptTaskTypes
     public const string Recording = "recording";
 }
 
+/// <summary>
+/// 标注 [BsonIgnoreExtraElements]：容忍存量/异构版本文档中的未映射元素（如旧二进制读到新字段 OffsetMs
+/// 或任何前向残留字段），避免 BsonClassMapSerializer 对未映射元素抛 FormatException。
+/// </summary>
+[BsonIgnoreExtraElements]
 public sealed class TranscriptTaskRecord
 {
     [BsonId]
