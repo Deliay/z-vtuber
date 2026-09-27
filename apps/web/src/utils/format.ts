@@ -47,3 +47,24 @@ export function formatPosition(position?: number | null): string {
   const seconds = totalSeconds % 60
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
+
+/**
+ * `m:ss` / `m:ss.S` → 毫秒（`formatPosition` 的逆变换）。
+ * 分可多位、秒须 < 60（支持 1~3 位小数毫秒）；空串/格式不符/越界一律返回 `null`。
+ */
+export function parsePosition(input: string): number | null {
+  const match = /^\s*(\d+):(\d{1,2})(?:\.(\d{1,3}))?\s*$/.exec(input)
+  if (!match) {
+    return null
+  }
+
+  const minutes = Number(match[1])
+  const seconds = Number(match[2])
+  if (seconds >= 60) {
+    return null
+  }
+
+  const fraction = match[3] ?? ''
+  const millis = fraction ? Number(fraction.padEnd(3, '0')) : 0
+  return (minutes * 60 + seconds) * 1000 + millis
+}

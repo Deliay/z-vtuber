@@ -25,6 +25,7 @@ import {
   recordingAudioUrl,
   recordingDownloadUrl,
   recordingAudioClipUrl,
+  apiErrorMessage,
   listWeiboCookieAccounts,
   createWeiboCookieAccount,
   getWeiboCookieAccount,
@@ -50,6 +51,15 @@ import {
   listTranscriptModels,
   createTranscriptModel,
   updateTranscriptModel,
+  listTrainingDatasets,
+  createTrainingDataset,
+  renameTrainingDataset,
+  deleteTrainingDataset,
+  listTrainingDatasetItems,
+  importTrainingDatasetItems,
+  updateTrainingDatasetItem,
+  batchDeleteTrainingDatasetItems,
+  trainingAudioClipUrl,
 } from './client'
 
 const mockFetch = vi.fn()
@@ -1258,6 +1268,265 @@ describe('API Client', () => {
           body: JSON.stringify({ enabled: false, maxConcurrency: 2 }),
         }),
       )
+    })
+  })
+
+  describe('Training', () => {
+    const dataset = {
+      id: 'd1',
+      name: '歌回语料',
+      type: 'audio',
+      createdAt: '2026-09-27T00:00:00Z',
+      updatedAt: '2026-09-27T00:00:00Z',
+    }
+
+    const item = {
+      id: 'i1',
+      datasetId: 'd1',
+      audioType: 'transcript',
+      source: 't1',
+      audioUri: 'b/live/101/recordings/a.flv',
+      audioKey: 'transcript:t1:0',
+      startMs: 0,
+      endMs: 60000,
+      text: '第一句',
+      extensions: null,
+      createdAt: '2026-09-27T00:00:00Z',
+      updatedAt: '2026-09-27T00:00:00Z',
+    }
+
+    it('listTrainingDatasets should GET /training/datasets with the audio type filter', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ items: [dataset] }),
+      })
+
+      const result = await listTrainingDatasets()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets?type=audio',
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+        }),
+      )
+      expect(result).toEqual([dataset])
+    })
+
+    it('listTrainingDatasets should return an empty array when items is undefined', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+
+      expect(await listTrainingDatasets()).toEqual([])
+    })
+
+    it('createTrainingDataset should POST /training/datasets with name and audio type', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: () => Promise.resolve(dataset),
+      })
+
+      const result = await createTrainingDataset({ name: '歌回语料', type: 'audio' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ name: '歌回语料', type: 'audio' }),
+        }),
+      )
+      expect(result).toEqual(dataset)
+    })
+
+    it('renameTrainingDataset should PUT /training/datasets/{datasetId}', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ...dataset, name: '新名字' }),
+      })
+
+      await renameTrainingDataset('d1', { name: '新名字' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets/d1',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ name: '新名字' }),
+        }),
+      )
+    })
+
+    it('deleteTrainingDataset should DELETE /training/datasets/{datasetId}', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+      await deleteTrainingDataset('d1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets/d1',
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+    })
+
+    it('listTrainingDatasetItems should GET items with optional filters', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ items: [item] }),
+      })
+
+      const result = await listTrainingDatasetItems('d1', {
+        audioType: 'transcript',
+        source: 't1',
+      })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets/d1/items?audioType=transcript&source=t1',
+        expect.anything(),
+      )
+      expect(result).toEqual([item])
+
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ items: [] }) })
+      await listTrainingDatasetItems('d1')
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        '/api/training/datasets/d1/items',
+        expect.anything(),
+      )
+    })
+
+    it('importTrainingDatasetItems should POST .../items/import with the taskId body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ imported: 12, skipped: 3 }),
+      })
+
+      const result = await importTrainingDatasetItems('d1', { taskId: 't1' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets/d1/items/import',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ taskId: 't1' }),
+        }),
+      )
+      expect(result).toEqual({ imported: 12, skipped: 3 })
+    })
+
+    it('updateTrainingDatasetItem should serialize an explicit endMs null instead of dropping it', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ...item, endMs: null }),
+      })
+
+      const result = await updateTrainingDatasetItem('d1', 'i1', { endMs: null })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets/d1/items/i1',
+        expect.objectContaining({ method: 'PUT', body: '{"endMs":null}' }),
+      )
+      expect(result.endMs).toBeNull()
+    })
+
+    it('updateTrainingDatasetItem should only send the provided fields', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(item) })
+
+      await updateTrainingDatasetItem('d1', 'i1', { text: '修订后', startMs: 90000 })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets/d1/items/i1',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ text: '修订后', startMs: 90000 }),
+        }),
+      )
+    })
+
+    it('updateTrainingDatasetItem should throw ApiError carrying the server message on 400', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: () => Promise.resolve('{"error":"invalid time range"}'),
+      })
+
+      const error = (await updateTrainingDatasetItem('d1', 'i1', {
+        startMs: 0,
+        endMs: -1,
+      }).catch((e) => e)) as { status?: number; serverMessage?: string }
+
+      expect(error.status).toBe(400)
+      expect(error.serverMessage).toContain('invalid time range')
+    })
+
+    it('batchDeleteTrainingDatasetItems should POST .../batch-delete with the itemIds body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ deleted: 2 }),
+      })
+
+      const result = await batchDeleteTrainingDatasetItems('d1', ['i1', 'i2'])
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets/d1/items/batch-delete',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ itemIds: ['i1', 'i2'] }),
+        }),
+      )
+      expect(result).toEqual({ deleted: 2 })
+    })
+
+    it('trainingAudioClipUrl should build the clip url from a recording uri', () => {
+      expect(trainingAudioClipUrl('b/live/101/recordings/a.flv', 1000, 2500)).toBe(
+        '/api/b/live/101/recordings/a.flv/audio?startMs=1000&endMs=2500',
+      )
+    })
+
+    it('trainingAudioClipUrl should fall back to a 5 minute preview window when endMs is empty', () => {
+      expect(trainingAudioClipUrl('b/live/101/recordings/a b.flv', 1000, null)).toBe(
+        '/api/b/live/101/recordings/a%20b.flv/audio?startMs=1000&endMs=301000',
+      )
+      expect(trainingAudioClipUrl('b/live/101/recordings/a.flv', 500, undefined)).toBe(
+        '/api/b/live/101/recordings/a.flv/audio?startMs=500&endMs=300500',
+      )
+      expect(trainingAudioClipUrl('b/live/101/recordings/a.flv', 500, 0)).toBe(
+        '/api/b/live/101/recordings/a.flv/audio?startMs=500&endMs=300500',
+      )
+    })
+
+    it('trainingAudioClipUrl should return null for an unparseable uri', () => {
+      expect(trainingAudioClipUrl('', 0, null)).toBeNull()
+      expect(trainingAudioClipUrl('b/live/101/recordings/', 0, null)).toBeNull()
+      expect(trainingAudioClipUrl('b/live/abc/recordings/a.flv', 0, null)).toBeNull()
+      expect(trainingAudioClipUrl('https://example.com/a.flv', 0, null)).toBeNull()
+    })
+  })
+
+  describe('apiErrorMessage', () => {
+    it('should extract the error field from a JSON error body and map it to a readable message', () => {
+      expect(apiErrorMessage({ serverMessage: '{"error":"task not done"}' })).toBe(
+        '该识别任务尚未完成，无法导入',
+      )
+      expect(apiErrorMessage({ serverMessage: '{"error":"dataset name exists"}' })).toBe(
+        '数据集名字已存在',
+      )
+      expect(apiErrorMessage({ serverMessage: '{"error":"invalid time range"}' })).toBe(
+        '时间区间非法（开始不小于 0，结束须晚于开始）',
+      )
+      expect(
+        apiErrorMessage({ serverMessage: '{"error":"transcript service unavailable"}' }),
+      ).toBe('识别服务暂不可用，请稍后重试')
+    })
+
+    it('should keep an unmapped error code or a non-JSON body as-is', () => {
+      expect(apiErrorMessage({ serverMessage: '{"error":"some future error"}' })).toBe(
+        'some future error',
+      )
+      expect(apiErrorMessage({ serverMessage: 'plain text from gateway' })).toBe(
+        'plain text from gateway',
+      )
+    })
+
+    it('should fall back when there is no server message', () => {
+      expect(apiErrorMessage(undefined)).toBe('操作失败')
+      expect(apiErrorMessage({}, '导入失败')).toBe('导入失败')
+      expect(apiErrorMessage({ serverMessage: '' }, '导入失败')).toBe('导入失败')
     })
   })
 })

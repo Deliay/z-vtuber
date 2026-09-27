@@ -3,6 +3,7 @@ import type { components as weiboComponents } from './schema-weibo'
 import type { components as notifyComponents } from './schema-notify'
 import type { components as cookieComponents } from './schema-cookie'
 import type { components as transcriptComponents } from './schema-recording-transcript'
+import type { components as trainingComponents } from './schema-training'
 
 const BASE_URL = '/api'
 
@@ -31,9 +32,52 @@ type TranscriptRecordingItem = transcriptComponents['schemas']['RecordingItem']
 type TranscriptCandidateRoom = transcriptComponents['schemas']['CandidateRoom']
 type RoomTranscriptView = transcriptComponents['schemas']['RoomTranscriptView']
 
+type TrainingDataset = trainingComponents['schemas']['TrainingDataset']
+type TrainingDatasetItem = trainingComponents['schemas']['TrainingDatasetItem']
+
 interface ApiError extends Error {
   status?: number
   serverMessage?: string
+}
+
+/** 服务端 `{"error": "..."}` 错误码 → 用户可读文案（未收录的错误码原样展示）。 */
+const ERROR_MESSAGES: Record<string, string> = {
+  'name is required': '数据集名字不能为空',
+  'name too long': '数据集名字过长（最多 128 字符）',
+  'unsupported dataset type': '不支持的数据集类型',
+  'dataset name exists': '数据集名字已存在',
+  'dataset not found': '数据集不存在',
+  'task not found': '识别任务不存在',
+  'task not done': '该识别任务尚未完成，无法导入',
+  'invalid time range': '时间区间非法（开始不小于 0，结束须晚于开始）',
+  'field cannot be null': '该字段不能为空',
+  'item not found': '条目不存在',
+  'transcript service unavailable': '识别服务暂不可用，请稍后重试',
+  'training service unavailable': '训练服务暂不可用，请稍后重试',
+}
+
+/**
+ * 把 `ApiError.serverMessage`（原始 JSON 错误体或纯文本）转成可读提示：
+ * 1. 解析 `{"error": "..."}` 取出错误码；2. 映射已知错误码为中文文案；3. 未收录则原样展示。
+ * `serverMessage` 本身保持原始报文不变（既有调用方按原文解析），展示统一走本函数。
+ */
+export function apiErrorMessage(error: unknown, fallback = '操作失败'): string {
+  const raw = (error as { serverMessage?: string })?.serverMessage ?? ''
+  if (!raw) {
+    return fallback
+  }
+
+  let code = raw
+  try {
+    const parsed = JSON.parse(raw) as { error?: unknown }
+    if (typeof parsed?.error === 'string' && parsed.error) {
+      code = parsed.error
+    }
+  } catch {
+    // 非 JSON 错误体（代理/网关返回的纯文本），按原文处理
+  }
+
+  return ERROR_MESSAGES[code] ?? (code || fallback)
 }
 
 async function request<T>(
@@ -479,4 +523,130 @@ export async function updateTranscriptModel(
       body: JSON.stringify(params),
     },
   )
+}
+
+export async function listTrainingDatasets(
+  type: 'audio' = 'audio',
+): Promise<TrainingDataset[]> {
+  const data = await request<trainingComponents['schemas']['TrainingDatasetList']>(
+    `/training/datasets?type=${encodeURIComponent(type)}`,
+  )
+  return data.items ?? []
+}
+
+export async function createTrainingDataset(params: {
+  name: string
+  type: 'audio'
+}): Promise<TrainingDataset> {
+  return request<TrainingDataset>('/training/datasets', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function renameTrainingDataset(
+  datasetId: string,
+  params: { name: string },
+): Promise<TrainingDataset> {
+  return request<TrainingDataset>(
+    `/training/datasets/${encodeURIComponent(datasetId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(params),
+    },
+  )
+}
+
+export async function deleteTrainingDataset(datasetId: string): Promise<void> {
+  await request<void>(`/training/datasets/${encodeURIComponent(datasetId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function listTrainingDatasetItems(
+  datasetId: string,
+  params: { audioType?: string; source?: string } = {},
+): Promise<TrainingDatasetItem[]> {
+  const query = new URLSearchParams()
+  if (params.audioType) query.set('audioType', params.audioType)
+  if (params.source) query.set('source', params.source)
+  const qs = query.toString()
+  const data = await request<trainingComponents['schemas']['TrainingDatasetItemList']>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items${qs ? `?${qs}` : ''}`,
+  )
+  return data.items ?? []
+}
+
+export async function importTrainingDatasetItems(
+  datasetId: string,
+  params: { taskId: string },
+): Promise<{ imported: number; skipped: number }> {
+  return request<{ imported: number; skipped: number }>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items/import`,
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    },
+  )
+}
+
+export async function updateTrainingDatasetItem(
+  datasetId: string,
+  itemId: string,
+  params: {
+    audioUri?: string
+    text?: string
+    startMs?: number
+    /** `null` 表示置空（到音频末尾），必须以 JSON `null` 透传。 */
+    endMs?: number | null
+  },
+): Promise<TrainingDatasetItem> {
+  // 仅提交出现（哪怕是 null）的字段：缺失字段由服务端保持不变。
+  const body: Record<string, unknown> = {}
+  if (params.audioUri !== undefined) body.audioUri = params.audioUri
+  if (params.text !== undefined) body.text = params.text
+  if (params.startMs !== undefined) body.startMs = params.startMs
+  if (params.endMs !== undefined) body.endMs = params.endMs
+
+  return request<TrainingDatasetItem>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items/${encodeURIComponent(itemId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+export async function batchDeleteTrainingDatasetItems(
+  datasetId: string,
+  itemIds: string[],
+): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items/batch-delete`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ itemIds }),
+    },
+  )
+}
+
+/**
+ * 训练条目试听地址：`audioUri` 形如 `b/live/{roomId}/recordings/{fileName}` 时
+ * 复用 `recordingAudioClipUrl`；`endMs` 为空（null/undefined/<= 0）时以
+ * `startMs + 300000`（试听预览上限 5 分钟）兜底；uri 不可解析返回 `null`。
+ */
+export function trainingAudioClipUrl(
+  audioUri: string,
+  startMs: number,
+  endMs: number | null | undefined,
+): string | null {
+  const match = /^b\/live\/(\d+)\/recordings\/(.+)$/.exec(audioUri)
+  if (!match) {
+    return null
+  }
+
+  const roomId = Number(match[1])
+  const fileName = match[2]
+  const end = typeof endMs === 'number' && endMs > 0 ? endMs : startMs + 300000
+  return recordingAudioClipUrl(roomId, fileName, startMs, end)
 }
