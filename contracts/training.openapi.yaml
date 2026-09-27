@@ -1,0 +1,438 @@
+openapi: 3.1.0
+info:
+  title: Training Service API
+  version: 1.0.0
+  description: AI 训练模块「音频数据集」服务 API（数据集管理、条目管理、从识别结果导入、条目编辑与批量删除）
+servers:
+  - url: /
+paths:
+  /health:
+    get:
+      summary: 健康检查
+      operationId: trainingHealth
+      responses:
+        "200":
+          description: 服务存活且 MongoDB 可达
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/training/datasets:
+    get:
+      summary: 查询数据集列表
+      description: 按数据集类型过滤，按 CreatedAt 升序返回；本期全量返回（契约预留分页扩展位）。
+      operationId: listTrainingDatasets
+      parameters:
+        - $ref: "#/components/parameters/DatasetTypeQuery"
+      responses:
+        "200":
+          description: 数据集列表（CreatedAt 升序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetList"
+        "400":
+          description: '{"error": "unsupported dataset type"}（type 缺失或非 audio）'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      summary: 新建数据集
+      description: 名字 trim 后非空且长度 ≤ 128；同类型重名返回 409（MongoDB (Type, Name) 唯一索引）。
+      operationId: createTrainingDataset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetCreateRequest"
+      responses:
+        "201":
+          description: 数据集已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDataset"
+        "400":
+          description: '{"error": "name is required"}（空）、{"error": "name too long"}（>128）、{"error": "unsupported dataset type"}（type 缺失或非 audio）'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: '{"error": "dataset name exists"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}:
+    put:
+      summary: 重命名数据集
+      operationId: renameTrainingDataset
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetRenameRequest"
+      responses:
+        "200":
+          description: 重命名成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDataset"
+        "400":
+          description: '{"error": "name is required"} 或 {"error": "name too long"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "dataset not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: '{"error": "dataset name exists"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: 删除数据集
+      description: 级联删除该数据集下全部条目（先删条目再删数据集；删除幂等可重试）。
+      operationId: deleteTrainingDataset
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      responses:
+        "204":
+          description: 已删除（含条目级联清空）
+        "404":
+          description: '{"error": "dataset not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/items:
+    get:
+      summary: 查询数据集条目列表
+      description: 支撑列表七字段展示与「按来源/按类型分组」；按 CreatedAt、AudioKey 升序返回，本期全量不分页。
+      operationId: listTrainingDatasetItems
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/AudioTypeQuery"
+        - $ref: "#/components/parameters/SourceQuery"
+      responses:
+        "200":
+          description: 条目列表（CreatedAt、AudioKey 升序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetItemList"
+        "404":
+          description: '{"error": "dataset not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/items/import:
+    post:
+      summary: 从识别结果（Transcript）导入条目
+      description: >-
+        仅导入 status=DONE 的任务；起止时间取任务详情返回值（已叠加任务播放偏移）；
+        音频标识 audioKey 以原始时间（返回 start − task.offsetMs）生成，保证任务偏移变更后重复导入仍按 (datasetId, audioKey) 去重；
+        重复条目跳过并计入 skipped。
+      operationId: importTrainingDatasetItems
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetImportRequest"
+      responses:
+        "200":
+          description: 导入完成（imported + skipped = 任务片段数）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetImportResult"
+        "400":
+          description: '{"error": "task not done"}（任务存在但 status 非 DONE）'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "dataset not found"} 或 {"error": "task not found"}（taskId 非法或任务不存在）'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: '{"error": "transcript service unavailable"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/items/batch-delete:
+    post:
+      summary: 批量删除条目
+      description: 部分 id 不存在时仍删除其余条目并返回实际删除数。
+      operationId: batchDeleteTrainingDatasetItems
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetBatchDeleteRequest"
+      responses:
+        "200":
+          description: 实际删除条数
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetBatchDeleteResult"
+        "404":
+          description: '{"error": "dataset not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/items/{itemId}:
+    put:
+      summary: 更新条目
+      description: >-
+        支持编辑 audioUri/text/startMs/endMs 四个字段：请求中缺失的字段保持不变；
+        endMs 显式传 null 表示置空（到音频末尾）；audioUri/text/startMs 显式传 null 返回 400；
+        startMs ≥ 0 且 endMs 非空时须 > startMs（startMs 取提交值或现值），否则 400 invalid time range。
+      operationId: updateTrainingDatasetItem
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/ItemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDatasetItemUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDatasetItem"
+        "400":
+          description: '{"error": "invalid time range"}、{"error": "field cannot be null"}（audioUri/text/startMs 显式 null）'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "dataset not found"} 或 {"error": "item not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  parameters:
+    DatasetId:
+      name: datasetId
+      in: path
+      required: true
+      description: 数据集 id（ObjectId）
+      schema:
+        type: string
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      description: 条目 id（ObjectId）
+      schema:
+        type: string
+    DatasetTypeQuery:
+      name: type
+      in: query
+      required: true
+      description: 数据集类型，本期固定 audio（预留其他模态 Tab）
+      schema:
+        type: string
+    AudioTypeQuery:
+      name: audioType
+      in: query
+      required: false
+      description: 按音频类型过滤（如 transcript），支撑「按类型分组」
+      schema:
+        type: string
+    SourceQuery:
+      name: source
+      in: query
+      required: false
+      description: 按音频来源过滤（如某个 transcript 任务 id），支撑「按来源分组」
+      schema:
+        type: string
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    TrainingDataset:
+      type: object
+      required: [id, name, type, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: 数据集名字（trim 后非空，长度 ≤ 128）
+        type:
+          type: string
+          description: 数据集类型，本期固定 audio
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TrainingDatasetList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 按 CreatedAt 升序
+          items:
+            $ref: "#/components/schemas/TrainingDataset"
+    TrainingDatasetCreateRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: 本期固定 audio
+    TrainingDatasetRenameRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+    TrainingDatasetItem:
+      type: object
+      required: [id, datasetId, audioType, source, audioUri, audioKey, startMs, text, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        datasetId:
+          type: string
+        audioType:
+          type: string
+          description: 音频类型，本期支持 transcript（开放枚举，新增类型加新值）
+        source:
+          type: string
+          description: 音频来源（transcript 类型 = 识别任务 id），支撑「按来源分组」
+        audioUri:
+          type: string
+          description: 音频地址；transcript 类型为录播文件 uri（b/live/{roomId}/recordings/{fileName}），为空表示暂无可用音频
+        audioKey:
+          type: string
+          description: >-
+            数据集内唯一的音频标识，带类型前缀：transcript:{taskId}:{原始startMs}。
+            原始 start = 任务详情返回的 start − 任务 offsetMs（不含播放偏移），
+            保证任务偏移变更后重复导入仍命中 (datasetId, audioKey) 唯一索引而被去重。
+        startMs:
+          type: integer
+          format: int64
+          description: 基于音频地址的开始时间（毫秒，含任务播放偏移的展示口径），默认 0，不可为负
+        endMs:
+          type: integer
+          format: int64
+          nullable: true
+          description: 基于音频地址的结束时间（毫秒，含任务播放偏移的展示口径）；null = 到音频末尾
+        text:
+          type: string
+          description: 片段文本
+        extensions:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: 扩展信息承载（预留：情感识别/二次 ASR 等加工结果按键名挂接）
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TrainingDatasetItemList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 按 CreatedAt、AudioKey 升序
+          items:
+            $ref: "#/components/schemas/TrainingDatasetItem"
+    TrainingDatasetImportRequest:
+      type: object
+      required: [taskId]
+      properties:
+        taskId:
+          type: string
+          description: 识别任务 id（仅 status=DONE 的任务可导入）
+    TrainingDatasetImportResult:
+      type: object
+      required: [imported, skipped]
+      properties:
+        imported:
+          type: integer
+          description: 实际写入条数
+        skipped:
+          type: integer
+          description: 因 (datasetId, audioKey) 唯一索引去重而跳过的条数
+    TrainingDatasetItemUpdateRequest:
+      type: object
+      description: 缺失字段保持不变；endMs 传 null 表示置空；audioUri/text/startMs 传 null 返回 400
+      properties:
+        audioUri:
+          type: string
+          description: 音频地址（缺失 = 不变，null = 400）
+        text:
+          type: string
+          description: 片段文本（缺失 = 不变，null = 400）
+        startMs:
+          type: integer
+          format: int64
+          description: 开始时间（毫秒，≥ 0；缺失 = 不变，null = 400）
+        endMs:
+          type: integer
+          format: int64
+          nullable: true
+          description: 结束时间（毫秒）；null = 置空（到音频末尾）；非空须 > startMs
+    TrainingDatasetBatchDeleteRequest:
+      type: object
+      required: [itemIds]
+      properties:
+        itemIds:
+          type: array
+          description: 待删除条目 id 列表
+          items:
+            type: string
+    TrainingDatasetBatchDeleteResult:
+      type: object
+      required: [deleted]
+      properties:
+        deleted:
+          type: integer
+          description: 实际删除条数（不存在的 id 跳过）

@@ -14,6 +14,10 @@ vi.mock('./pages/notification/NotificationPage', () => ({
   NotificationPage: () => <div data-testid="notification-page">通知管理页面</div>,
 }))
 
+vi.mock('./pages/training/DatasetsPage', () => ({
+  DatasetsPage: () => <div data-testid="training-datasets-page">数据集页面</div>,
+}))
+
 describe('App', () => {
   it('should render sidebar with menu items', () => {
     render(<App />)
@@ -22,6 +26,29 @@ describe('App', () => {
     expect(screen.getByText('订阅管理')).toBeInTheDocument()
     expect(screen.getByText('Cookie 管理')).toBeInTheDocument()
     expect(screen.getByText('通知')).toBeInTheDocument()
+  })
+
+  it('should render the 训练 group with the 数据集 entry while keeping the existing 5 menu items', () => {
+    render(<App />)
+
+    expect(screen.getByText('训练')).toBeInTheDocument()
+    expect(screen.getByText('数据集')).toBeInTheDocument()
+
+    expect(screen.getByText('订阅管理')).toBeInTheDocument()
+    expect(screen.getByText('录制状态')).toBeInTheDocument()
+    expect(screen.getByText('Transcripts')).toBeInTheDocument()
+    expect(screen.getByText('Cookie 管理')).toBeInTheDocument()
+    expect(screen.getByText('通知')).toBeInTheDocument()
+  })
+
+  it('should switch to the training datasets page when the 数据集 entry is clicked', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByText('数据集'))
+
+    expect(screen.getByTestId('training-datasets-page')).toBeInTheDocument()
+    expect(screen.queryByTestId('subscription-page')).not.toBeInTheDocument()
+    expect(screen.getByText('数据集')).toHaveAttribute('aria-current', 'page')
   })
 
   it('should render subscription page by default', () => {

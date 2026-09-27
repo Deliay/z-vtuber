@@ -9,11 +9,12 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "codegen": "openapi-typescript ../../contracts/bilibili-crawler.openapi.yaml -o src/api/schema.d.ts && openapi-typescript ../../contracts/notifier.openapi.yaml -o src/api/schema-notify.d.ts && openapi-typescript ../../contracts/weibo-crawler.openapi.yaml -o src/api/schema-weibo.d.ts && openapi-typescript ../../contracts/cookie.openapi.yaml -o src/api/schema-cookie.d.ts && openapi-typescript ../../contracts/recording.openapi.yaml -o src/api/schema-recording.d.ts && openapi-typescript ../../contracts/recording-transcript.openapi.yaml -o src/api/schema-recording-transcript.d.ts"
+    "codegen": "openapi-typescript ../../contracts/bilibili-crawler.openapi.yaml -o src/api/schema.d.ts && openapi-typescript ../../contracts/notifier.openapi.yaml -o src/api/schema-notify.d.ts && openapi-typescript ../../contracts/weibo-crawler.openapi.yaml -o src/api/schema-weibo.d.ts && openapi-typescript ../../contracts/cookie.openapi.yaml -o src/api/schema-cookie.d.ts && openapi-typescript ../../contracts/recording.openapi.yaml -o src/api/schema-recording.d.ts && openapi-typescript ../../contracts/recording-transcript.openapi.yaml -o src/api/schema-recording-transcript.d.ts && openapi-typescript ../../contracts/training.openapi.yaml -o src/api/schema-training.d.ts"
   },
   "dependencies": {
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "wavesurfer.js": "^8.0.1"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",

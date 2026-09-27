@@ -30,6 +30,8 @@ public sealed class MongoCollectionNames
     public const string TranscriptSegments = "transcript_segments";
     public const string TranscriptModels = "transcript_models";
     public const string TranscriptAutoEnqueue = "transcript_auto_enqueue";
+    public const string TrainingDatasets = "training_datasets";
+    public const string TrainingDatasetItems = "training_dataset_items";
 }
 
 public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbInitializer> logger)
@@ -56,6 +58,7 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
         await EnsureNotificationSubscriptionIndexesAsync(ct);
         await EnsureRecordingStatusIndexesAsync(ct);
         await EnsureTranscriptIndexesAsync(ct);
+        await EnsureTrainingIndexesAsync(ct);
         logger.LogInformation("MongoDB indexes ensured for database {Database}", DatabaseName);
     }
 
@@ -986,6 +989,48 @@ public sealed class MongoDbInitializer(IMongoDatabase database, ILogger<MongoDbI
             cancellationToken: ct);
 
         logger.LogInformation("Ensured transcript collection indexes.");
+    }
+
+    private async Task EnsureTrainingIndexesAsync(CancellationToken ct)
+    {
+        // training_datasets：(Type, Name) 唯一（重名天然 409）
+        var datasets = database.GetCollection<TrainingDatasetRecord>(MongoCollectionNames.TrainingDatasets);
+        var datasetNameKeys = Builders<TrainingDatasetRecord>.IndexKeys
+            .Ascending(d => d.Type)
+            .Ascending(d => d.Name);
+        await datasets.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingDatasetRecord>(
+                datasetNameKeys, new CreateIndexOptions { Unique = true, Name = "Type_1_Name_1" }),
+            cancellationToken: ct);
+
+        // training_dataset_items：(DatasetId, AudioKey) 唯一（导入去重与标识唯一性基础）
+        var items = database.GetCollection<TrainingDatasetItemRecord>(MongoCollectionNames.TrainingDatasetItems);
+        var audioKeyKeys = Builders<TrainingDatasetItemRecord>.IndexKeys
+            .Ascending(i => i.DatasetId)
+            .Ascending(i => i.AudioKey);
+        await items.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingDatasetItemRecord>(
+                audioKeyKeys, new CreateIndexOptions { Unique = true, Name = "DatasetId_1_AudioKey_1" }),
+            cancellationToken: ct);
+
+        // 分组/过滤查询
+        var audioTypeKeys = Builders<TrainingDatasetItemRecord>.IndexKeys
+            .Ascending(i => i.DatasetId)
+            .Ascending(i => i.AudioType);
+        await items.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingDatasetItemRecord>(
+                audioTypeKeys, new CreateIndexOptions { Name = "DatasetId_1_AudioType_1" }),
+            cancellationToken: ct);
+
+        var sourceKeys = Builders<TrainingDatasetItemRecord>.IndexKeys
+            .Ascending(i => i.DatasetId)
+            .Ascending(i => i.Source);
+        await items.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingDatasetItemRecord>(
+                sourceKeys, new CreateIndexOptions { Name = "DatasetId_1_Source_1" }),
+            cancellationToken: ct);
+
+        logger.LogInformation("Ensured training collection indexes.");
     }
 
     private async Task EnsureWeiboCookieIndexesAsync(CancellationToken ct)
