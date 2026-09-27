@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  apiErrorMessage,
   createTrainingDataset,
   deleteTrainingDataset,
   listTrainingDatasets,
@@ -19,19 +20,9 @@ const DATASET_TYPE = 'audio'
 
 type EditMode = 'idle' | 'create' | 'rename'
 
-/** 服务端错误体 → 页面提示（重名必须明确提示且不生效）。 */
+/** 服务端错误 → 可读提示（错误码映射见 `apiErrorMessage`）。 */
 function errorMessage(error: unknown): string {
-  const serverMessage = (error as { serverMessage?: string })?.serverMessage ?? ''
-  if (serverMessage.includes('dataset name exists')) {
-    return '数据集名字已存在'
-  }
-  if (serverMessage.includes('name is required')) {
-    return '数据集名字不能为空'
-  }
-  if (serverMessage.includes('name too long')) {
-    return '数据集名字过长（最多 128 字符）'
-  }
-  return serverMessage || '操作失败'
+  return apiErrorMessage(error)
 }
 
 /**

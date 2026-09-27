@@ -40,6 +40,8 @@ public sealed class TrainingDatasetItemRepository(IMongoDatabase database)
     /// <summary>
     /// 无序批量导入：按 <c>(DatasetId, AudioKey)</c> 唯一索引跳过重复。
     /// 返回 (Imported, Skipped)，Skipped = 提交数 − Imported。
+    /// 仅当**全部**写失败都是唯一键冲突才按去重计数；其余写失败（集合校验、写关注异常、WriteErrors 为空等）
+    /// 一律原样上抛，避免把「未落库」误报成「已去重跳过」导致数据静默丢失。
     /// </summary>
     public async Task<(long Imported, long Skipped)> InsertManyIgnoreDuplicatesAsync(
         IEnumerable<TrainingDatasetItemRecord> items, CancellationToken ct = default)
@@ -58,10 +60,23 @@ public sealed class TrainingDatasetItemRepository(IMongoDatabase database)
         }
         catch (MongoBulkWriteException<TrainingDatasetItemRecord> ex)
         {
-            var imported = ex.Result.InsertedCount;
-            return (imported, submitted.Count - imported);
+            if (ex.WriteErrors.Count > 0
+                && ex.WriteErrors.All(e => e.Category == ServerErrorCategory.DuplicateKey))
+            {
+                var imported = ex.Result.InsertedCount;
+                return (imported, submitted.Count - imported);
+            }
+
+            throw;
         }
     }
+
+    /// <summary>按 (datasetId, itemId) 读取单条条目；不存在返回 null（避免为读一条而全量列举数据集）。</summary>
+    public async Task<TrainingDatasetItemRecord?> GetByIdAsync(
+        ObjectId datasetId, ObjectId itemId, CancellationToken ct = default) =>
+        await _collection
+            .Find(i => i.DatasetId == datasetId && i.Id == itemId)
+            .FirstOrDefaultAsync(ct);
 
     /// <summary>按 (datasetId, itemId) 应用更新定义；未命中返回 null。</summary>
     public async Task<TrainingDatasetItemRecord?> UpdateAsync(

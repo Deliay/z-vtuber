@@ -8,7 +8,12 @@ export interface WaveformLoadOptions {
   container: HTMLElement
   /** 区间试听地址（`trainingAudioClipUrl`）。 */
   url: string
+  /**
+   * 录播绝对开始时间（毫秒）：与 `endMs` 一起拼 url 并推导**片段时长**。
+   * 注意 `url` 指向的是已被裁剪的片段，其播放时间轴从 0 起，不等于该绝对时间。
+   */
   startMs: number
+  /** 录播绝对结束时间（毫秒）；片段时长 = `endMs - startMs`。 */
   endMs: number
   /** 音频加载完成、可播放。 */
   onReady?: () => void
@@ -17,7 +22,11 @@ export interface WaveformLoadOptions {
 }
 
 export interface WaveformPlayer {
-  /** 按 `[startMs, endMs)` 区间播放。 */
+  /**
+   * 播放整个片段：在**片段相对时间轴**上从 0 播到 `endMs - startMs`。
+   * 片段由 `/audio?startMs&endMs` 服务端裁剪（ffmpeg `-ss -t`），输出时间轴从 0 起；
+   * 若按录播绝对秒 seek 会落到片段之外——分钟级条目将完全无声。
+   */
   play(): void
   /** 停止播放并回到起点。 */
   stop(): void
@@ -61,8 +70,11 @@ export const defaultWaveformLoader: WaveformLoader = {
         if (destroyed || !instance) {
           return
         }
+        // 片段相对时间轴：url 已按 [startMs, endMs) 服务端裁剪，播放从 0 到片段时长；
+        // 传录播绝对秒（如 600s）会 seek 到片段之外导致无声。
+        const durationMs = Math.max(0, endMs - startMs)
         void instance
-          .play(startMs / 1000, endMs / 1000)
+          .play(0, durationMs > 0 ? durationMs / 1000 : undefined)
           .catch(() => onError?.())
       },
       stop() {

@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
 import {
+  apiErrorMessage,
   batchDeleteTrainingDatasetItems,
   listTrainingDatasetItems,
   updateTrainingDatasetItem,
@@ -30,9 +31,9 @@ interface EditDraft {
 
 const TIME_INVALID = '时间输入无效'
 
+/** 服务端错误 → 可读提示（错误码映射见 `apiErrorMessage`）。 */
 function errorMessage(error: unknown): string {
-  const serverMessage = (error as { serverMessage?: string })?.serverMessage ?? ''
-  return serverMessage || '操作失败'
+  return apiErrorMessage(error)
 }
 
 /**

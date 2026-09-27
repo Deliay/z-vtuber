@@ -19,6 +19,10 @@ public sealed class TrainingDatasetRepository(IMongoDatabase database)
             .SortBy(d => d.CreatedAt)
             .ToListAsync(ct);
 
+    /// <summary>按 id 读取单个数据集；不存在返回 null（避免为读一条而全量列举）。</summary>
+    public async Task<TrainingDatasetRecord?> GetByIdAsync(ObjectId id, CancellationToken ct = default) =>
+        await _collection.Find(d => d.Id == id).FirstOrDefaultAsync(ct);
+
     /// <summary>
     /// 插入数据集：<paramref name="record"/>.<c>Name</c> 落库前 <c>Trim()</c>
     /// （API 层已 trim，此处兜底保证 (Type, Name) 唯一索引口径一致）；同 (Type, Name) 重复抛 DuplicateKey。

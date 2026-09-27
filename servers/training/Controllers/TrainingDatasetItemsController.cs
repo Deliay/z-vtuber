@@ -24,9 +24,6 @@ public sealed class TrainingDatasetItemsController(
     ITranscriptApiClient transcript,
     ILogger<TrainingDatasetItemsController>? logger = null) : ControllerBase
 {
-    /// <summary>与 <see cref="TrainingDatasetsController"/> 同口径：本期数据集类型恒为 audio。</summary>
-    private const string AudioType = "audio";
-
     private readonly ILogger<TrainingDatasetItemsController> _logger =
         logger ?? NullLogger<TrainingDatasetItemsController>.Instance;
 
@@ -123,9 +120,7 @@ public sealed class TrainingDatasetItemsController(
             return NotFound(new ErrorResponse("item not found"));
         }
 
-        // 仓储无 GetById：借 ListAsync(datasetId) 回读现值（时间校验需要「条目现值」口径）
-        var current = (await items.ListAsync(id, null, null, ct))
-            .FirstOrDefault(i => i.Id == itemObjectId);
+        var current = await items.GetByIdAsync(id, itemObjectId, ct);
         if (current is null)
         {
             return NotFound(new ErrorResponse("item not found"));
@@ -221,9 +216,9 @@ public sealed class TrainingDatasetItemsController(
         return Ok(new TrainingDatasetBatchDeleteResultDto(deleted));
     }
 
-    /// <summary>数据集是否存在（仓储无 GetById，借 ListAsync(audio) 判定）。</summary>
+    /// <summary>数据集是否存在（按 id 单读，不全量列举）。</summary>
     private async Task<bool> DatasetExistsAsync(ObjectId id, CancellationToken ct) =>
-        (await datasets.ListAsync(AudioType, ct)).Any(d => d.Id == id);
+        await datasets.GetByIdAsync(id, ct) is not null;
 
     private ObjectResult TranscriptUnavailable() =>
         StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse("transcript service unavailable"));

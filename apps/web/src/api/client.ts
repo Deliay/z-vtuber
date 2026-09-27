@@ -40,6 +40,46 @@ interface ApiError extends Error {
   serverMessage?: string
 }
 
+/** 服务端 `{"error": "..."}` 错误码 → 用户可读文案（未收录的错误码原样展示）。 */
+const ERROR_MESSAGES: Record<string, string> = {
+  'name is required': '数据集名字不能为空',
+  'name too long': '数据集名字过长（最多 128 字符）',
+  'unsupported dataset type': '不支持的数据集类型',
+  'dataset name exists': '数据集名字已存在',
+  'dataset not found': '数据集不存在',
+  'task not found': '识别任务不存在',
+  'task not done': '该识别任务尚未完成，无法导入',
+  'invalid time range': '时间区间非法（开始不小于 0，结束须晚于开始）',
+  'field cannot be null': '该字段不能为空',
+  'item not found': '条目不存在',
+  'transcript service unavailable': '识别服务暂不可用，请稍后重试',
+  'training service unavailable': '训练服务暂不可用，请稍后重试',
+}
+
+/**
+ * 把 `ApiError.serverMessage`（原始 JSON 错误体或纯文本）转成可读提示：
+ * 1. 解析 `{"error": "..."}` 取出错误码；2. 映射已知错误码为中文文案；3. 未收录则原样展示。
+ * `serverMessage` 本身保持原始报文不变（既有调用方按原文解析），展示统一走本函数。
+ */
+export function apiErrorMessage(error: unknown, fallback = '操作失败'): string {
+  const raw = (error as { serverMessage?: string })?.serverMessage ?? ''
+  if (!raw) {
+    return fallback
+  }
+
+  let code = raw
+  try {
+    const parsed = JSON.parse(raw) as { error?: unknown }
+    if (typeof parsed?.error === 'string' && parsed.error) {
+      code = parsed.error
+    }
+  } catch {
+    // 非 JSON 错误体（代理/网关返回的纯文本），按原文处理
+  }
+
+  return ERROR_MESSAGES[code] ?? (code || fallback)
+}
+
 async function request<T>(
   path: string,
   options?: RequestInit,

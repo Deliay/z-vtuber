@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react'
-import { importTrainingDatasetItems, listTranscriptTasks } from '../../api/client'
+import {
+  apiErrorMessage,
+  importTrainingDatasetItems,
+  listTranscriptTasks,
+} from '../../api/client'
 import type { components } from '../../api/schema-recording-transcript'
 
 type TranscriptTask = components['schemas']['TranscriptTask']
@@ -16,9 +20,9 @@ export interface TranscriptImportDialogProps {
   onImported?: (result: TranscriptImportResult) => void
 }
 
+/** 服务端错误 → 可读提示（错误码映射见 `apiErrorMessage`）。 */
 function errorMessage(error: unknown): string {
-  const serverMessage = (error as { serverMessage?: string })?.serverMessage ?? ''
-  return serverMessage || '导入失败'
+  return apiErrorMessage(error, '导入失败')
 }
 
 function taskLabel(task: TranscriptTask): string {

@@ -121,16 +121,13 @@ public sealed class TrainingDatasetsController(
         _logger.LogInformation(
             "training dataset renamed: datasetId={DatasetId} name={Name}", id, name);
 
-        // 仓储无 GetById：借 ListAsync(audio) 回读落库结果（本期数据集类型恒为 audio）
-        var reloaded = (await datasets.ListAsync(AudioType, ct)).FirstOrDefault(d => d.Id == id);
-        var stored = reloaded ?? new TrainingDatasetRecord
+        // 回读落库结果（CreatedAt 等真实时间戳），单读而非全量列举
+        var stored = await datasets.GetByIdAsync(id, ct);
+        if (stored is null)
         {
-            Id = id,
-            Name = name,
-            Type = AudioType,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
-        };
+            return NotFound(new ErrorResponse("dataset not found"));
+        }
+
         return Ok(TrainingMapping.ToDatasetDto(stored));
     }
 
