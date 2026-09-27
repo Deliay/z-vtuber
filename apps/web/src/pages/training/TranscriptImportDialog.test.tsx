@@ -89,6 +89,30 @@ describe('TranscriptImportDialog', () => {
     expect(mockImport).not.toHaveBeenCalled()
   })
 
+  it('should ignore overlay clicks while the import is in flight so the result stays visible', async () => {
+    mockListTasks.mockResolvedValue([doneTask])
+    let resolveImport: (value: { imported: number; skipped: number }) => void = () => {}
+    mockImport.mockReturnValue(
+      new Promise((resolve) => {
+        resolveImport = resolve
+      }),
+    )
+    const props = renderDialog()
+
+    fireEvent.change(await screen.findByLabelText('识别任务'), { target: { value: 't1' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
+
+    const dialog = screen.getByRole('dialog', { name: '从 Transcript 导入' })
+    const overlay = dialog.parentElement as HTMLElement
+    // 导入中：遮罩点击与关闭按钮都不应关闭弹窗（保住结果反馈）
+    fireEvent.click(overlay)
+    expect(props.onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '取消' })).toBeDisabled()
+
+    resolveImport({ imported: 5, skipped: 1 })
+    expect(await screen.findByRole('status')).toHaveTextContent('已导入 5 条，跳过 1 条')
+  })
+
   it('should only offer transcripts whose status is DONE', async () => {
     mockListTasks.mockResolvedValue([doneTask, runningTask])
 

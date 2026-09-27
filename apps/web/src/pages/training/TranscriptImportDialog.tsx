@@ -91,8 +91,10 @@ export function TranscriptImportDialog({
         alignItems: 'center',
         zIndex: 1000,
       }}
-      // 点击遮罩关闭（面板内的点击已 stopPropagation，不会误触）
-      onClick={onClose}
+      // 点击遮罩关闭；导入进行中忽略，避免卸载弹窗丢失「已导入/跳过」结果反馈
+      onClick={() => {
+        if (!busy) onClose()
+      }}
     >
       <div
         role="dialog"
@@ -140,7 +142,9 @@ export function TranscriptImportDialog({
         <button onClick={handleImport} disabled={!taskId || busy}>
           确认导入
         </button>
-        <button onClick={onClose}>{result ? '完成' : '取消'}</button>
+        <button onClick={onClose} disabled={busy}>
+          {result ? '完成' : '取消'}
+        </button>
       </div>
     </div>
   )

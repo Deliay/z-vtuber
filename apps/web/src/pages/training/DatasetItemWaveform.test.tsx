@@ -149,8 +149,9 @@ describe('DatasetItemWaveform', () => {
     expect(play).toHaveBeenCalledTimes(1)
   })
 
-  it('should keep the controls usable and hint non-blockingly when play() rejects', async () => {
-    const play = vi.fn(() => Promise.reject(new Error('blocked')))
+  it('should keep the controls usable and retryable when the loader play() rejects', async () => {
+    // 真实 loader 契约：play() 返回 Promise，播放失败以 reject 暴露（onError 仅承载加载失败）
+    const play = vi.fn(() => Promise.reject(new Error('autoplay blocked')))
     const stop = vi.fn()
     const destroy = vi.fn()
     const load = vi.fn((options: WaveformLoadOptions) => {
@@ -161,10 +162,20 @@ describe('DatasetItemWaveform', () => {
 
     render(<DatasetItemWaveform item={item} loader={loader} />)
 
+    // 就绪后自动播放失败 → 非阻断提示，绝不显示「音频不可用」（那是加载失败语义）
     expect(await screen.findByText('音频暂不可用，请点击播放重试')).toBeInTheDocument()
-    // 非阻断：播放/停止控件仍在
-    expect(screen.getByRole('button', { name: '播放' })).toBeInTheDocument()
+    expect(screen.queryByText('音频不可用')).not.toBeInTheDocument()
+    expect(play).toHaveBeenCalledTimes(1)
+
+    // 保留控件，点「播放」可重试
     expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '播放' }))
+
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('button', { name: '播放' })).toBeInTheDocument()
+    expect(
+      await screen.findByText('音频暂不可用，请点击播放重试'),
+    ).toBeInTheDocument()
   })
 
   it('should show 音频不可用 when the waveform fails to load, keeping the container', async () => {

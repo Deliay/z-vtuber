@@ -26,8 +26,11 @@ export interface WaveformPlayer {
    * 播放整个片段：在**片段相对时间轴**上从 0 播到 `endMs - startMs`。
    * 片段由 `/audio?startMs&endMs` 服务端裁剪（ffmpeg `-ss -t`），输出时间轴从 0 起；
    * 若按录播绝对秒 seek 会落到片段之外——分钟级条目将完全无声。
+   *
+   * 返回播放 Promise（或同步 `void`）：**播放失败**（如浏览器自动播放拦截 `NotAllowedError`、
+   * 解码失败）经返回的 Promise reject 交由调用方降级处理，**不得**路由成加载失败 `onError`。
    */
-  play(): void
+  play(): void | Promise<void>
   /** 停止播放并回到起点。 */
   stop(): void
   /** 释放波形实例（组件卸载时调用）。 */
@@ -73,9 +76,9 @@ export const defaultWaveformLoader: WaveformLoader = {
         // 片段相对时间轴：url 已按 [startMs, endMs) 服务端裁剪，播放从 0 到片段时长；
         // 传录播绝对秒（如 600s）会 seek 到片段之外导致无声。
         const durationMs = Math.max(0, endMs - startMs)
-        void instance
-          .play(0, durationMs > 0 ? durationMs / 1000 : undefined)
-          .catch(() => onError?.())
+        // 把播放 Promise 返回给调用方（组件据此做「播放失败可重试」降级）；
+        // onError 仅承载**加载失败**，不与播放失败混用。
+        return instance.play(0, durationMs > 0 ? durationMs / 1000 : undefined)
       },
       stop() {
         if (destroyed || !instance) {

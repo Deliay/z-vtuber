@@ -20,13 +20,20 @@ const ws = vi.hoisted(() => {
 
 vi.mock('wavesurfer.js', () => ({ default: { create: ws.create } }))
 
-function load(options?: { startMs?: number; endMs?: number }) {
+function load(options?: {
+  startMs?: number
+  endMs?: number
+  onReady?: () => void
+  onError?: () => void
+}) {
   const container = document.createElement('div')
   const player = defaultWaveformLoader.load({
     container,
     url: '/api/b/live/101/recordings/a.flv/audio?startMs=600000&endMs=601500',
     startMs: options?.startMs ?? 600000,
     endMs: options?.endMs ?? 601500,
+    onReady: options?.onReady,
+    onError: options?.onError,
   })
   return { player, container }
 }
@@ -64,6 +71,32 @@ describe('defaultWaveformLoader', () => {
 
     expect(WAVEFORM_PREVIEW_MAX_MS).toBe(300000)
     expect(ws.play).toHaveBeenCalledWith(0, WAVEFORM_PREVIEW_MAX_MS / 1000)
+  })
+
+  it('should return the play promise to the caller instead of swallowing rejections as load errors', async () => {
+    const failure = new Error('autoplay blocked')
+    const onError = vi.fn()
+    const { player } = load({ onError })
+    await vi.waitFor(() => expect(ws.create).toHaveBeenCalledTimes(1))
+
+    // 真实 wavesurfer 的 play 返回 Promise；失败（如 autoplay 拦截）须交给调用方处理
+    ws.play.mockImplementationOnce(() => Promise.reject(failure))
+
+    const result = player.play()
+    expect(result).toBeInstanceOf(Promise)
+    await expect(result as Promise<void>).rejects.toBe(failure)
+
+    // 播放失败不得路由成「加载失败」，两者语义不串
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('should resolve the play promise on a successful play', async () => {
+    const { player } = load()
+    await vi.waitFor(() => expect(ws.create).toHaveBeenCalledTimes(1))
+
+    const result = player.play()
+    expect(result).toBeInstanceOf(Promise)
+    await expect(result as Promise<void>).resolves.toBeUndefined()
   })
 
   it('should stop playback on demand', async () => {

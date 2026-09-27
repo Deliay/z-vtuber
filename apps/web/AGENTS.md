@@ -53,9 +53,9 @@ src/
 │   └── training/
 │       ├── DatasetsPage.tsx             # 音频数据集页（「音频数据集」Tab + 数据集选择器 + 导入入口 + 条目列表；未选中数据集时不显示「从 Transcript 导入」，空态引导导入）
 │       ├── DatasetSelector.tsx          # 数据集下拉 + 新建/重命名/删除（confirm 二次确认）；重名提示「数据集名字已存在」且不生效；首次加载自动选中首个数据集
-│       ├── TranscriptImportDialog.tsx   # 从识别结果导入模态弹窗（fixed 半透明遮罩 + flex 居中面板、aria-modal；仅列 status=DONE 任务，确认后调 import 并反馈 imported/skipped，遮罩点击/取消关闭且不请求，400/502 错误提示）
+│       ├── TranscriptImportDialog.tsx   # 从识别结果导入模态弹窗（fixed 半透明遮罩 + flex 居中面板、aria-modal；仅列 status=DONE 任务，确认后调 import 并反馈 imported/skipped，遮罩点击/取消关闭且不请求，**导入进行中忽略遮罩/禁用关闭以保住结果反馈**，400/502 错误提示）
 │       ├── DatasetItemList.tsx          # 七字段条目列表（audioKey 不可编辑；audioUri/text/startMs/endMs 内联编辑保存，`m:ss`/`m:ss.S` ↔ 毫秒、endMs 可置空、非法时间提示不保存；勾选多选 + 批量删除 confirm；分组切换 不分组/按来源/按类型 + 分组头全选联动；列宽策略 `table-layout:fixed`+`colgroup`：来源/地址/标识限宽省略号截断（title 悬浮完整值）、文本列占满剩余并换行、短列固定窄宽；编辑态文本用多行 textarea width:100% 占满单元格；点击条目行在**其正下方展开行（colSpan=9，表格内）**插波形、同一时刻仅一行展开）
-│       ├── DatasetItemWaveform.tsx      # wavesurfer.js 波形试听（url 由 `trainingAudioClipUrl` 拼区间，endMs 空取 startMs+300000 并标注试听预览上限 5 分钟；**加载就绪即自动播放**（区间仍为片段相对时间轴），播放/停止用于重播/中止，切换/卸载经 destroy 不串播，play() 失败非阻断提示「音频暂不可用」；加载失败/uri 不可解析提示「音频不可用」且不阻断列表）
+│       ├── DatasetItemWaveform.tsx      # wavesurfer.js 波形试听（url 由 `trainingAudioClipUrl` 拼区间，endMs 空取 startMs+300000 并标注试听预览上限 5 分钟；**加载就绪即自动播放**（区间仍为片段相对时间轴），播放/停止用于重播/中止，切换/卸载经 destroy 不串播；**播放失败**（真实 loader `play()` 返回 Promise，reject 交调用方、不经 onError）非阻断提示「音频暂不可用」并**保留播放/停止控件可重试**；加载失败/uri 不可解析提示「音频不可用」且不阻断列表）
 │       ├── waveformLoader.ts            # 波形加载器抽象（可注入/可 mock，单测不依赖真实 wavesurfer）
 │       ├── DatasetsPage.test.tsx        # 数据集页测试
 │       ├── TranscriptImportDialog.test.tsx # 导入对话框测试

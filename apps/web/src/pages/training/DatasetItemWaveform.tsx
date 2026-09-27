@@ -41,13 +41,16 @@ export function DatasetItemWaveform({
       ? item.startMs + WAVEFORM_PREVIEW_MAX_MS
       : item.endMs
 
-  /** 播放指定片段；`play()` 失败（抛错/reject）非阻断（仅提示，不打断其他操作）。 */
+  /**
+   * 播放指定片段。真实 loader 返回播放 Promise；同步实现可能直接抛错。
+   * 两者都只在**播放失败**时置 `playFailed` 提示（保留「播放/停止」控件供重试），
+   * 不映射为加载失败 `onError`，不打断其他操作。
+   */
   const startPlayback = useCallback((player: WaveformPlayer | null) => {
     if (!player) return
     setPlayFailed(false)
     try {
-      const result = player.play() as unknown
-      // 兼容同步返回 void 的假实现与返回 Promise 的真实实现
+      const result = player.play()
       if (result && typeof (result as Promise<void>).catch === 'function') {
         ;(result as Promise<void>).catch(() => setPlayFailed(true))
       }
