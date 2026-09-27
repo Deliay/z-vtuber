@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "wavesurfer.js": "^8.0.1"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",

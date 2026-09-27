@@ -3,6 +3,7 @@ import type { components as weiboComponents } from './schema-weibo'
 import type { components as notifyComponents } from './schema-notify'
 import type { components as cookieComponents } from './schema-cookie'
 import type { components as transcriptComponents } from './schema-recording-transcript'
+import type { components as trainingComponents } from './schema-training'
 
 const BASE_URL = '/api'
 
@@ -30,6 +31,9 @@ type TranscriptModelUpdateRequest = transcriptComponents['schemas']['TranscriptM
 type TranscriptRecordingItem = transcriptComponents['schemas']['RecordingItem']
 type TranscriptCandidateRoom = transcriptComponents['schemas']['CandidateRoom']
 type RoomTranscriptView = transcriptComponents['schemas']['RoomTranscriptView']
+
+type TrainingDataset = trainingComponents['schemas']['TrainingDataset']
+type TrainingDatasetItem = trainingComponents['schemas']['TrainingDatasetItem']
 
 interface ApiError extends Error {
   status?: number
@@ -479,4 +483,130 @@ export async function updateTranscriptModel(
       body: JSON.stringify(params),
     },
   )
+}
+
+export async function listTrainingDatasets(
+  type: 'audio' = 'audio',
+): Promise<TrainingDataset[]> {
+  const data = await request<trainingComponents['schemas']['TrainingDatasetList']>(
+    `/training/datasets?type=${encodeURIComponent(type)}`,
+  )
+  return data.items ?? []
+}
+
+export async function createTrainingDataset(params: {
+  name: string
+  type: 'audio'
+}): Promise<TrainingDataset> {
+  return request<TrainingDataset>('/training/datasets', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function renameTrainingDataset(
+  datasetId: string,
+  params: { name: string },
+): Promise<TrainingDataset> {
+  return request<TrainingDataset>(
+    `/training/datasets/${encodeURIComponent(datasetId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(params),
+    },
+  )
+}
+
+export async function deleteTrainingDataset(datasetId: string): Promise<void> {
+  await request<void>(`/training/datasets/${encodeURIComponent(datasetId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function listTrainingDatasetItems(
+  datasetId: string,
+  params: { audioType?: string; source?: string } = {},
+): Promise<TrainingDatasetItem[]> {
+  const query = new URLSearchParams()
+  if (params.audioType) query.set('audioType', params.audioType)
+  if (params.source) query.set('source', params.source)
+  const qs = query.toString()
+  const data = await request<trainingComponents['schemas']['TrainingDatasetItemList']>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items${qs ? `?${qs}` : ''}`,
+  )
+  return data.items ?? []
+}
+
+export async function importTrainingDatasetItems(
+  datasetId: string,
+  params: { taskId: string },
+): Promise<{ imported: number; skipped: number }> {
+  return request<{ imported: number; skipped: number }>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items/import`,
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    },
+  )
+}
+
+export async function updateTrainingDatasetItem(
+  datasetId: string,
+  itemId: string,
+  params: {
+    audioUri?: string
+    text?: string
+    startMs?: number
+    /** `null` 表示置空（到音频末尾），必须以 JSON `null` 透传。 */
+    endMs?: number | null
+  },
+): Promise<TrainingDatasetItem> {
+  // 仅提交出现（哪怕是 null）的字段：缺失字段由服务端保持不变。
+  const body: Record<string, unknown> = {}
+  if (params.audioUri !== undefined) body.audioUri = params.audioUri
+  if (params.text !== undefined) body.text = params.text
+  if (params.startMs !== undefined) body.startMs = params.startMs
+  if (params.endMs !== undefined) body.endMs = params.endMs
+
+  return request<TrainingDatasetItem>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items/${encodeURIComponent(itemId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+export async function batchDeleteTrainingDatasetItems(
+  datasetId: string,
+  itemIds: string[],
+): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items/batch-delete`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ itemIds }),
+    },
+  )
+}
+
+/**
+ * 训练条目试听地址：`audioUri` 形如 `b/live/{roomId}/recordings/{fileName}` 时
+ * 复用 `recordingAudioClipUrl`；`endMs` 为空（null/undefined/<= 0）时以
+ * `startMs + 300000`（试听预览上限 5 分钟）兜底；uri 不可解析返回 `null`。
+ */
+export function trainingAudioClipUrl(
+  audioUri: string,
+  startMs: number,
+  endMs: number | null | undefined,
+): string | null {
+  const match = /^b\/live\/(\d+)\/recordings\/(.+)$/.exec(audioUri)
+  if (!match) {
+    return null
+  }
+
+  const roomId = Number(match[1])
+  const fileName = match[2]
+  const end = typeof endMs === 'number' && endMs > 0 ? endMs : startMs + 300000
+  return recordingAudioClipUrl(roomId, fileName, startMs, end)
 }

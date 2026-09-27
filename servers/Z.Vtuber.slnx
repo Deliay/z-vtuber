@@ -9,6 +9,7 @@
     <Project Path="recording/Z.Vtuber.Recording.csproj" />
     <Project Path="recording-transcript-api/Z.Vtuber.RecordingTranscript.Api.csproj" />
     <Project Path="recording-transcript-consumer/Z.Vtuber.RecordingTranscript.Consumer.csproj" />
+    <Project Path="training/Z.Vtuber.Training.csproj" />
   </Folder>
 
   <Folder Name="/tests/">

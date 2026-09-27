@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\servers\recording\Z.Vtuber.Recording.csproj" />
     <ProjectReference Include="..\..\servers\recording-transcript-api\Z.Vtuber.RecordingTranscript.Api.csproj" />
     <ProjectReference Include="..\..\servers\recording-transcript-consumer\Z.Vtuber.RecordingTranscript.Consumer.csproj" />
+    <ProjectReference Include="..\..\servers\training\Z.Vtuber.Training.csproj" />
   </ItemGroup>
 
 </Project>
