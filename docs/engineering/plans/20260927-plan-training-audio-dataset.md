@@ -105,7 +105,7 @@ type: Permanent
 | 1.9 | `App.test.tsx` 扩展：导航出现「训练」分组且含「数据集」入口；既有 5 菜单项渲染不变；点击进入数据集页 | `apps/web/src/App.test.tsx` | 红 |
 | 1.10 | `DatasetsPage.test.tsx`：Tab 结构仅「音频数据集」；下拉列出/切换数据集；新建（输入名字即可）/重命名/删除（`confirm` 二次确认）；重名提示且不生效；**未选中数据集不显示「从 Transcript 导入」按钮**；空态引导导入 | `apps/web/src/pages/training/DatasetsPage.test.tsx` | 红 |
 | 1.11 | `TranscriptImportDialog.test.tsx`：仅可选 `status=DONE` 任务；确认后调 import 并反馈 `{imported, skipped}`；取消不请求；400/502 错误提示 | `apps/web/src/pages/training/TranscriptImportDialog.test.tsx` | 红 |
-| 1.12 | `DatasetItemList.test.tsx`：七字段展示（音频标识不可编辑）；audioUri/text/起止时间编辑保存（`m:ss`/`m:ss.S` 输入毫秒互转）；`endMs` 可置空；非法时间（负值/结束早于开始）提示且不保存；多选 + 批量删除（confirm）后刷新；分组切换（不分组/按来源/按类型）与分组头全选联动批量删除 | `apps/web/src/pages/training/DatasetItemList.test.tsx` | 红 |
+| 1.12 | `DatasetItemList.test.tsx`：七字段展示（音频标识不可编辑）；audioUri/text/起止时间编辑保存（`m:ss`/`m:ss.S` 输入毫秒互转）；`endMs` 可置空；非法时间（负值/结束早于开始）提示且不保存；多选 + 批量删除（confirm）后刷新；分组切换（不分组/按来源/按类型）与分组头全选联动批量删除；**列宽策略（`table-layout: fixed` + `colgroup`）：来源/地址/标识三列限宽省略号截断且 `title` 悬浮完整值、「文本」列不设宽度占满剩余并正常换行、短列固定窄宽；编辑态「文本」为多行 `textarea` 且 `width:100%` 占满单元格（`aria-label="文本"` 不变）** | `apps/web/src/pages/training/DatasetItemList.test.tsx` | 红 |
 | 1.13 | `DatasetItemWaveform.test.tsx`：点击条目渲染波形容器并以区间 url 加载（含 `endMs` 空兜底）；播放/停止；加载失败提示「音频不可用」且不阻断列表操作；`audioUri` 为空/不可解析同样降级；**另以 `waveformLoader.test.ts` 直测真实 loader（mock wavesurfer）断言 `play` 入参为片段相对时间轴 `0 → (endMs-startMs)/1000`（含 `endMs` 空走 300000 兜底），锁定「不得按录播绝对秒 seek 到已裁剪片段之外」** | `apps/web/src/pages/training/DatasetItemWaveform.test.tsx`、`apps/web/src/pages/training/waveformLoader.test.ts` | 红 |
 
 ### Phase 2: 实现（绿）

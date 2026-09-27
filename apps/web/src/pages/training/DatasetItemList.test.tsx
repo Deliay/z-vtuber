@@ -130,6 +130,66 @@ describe('DatasetItemList', () => {
     expect(screen.queryByTestId('waveform-container')).not.toBeInTheDocument()
   })
 
+  it('should constrain the low-value columns and let the text column fill the remaining width', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    const table = screen.getByRole('table')
+    expect(table.style.width).toBe('100%')
+    expect(table.style.borderCollapse).toBe('collapse')
+    // 固定表格布局：次要列限宽后不会撑宽表格
+    expect(table.style.tableLayout).toBe('fixed')
+
+    // 来源/地址/标识三列：限宽 + 省略号截断（不绑死具体像素值，仅断言样式契约）
+    for (const column of ['音频来源', '音频地址', '音频标识']) {
+      const header = screen.getByRole('columnheader', { name: column })
+      expect(header.style.maxWidth).not.toBe('')
+      expect(header.style.overflow).toBe('hidden')
+      expect(header.style.textOverflow).toBe('ellipsis')
+      expect(header.style.whiteSpace).toBe('nowrap')
+    }
+
+    // 数据单元格同样截断，并以 title 悬浮展示完整值
+    const uriCell = screen.getByText('b/live/101/recordings/a.flv')
+    expect(uriCell.style.textOverflow).toBe('ellipsis')
+    expect(uriCell).toHaveAttribute('title', 'b/live/101/recordings/a.flv')
+    const keyCell = screen.getByText('transcript:t1:0')
+    expect(keyCell.style.overflow).toBe('hidden')
+    expect(keyCell).toHaveAttribute('title', 'transcript:t1:0')
+
+    // 「文本」列不设 max-width，正常换行展示全文
+    const textHeader = screen.getByRole('columnheader', { name: '文本' })
+    expect(textHeader.style.maxWidth).toBe('')
+    expect(textHeader.style.whiteSpace).not.toBe('nowrap')
+
+    // 仅「文本」列对应的 col 不设宽度 → 占满剩余宽度
+    const cols = table.querySelectorAll('colgroup col')
+    expect(cols).toHaveLength(9)
+    expect((cols[7] as HTMLElement).style.width).toBe('')
+    expect((cols[3] as HTMLElement).style.width).not.toBe('')
+  })
+
+  it('should use a wrapping textarea that fills its cell for the text editor', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    editRow('transcript:t1:0')
+
+    // 「文本」编辑态为多行 textarea 且占满单元格（aria-label 保持不变）
+    const textEditor = screen.getByLabelText('文本') as HTMLTextAreaElement
+    expect(textEditor.tagName).toBe('TEXTAREA')
+    expect(textEditor.rows).toBeGreaterThan(1)
+    expect(textEditor.style.width).toBe('100%')
+    expect(textEditor.style.boxSizing).toBe('border-box')
+
+    // 编辑态「音频地址」等输入同样 width:100% + box-sizing，不撑破列宽约束
+    const uriEditor = screen.getByLabelText('音频地址') as HTMLInputElement
+    expect(uriEditor.style.width).toBe('100%')
+    expect(uriEditor.style.boxSizing).toBe('border-box')
+  })
+
   it('should edit audio uri, text and the m:ss positions and save them as milliseconds', async () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })

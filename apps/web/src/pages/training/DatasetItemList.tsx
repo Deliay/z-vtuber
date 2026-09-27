@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+} from 'react'
 import {
   apiErrorMessage,
   batchDeleteTrainingDatasetItems,
@@ -30,6 +38,30 @@ interface EditDraft {
 }
 
 const TIME_INVALID = '时间输入无效'
+
+/**
+ * 次要信息列（音频来源/音频地址/音频标识）样式：低价值长文本限宽 + 省略号截断，
+ * 完整值经单元格 `title` 悬浮展示（配合表头 `<colgroup>` 固定列宽，避免撑宽表格挤压「文本」列）。
+ * 参考 `SegmentAudioPlayer.tsx` 的 ellipsis 先例。
+ */
+const TRUNCATED_CELL_STYLE: CSSProperties = {
+  maxWidth: '12rem',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+/** 「文本」列样式：占满剩余宽度、正常换行（长串按需断行）展示全文，不设 max-width。 */
+const TEXT_CELL_STYLE: CSSProperties = {
+  whiteSpace: 'normal',
+  wordBreak: 'break-word',
+}
+
+/** 编辑态文本框：占满单元格且不撑破列宽约束。 */
+const EDIT_CONTROL_STYLE: CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+}
 
 /** 服务端错误 → 可读提示（错误码映射见 `apiErrorMessage`）。 */
 function errorMessage(error: unknown): string {
@@ -187,11 +219,14 @@ export function DatasetItemList({
           />
         </td>
         <td>{item.audioType}</td>
-        <td>{item.source}</td>
-        <td onClick={stopPropagation}>
+        <td style={TRUNCATED_CELL_STYLE} title={item.source}>
+          {item.source}
+        </td>
+        <td onClick={stopPropagation} style={TRUNCATED_CELL_STYLE} title={item.audioUri || undefined}>
           {editing ? (
             <input
               aria-label="音频地址"
+              style={EDIT_CONTROL_STYLE}
               value={draft.audioUri}
               onChange={(event) => setDraft({ ...draft, audioUri: event.target.value })}
             />
@@ -199,11 +234,14 @@ export function DatasetItemList({
             item.audioUri || '无'
           )}
         </td>
-        <td>{item.audioKey}</td>
+        <td style={TRUNCATED_CELL_STYLE} title={item.audioKey}>
+          {item.audioKey}
+        </td>
         <td onClick={stopPropagation}>
           {editing ? (
             <input
               aria-label="开始时间"
+              style={EDIT_CONTROL_STYLE}
               value={draft.start}
               onChange={(event) => setDraft({ ...draft, start: event.target.value })}
             />
@@ -215,6 +253,7 @@ export function DatasetItemList({
           {editing ? (
             <input
               aria-label="结束时间"
+              style={EDIT_CONTROL_STYLE}
               value={draft.end}
               onChange={(event) => setDraft({ ...draft, end: event.target.value })}
             />
@@ -222,10 +261,12 @@ export function DatasetItemList({
             formatPosition(item.endMs)
           )}
         </td>
-        <td onClick={stopPropagation}>
+        <td onClick={stopPropagation} style={TEXT_CELL_STYLE}>
           {editing ? (
-            <input
+            <textarea
               aria-label="文本"
+              rows={3}
+              style={{ ...EDIT_CONTROL_STYLE, resize: 'vertical' }}
               value={draft.text}
               onChange={(event) => setDraft({ ...draft, text: event.target.value })}
             />
@@ -275,7 +316,21 @@ export function DatasetItemList({
             {editError && <div role="alert">{editError}</div>}
           </div>
 
-          <table>
+          <table
+            style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}
+          >
+            {/* 固定短列/次要列宽度，让「文本」列（不设宽度）占满剩余宽度 */}
+            <colgroup>
+              <col style={{ width: '2.5rem' }} />
+              <col style={{ width: '6rem' }} />
+              <col style={{ width: '9rem' }} />
+              <col style={{ width: '12rem' }} />
+              <col style={{ width: '12rem' }} />
+              <col style={{ width: '5rem' }} />
+              <col style={{ width: '5rem' }} />
+              <col />
+              <col style={{ width: '6rem' }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>
@@ -287,12 +342,12 @@ export function DatasetItemList({
                   />
                 </th>
                 <th>音频类型</th>
-                <th>音频来源</th>
-                <th>音频地址</th>
-                <th>音频标识</th>
+                <th style={TRUNCATED_CELL_STYLE}>音频来源</th>
+                <th style={TRUNCATED_CELL_STYLE}>音频地址</th>
+                <th style={TRUNCATED_CELL_STYLE}>音频标识</th>
                 <th>开始时间</th>
                 <th>结束时间</th>
-                <th>文本</th>
+                <th style={TEXT_CELL_STYLE}>文本</th>
                 <th>操作</th>
               </tr>
             </thead>
