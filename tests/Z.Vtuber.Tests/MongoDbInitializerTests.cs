@@ -22,11 +22,11 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task Backfill_PopulatesPubTs_FromRawData()
     {
-        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(LiveCollectionNames.SpaceTimeline);
         await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)1000) });
         await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "2", Data = AuthorJson((long?)2000) });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillSpaceTimelinePubTsAsync();
 
         var record1 = await collection.Find(r => r.DynamicId == "1").FirstOrDefaultAsync();
@@ -38,10 +38,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task Backfill_IsIdempotent()
     {
-        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(LiveCollectionNames.SpaceTimeline);
         await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)1000) });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillSpaceTimelinePubTsAsync();
         await initializer.BackfillSpaceTimelinePubTsAsync();
 
@@ -57,18 +57,18 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
         // api 与 crawler 双服务并发启动初始化，都会写同一个完成 marker。
         // 回归：BackfillSpaceTimelinePubTsAsync 的 marker 写入必须为 upsert，
         // 否则两个服务同时在 marker 不存在时 InsertOne 同一 key 会抛 DuplicateKey。
-        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(LiveCollectionNames.SpaceTimeline);
         await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)1000) });
 
-        var initializerA = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
-        var initializerB = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializerA = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
+        var initializerB = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
 
         await Task.WhenAll(
             initializerA.BackfillSpaceTimelinePubTsAsync(),
             initializerB.BackfillSpaceTimelinePubTsAsync());
 
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        var markerCount = await meta.CountDocumentsAsync(r => r.Key == MongoDbInitializer.SpaceTimelinePubTsMigrationKey);
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
+        var markerCount = await meta.CountDocumentsAsync(r => r.Key == LiveMongoSetup.SpaceTimelinePubTsMigrationKey);
         Assert.Equal(1, markerCount);
 
         var recordCount = await collection.CountDocumentsAsync(FilterDefinition<SpaceTimelineRecord>.Empty);
@@ -78,10 +78,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task Backfill_LeavesMissingPubTs_Null()
     {
-        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(LiveCollectionNames.SpaceTimeline);
         await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)null) });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillSpaceTimelinePubTsAsync();
 
         var record = await collection.Find(r => r.DynamicId == "1").FirstOrDefaultAsync();
@@ -91,10 +91,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task Backfill_PopulatesPubTs_FromStringPubTs()
     {
-        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(LiveCollectionNames.SpaceTimeline);
         await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson("3000") });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillSpaceTimelinePubTsAsync();
 
         var record = await collection.Find(r => r.DynamicId == "1").FirstOrDefaultAsync();
@@ -104,14 +104,14 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task Backfill_Marker_PreventsRerun()
     {
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        var marker = new MetaRecord { Key = MongoDbInitializer.SpaceTimelinePubTsMigrationKey };
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
+        var marker = new MetaRecord { Key = LiveMongoSetup.SpaceTimelinePubTsMigrationKey };
         await meta.InsertOneAsync(marker);
 
-        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(LiveCollectionNames.SpaceTimeline);
         await collection.InsertOneAsync(new SpaceTimelineRecord { DynamicId = "1", Data = AuthorJson((long?)1000) });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillSpaceTimelinePubTsAsync();
 
         var record = await collection.Find(r => r.DynamicId == "1").FirstOrDefaultAsync();
@@ -121,13 +121,13 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task Backfill_AllUnextractable_DoesNotLoop()
     {
-        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(MongoCollectionNames.SpaceTimeline);
+        var collection = fixture.Database.GetCollection<SpaceTimelineRecord>(LiveCollectionNames.SpaceTimeline);
         var docs = Enumerable.Range(0, 600)
             .Select(i => new SpaceTimelineRecord { DynamicId = i.ToString(), Data = AuthorJson((long?)null) })
             .ToList();
         await collection.InsertManyAsync(docs);
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillSpaceTimelinePubTsAsync();
 
         var total = await collection.CountDocumentsAsync(FilterDefinition<SpaceTimelineRecord>.Empty);
@@ -139,17 +139,17 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_PopulatesPrice_FromGoldGiftPayload()
     {
-        var rawCollection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var rawCollection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         await rawCollection.InsertOneAsync(new BsonDocument
         {
             { "Type", "gift" },
             { "Payload", """{"data":{"price":5000,"coin_type":"gold"}}""" },
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillGiftPriceAsync();
 
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
         Assert.Equal(5000, record.Price);
     }
@@ -157,17 +157,17 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_LeavesSilverGiftAtZero()
     {
-        var rawCollection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var rawCollection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         await rawCollection.InsertOneAsync(new BsonDocument
         {
             { "Type", "gift" },
             { "Payload", """{"data":{"price":100,"coin_type":"silver"}}""" },
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillGiftPriceAsync();
 
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
         Assert.Equal(0, record.Price);
     }
@@ -175,17 +175,17 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_SkipsNonGiftType()
     {
-        var rawCollection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var rawCollection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         await rawCollection.InsertOneAsync(new BsonDocument
         {
             { "Type", "danmaku" },
             { "Payload", """{"data":{"price":100,"coin_type":"gold"}}""" },
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillGiftPriceAsync();
 
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
         Assert.Equal(0, record.Price);
     }
@@ -193,18 +193,18 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_IsIdempotent()
     {
-        var rawCollection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var rawCollection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         await rawCollection.InsertOneAsync(new BsonDocument
         {
             { "Type", "gift" },
             { "Payload", """{"data":{"price":5000,"coin_type":"gold"}}""" },
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillGiftPriceAsync();
         await initializer.BackfillGiftPriceAsync();
 
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var count = await collection.CountDocumentsAsync(FilterDefinition<LiveEventRecord>.Empty);
         Assert.Equal(1, count);
         var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
@@ -214,20 +214,20 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_Marker_PreventsRerun()
     {
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        await meta.InsertOneAsync(new MetaRecord { Key = MongoDbInitializer.GiftPriceBackfillMigrationKey });
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
+        await meta.InsertOneAsync(new MetaRecord { Key = LiveMongoSetup.GiftPriceBackfillMigrationKey });
 
-        var rawCollection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var rawCollection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         await rawCollection.InsertOneAsync(new BsonDocument
         {
             { "Type", "gift" },
             { "Payload", """{"data":{"price":5000,"coin_type":"gold"}}""" },
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillGiftPriceAsync();
 
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
         Assert.Equal(0, record.Price);
     }
@@ -235,7 +235,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_SkipsRecordsWithExistingPrice()
     {
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         await collection.InsertOneAsync(new LiveEventRecord
         {
             Type = "gift",
@@ -243,7 +243,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             Price = 5000,
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillGiftPriceAsync();
 
         var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
@@ -253,17 +253,17 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_HandlesInvalidPayloadGracefully()
     {
-        var rawCollection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var rawCollection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         await rawCollection.InsertOneAsync(new BsonDocument
         {
             { "Type", "gift" },
             { "Payload", "invalid json" },
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillGiftPriceAsync();
 
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
         Assert.Equal(0, record.Price);
     }
@@ -271,7 +271,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_ProcessesLargeBatch()
     {
-        var rawCollection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var rawCollection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         var docs = Enumerable.Range(0, 600)
             .Select(i => new BsonDocument
             {
@@ -281,10 +281,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             .ToList();
         await rawCollection.InsertManyAsync(docs);
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillGiftPriceAsync();
 
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var count = await collection.CountDocumentsAsync(
             Builders<LiveEventRecord>.Filter.Gt(e => e.Price, 0L));
         Assert.Equal(600, count);
@@ -293,17 +293,17 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_PrefersDiscountPrice_WhenBothExist()
     {
-        var rawCollection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var rawCollection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         await rawCollection.InsertOneAsync(new BsonDocument
         {
             { "Type", "gift" },
             { "Payload", """{"data":{"price":200,"discount_price":150,"coin_type":"gold"}}""" },
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillGiftPriceAsync();
 
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await collection.Find(FilterDefinition<LiveEventRecord>.Empty).FirstOrDefaultAsync();
         Assert.Equal(150, record.Price);
     }
@@ -311,7 +311,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillGiftPrice_SilverGiftsTerminate()
     {
-        var rawCollection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var rawCollection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         var docs = Enumerable.Range(0, 600)
             .Select(i => new BsonDocument
             {
@@ -321,23 +321,23 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             .ToList();
         await rawCollection.InsertManyAsync(docs);
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await initializer.BackfillGiftPriceAsync(cts.Token);
 
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var count = await collection.CountDocumentsAsync(FilterDefinition<LiveEventRecord>.Empty);
         Assert.Equal(600, count);
 
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        var markerExists = await meta.Find(r => r.Key == MongoDbInitializer.GiftPriceBackfillMigrationKey).AnyAsync();
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == LiveMongoSetup.GiftPriceBackfillMigrationKey).AnyAsync();
         Assert.True(markerExists);
     }
 
     [Fact]
     public async Task BackfillLiveEventTextIndex_PopulatesTextIndex_FromDanmaku()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -348,10 +348,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventTextIndexAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(1, count);
 
@@ -364,7 +364,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillLiveEventTextIndex_PopulatesTextIndex_FromSuperChat()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -375,10 +375,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventTextIndexAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(1, count);
 
@@ -390,7 +390,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillLiveEventTextIndex_SkipsNonTextType()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -401,10 +401,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventTextIndexAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(0, count);
     }
@@ -412,7 +412,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillLiveEventTextIndex_SkipsRecordsWithNullText()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -423,10 +423,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventTextIndexAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(0, count);
     }
@@ -434,7 +434,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillLiveEventTextIndex_IsIdempotent()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -445,11 +445,11 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventTextIndexAsync();
         await initializer.BackfillLiveEventTextIndexAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(1, count);
     }
@@ -457,10 +457,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillLiveEventTextIndex_Marker_PreventsRerun()
     {
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        await meta.InsertOneAsync(new MetaRecord { Key = MongoDbInitializer.LiveEventTextIndexBackfillMigrationKey });
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
+        await meta.InsertOneAsync(new MetaRecord { Key = LiveMongoSetup.LiveEventTextIndexBackfillMigrationKey });
 
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -471,10 +471,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventTextIndexAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(0, count);
     }
@@ -482,7 +482,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task BackfillLiveEventTextIndex_ProcessesLargeBatch()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var docs = Enumerable.Range(0, 600)
             .Select(i => new LiveEventRecord
             {
@@ -495,10 +495,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             .ToList();
         await eventCollection.InsertManyAsync(docs);
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventTextIndexAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(600, count);
     }
@@ -506,10 +506,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task EnsureIndexes_CreatesSearchIndex_OnTextIndexCollection()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
 
-        var collection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var collection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var names = await ListIndexNamesAsync(collection);
         Assert.Contains(LiveEventTextIndexRepository.SearchIndexName, names);
     }
@@ -518,7 +518,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     public async Task EnsureIndexes_DropsLegacyTextIndexes()
     {
         // 模拟旧版本部署残留的索引：$text 全文索引与普通 Text 索引
-        var collection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var collection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventTextIndexRecord>(
             Builders<LiveEventTextIndexRecord>.IndexKeys.Ascending(r => r.RoomId).Text(r => r.Text),
             new CreateIndexOptions { Name = "RoomId_Text_text" }));
@@ -526,7 +526,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             Builders<LiveEventTextIndexRecord>.IndexKeys.Ascending(r => r.RoomId).Ascending(r => r.Text),
             new CreateIndexOptions { Name = "RoomId_Text_1" }));
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
 
         var names = await ListIndexNamesAsync(collection);
@@ -539,7 +539,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     public async Task EnsureIndexes_DropsLegacyLiveEventIndex()
     {
         // 模拟 72cab58 误将排序回退为升序时创建的升序索引（降序为 6e23b69 显式需求）
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<LiveEventRecord>(
             Builders<LiveEventRecord>.IndexKeys
                 .Ascending(e => e.RoomId)
@@ -547,7 +547,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
                 .Ascending(e => e.OccurredAt),
             new CreateIndexOptions { Name = "RoomId_1_Type_1_OccurredAt_1" }));
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
 
         var names = await ListIndexNamesAsync(collection);
@@ -558,10 +558,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task EnsureIndexes_CreatesWeiboSubscriptionUniqueIndex()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new WeiboMongoSetup(fixture.Database, NullLogger<WeiboMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
 
-        var collection = fixture.Database.GetCollection<WeiboSubscriptionRecord>(MongoCollectionNames.WeiboSubscriptions);
+        var collection = fixture.Database.GetCollection<WeiboSubscriptionRecord>(WeiboCollectionNames.WeiboSubscriptions);
         var names = await ListIndexNamesAsync(collection);
         Assert.Contains("Uid_1", names);
     }
@@ -569,10 +569,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task EnsureIndexes_CreatesWeiboTimelineUniqueIndex()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new WeiboMongoSetup(fixture.Database, NullLogger<WeiboMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
 
-        var collection = fixture.Database.GetCollection<WeiboTimelineRecord>(MongoCollectionNames.WeiboUserTimeline);
+        var collection = fixture.Database.GetCollection<WeiboTimelineRecord>(WeiboCollectionNames.WeiboUserTimeline);
         var names = await ListIndexNamesAsync(collection);
         Assert.Contains("MblogId_1", names);
         Assert.Contains("Uid_1_PubTs_-1", names);
@@ -582,10 +582,10 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task EnsureIndexes_CreatesNotificationSubscriptionUniqueIndex()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new NotificationMongoSetup(fixture.Database, NullLogger<NotificationMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
 
-        var collection = fixture.Database.GetCollection<NotificationSubscriptionRecord>(MongoCollectionNames.NotificationSubscriptions);
+        var collection = fixture.Database.GetCollection<NotificationSubscriptionRecord>(NotificationCollectionNames.NotificationSubscriptions);
         var names = await ListIndexNamesAsync(collection);
         Assert.Contains("EventType_1_GroupId_1", names);
     }
@@ -593,11 +593,11 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task EnsureIndexes_IsIdempotent_ForNotificationSubscriptions()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new NotificationMongoSetup(fixture.Database, NullLogger<NotificationMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
         await initializer.EnsureIndexesAsync();
 
-        var collection = fixture.Database.GetCollection<NotificationSubscriptionRecord>(MongoCollectionNames.NotificationSubscriptions);
+        var collection = fixture.Database.GetCollection<NotificationSubscriptionRecord>(NotificationCollectionNames.NotificationSubscriptions);
         var names = await ListIndexNamesAsync(collection);
         Assert.Single(names, n => n == "EventType_1_GroupId_1");
     }
@@ -605,11 +605,11 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task EnsureIndexes_IsIdempotent_ForWeiboCollections()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new WeiboMongoSetup(fixture.Database, NullLogger<WeiboMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
         await initializer.EnsureIndexesAsync();
 
-        var subscriptionCollection = fixture.Database.GetCollection<WeiboSubscriptionRecord>(MongoCollectionNames.WeiboSubscriptions);
+        var subscriptionCollection = fixture.Database.GetCollection<WeiboSubscriptionRecord>(WeiboCollectionNames.WeiboSubscriptions);
         var names = await ListIndexNamesAsync(subscriptionCollection);
         Assert.Single(names, n => n == "Uid_1");
     }
@@ -617,15 +617,15 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task EnsureIndexes_CreatesWeiboCookieIndexes()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new CookieMongoSetup(fixture.Database, NullLogger<CookieMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
 
-        var cookies = fixture.Database.GetCollection<CookieRecord>(MongoCollectionNames.WeiboCookies);
+        var cookies = fixture.Database.GetCollection<CookieRecord>(CookieCollectionNames.WeiboCookies);
         var cookieNames = await ListIndexNamesAsync(cookies);
         Assert.Contains("Status_1_LastUsedAt_1", cookieNames);
         Assert.Contains("AccountId_1", cookieNames);
 
-        var sessions = fixture.Database.GetCollection<CookieSessionRecord>(MongoCollectionNames.WeiboCookieSessions);
+        var sessions = fixture.Database.GetCollection<CookieSessionRecord>(CookieCollectionNames.WeiboCookieSessions);
         var sessionNames = await ListIndexNamesAsync(sessions);
         Assert.Contains("Status_1", sessionNames);
         Assert.Contains("CookieId_1", sessionNames);
@@ -634,16 +634,16 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task EnsureIndexes_IsIdempotent_ForWeiboCookieCollections()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new CookieMongoSetup(fixture.Database, NullLogger<CookieMongoSetup>.Instance);
         await initializer.EnsureIndexesAsync();
         await initializer.EnsureIndexesAsync();
 
-        var cookies = fixture.Database.GetCollection<CookieRecord>(MongoCollectionNames.WeiboCookies);
+        var cookies = fixture.Database.GetCollection<CookieRecord>(CookieCollectionNames.WeiboCookies);
         var cookieNames = await ListIndexNamesAsync(cookies);
         Assert.Single(cookieNames, n => n == "Status_1_LastUsedAt_1");
         Assert.Single(cookieNames, n => n == "AccountId_1");
 
-        var sessions = fixture.Database.GetCollection<CookieSessionRecord>(MongoCollectionNames.WeiboCookieSessions);
+        var sessions = fixture.Database.GetCollection<CookieSessionRecord>(CookieCollectionNames.WeiboCookieSessions);
         var sessionNames = await ListIndexNamesAsync(sessions);
         Assert.Single(sessionNames, n => n == "Status_1");
         Assert.Single(sessionNames, n => n == "CookieId_1");
@@ -652,7 +652,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task CleanupTranscriptModelIsDefault_UnsetsField_AndPreservesOtherFields()
     {
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var collection = fixture.Database.GetCollection<BsonDocument>(TranscriptCollectionNames.TranscriptModels);
         var legacyTrueId = ObjectId.GenerateNewId();
         var legacyFalseId = ObjectId.GenerateNewId();
         var untouchedId = ObjectId.GenerateNewId();
@@ -687,7 +687,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             },
         ]);
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new TranscriptMongoSetup(fixture.Database, NullLogger<TranscriptMongoSetup>.Instance);
         await initializer.CleanupTranscriptModelIsDefaultAsync();
 
         var legacyTrue = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", legacyTrueId)).FirstAsync();
@@ -710,7 +710,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task CleanupTranscriptModelIsDefault_IsIdempotent_AndWritesMarkerOnce()
     {
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var collection = fixture.Database.GetCollection<BsonDocument>(TranscriptCollectionNames.TranscriptModels);
         var id = ObjectId.GenerateNewId();
         await collection.InsertOneAsync(new BsonDocument
         {
@@ -719,7 +719,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             { "IsDefault", true },
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new TranscriptMongoSetup(fixture.Database, NullLogger<TranscriptMongoSetup>.Instance);
         await initializer.CleanupTranscriptModelIsDefaultAsync();
         await initializer.CleanupTranscriptModelIsDefaultAsync();
 
@@ -727,21 +727,21 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
         Assert.False(record.Contains("IsDefault"));
         Assert.Equal(1, await collection.CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty));
 
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
         Assert.Equal(1, await meta.CountDocumentsAsync(
-            r => r.Key == MongoDbInitializer.TranscriptModelIsDefaultCleanupMigrationKey));
+            r => r.Key == TranscriptMongoSetup.TranscriptModelIsDefaultCleanupMigrationKey));
     }
 
     [Fact]
     public async Task CleanupTranscriptModelIsDefault_Marker_PreventsRerun()
     {
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
         await meta.InsertOneAsync(new MetaRecord
         {
-            Key = MongoDbInitializer.TranscriptModelIsDefaultCleanupMigrationKey,
+            Key = TranscriptMongoSetup.TranscriptModelIsDefaultCleanupMigrationKey,
         });
 
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var collection = fixture.Database.GetCollection<BsonDocument>(TranscriptCollectionNames.TranscriptModels);
         var id = ObjectId.GenerateNewId();
         await collection.InsertOneAsync(new BsonDocument
         {
@@ -750,7 +750,7 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             { "IsDefault", true },
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new TranscriptMongoSetup(fixture.Database, NullLogger<TranscriptMongoSetup>.Instance);
         await initializer.CleanupTranscriptModelIsDefaultAsync();
 
         var record = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).FirstAsync();
@@ -760,18 +760,18 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public async Task CleanupTranscriptModelIsDefault_EmptyCollection_MarksApplied()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new TranscriptMongoSetup(fixture.Database, NullLogger<TranscriptMongoSetup>.Instance);
         await initializer.CleanupTranscriptModelIsDefaultAsync();
 
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
         Assert.True(await meta.Find(
-            r => r.Key == MongoDbInitializer.TranscriptModelIsDefaultCleanupMigrationKey).AnyAsync());
+            r => r.Key == TranscriptMongoSetup.TranscriptModelIsDefaultCleanupMigrationKey).AnyAsync());
     }
 
     [Fact]
     public async Task CleanupTranscriptModelIsDefault_ConcurrentRuns_DoNotThrowDuplicateKey()
     {
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var collection = fixture.Database.GetCollection<BsonDocument>(TranscriptCollectionNames.TranscriptModels);
         var id = ObjectId.GenerateNewId();
         await collection.InsertOneAsync(new BsonDocument
         {
@@ -780,8 +780,8 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
             { "IsDefault", true },
         });
 
-        var initializerA = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
-        var initializerB = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializerA = new TranscriptMongoSetup(fixture.Database, NullLogger<TranscriptMongoSetup>.Instance);
+        var initializerB = new TranscriptMongoSetup(fixture.Database, NullLogger<TranscriptMongoSetup>.Instance);
 
         await Task.WhenAll(
             initializerA.CleanupTranscriptModelIsDefaultAsync(),
@@ -790,9 +790,9 @@ public class MongoDbInitializerTests(MongoDbFixture fixture) : IClassFixture<Mon
         var record = await collection.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).FirstAsync();
         Assert.False(record.Contains("IsDefault"));
 
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
         Assert.Equal(1, await meta.CountDocumentsAsync(
-            r => r.Key == MongoDbInitializer.TranscriptModelIsDefaultCleanupMigrationKey));
+            r => r.Key == TranscriptMongoSetup.TranscriptModelIsDefaultCleanupMigrationKey));
     }
 
     private static async Task<List<string>> ListIndexNamesAsync<T>(IMongoCollection<T> collection)

@@ -30,31 +30,31 @@ public sealed class MongoDbFixture : IAsyncLifetime
     {
         var names = new[]
         {
-            MongoCollectionNames.Cookies,
-            MongoCollectionNames.CookieSessions,
-            MongoCollectionNames.Subscriptions,
-            MongoCollectionNames.AccountBasicInfo,
-            MongoCollectionNames.LiveStatus,
-            MongoCollectionNames.LiveEvent,
-            MongoCollectionNames.SpaceTimeline,
-            MongoCollectionNames.LiveSession,
-            MongoCollectionNames.Meta,
-            MongoCollectionNames.LiveEventTextIndex,
-            MongoCollectionNames.CookieAccountInfo,
-            MongoCollectionNames.LiveGuards,
-            MongoCollectionNames.WeiboSubscriptions,
-            MongoCollectionNames.WeiboUserTimeline,
-            MongoCollectionNames.WeiboCookies,
-            MongoCollectionNames.WeiboCookieSessions,
-            MongoCollectionNames.NotificationSubscriptions,
-            MongoCollectionNames.RecordingStatus,
-            MongoCollectionNames.Recordings,
-            MongoCollectionNames.TranscriptTasks,
-            MongoCollectionNames.TranscriptSegments,
-            MongoCollectionNames.TranscriptModels,
-            MongoCollectionNames.TranscriptAutoEnqueue,
-            MongoCollectionNames.TrainingDatasets,
-            MongoCollectionNames.TrainingDatasetItems,
+            CookieCollectionNames.Cookies,
+            CookieCollectionNames.CookieSessions,
+            LiveCollectionNames.Subscriptions,
+            LiveCollectionNames.AccountBasicInfo,
+            LiveCollectionNames.LiveStatus,
+            LiveCollectionNames.LiveEvent,
+            LiveCollectionNames.SpaceTimeline,
+            LiveCollectionNames.LiveSession,
+            CoreCollectionNames.Meta,
+            LiveCollectionNames.LiveEventTextIndex,
+            CookieCollectionNames.CookieAccountInfo,
+            LiveCollectionNames.LiveGuards,
+            WeiboCollectionNames.WeiboSubscriptions,
+            WeiboCollectionNames.WeiboUserTimeline,
+            CookieCollectionNames.WeiboCookies,
+            CookieCollectionNames.WeiboCookieSessions,
+            NotificationCollectionNames.NotificationSubscriptions,
+            RecordingCollectionNames.RecordingStatus,
+            RecordingCollectionNames.Recordings,
+            TranscriptCollectionNames.TranscriptTasks,
+            TranscriptCollectionNames.TranscriptSegments,
+            TranscriptCollectionNames.TranscriptModels,
+            TranscriptCollectionNames.TranscriptAutoEnqueue,
+            TrainingCollectionNames.TrainingDatasets,
+            TrainingCollectionNames.TrainingDatasetItems,
         };
 
         foreach (var name in names)
@@ -62,8 +62,21 @@ public sealed class MongoDbFixture : IAsyncLifetime
             await Database.DropCollectionAsync(name);
         }
 
-        var initializer = new MongoDbInitializer(Database, NullLogger<MongoDbInitializer>.Instance);
-        await initializer.EnsureIndexesAsync();
+        var live = new LiveMongoSetup(Database, NullLogger<LiveMongoSetup>.Instance);
+        var cookie = new CookieMongoSetup(Database, NullLogger<CookieMongoSetup>.Instance);
+        var weibo = new WeiboMongoSetup(Database, NullLogger<WeiboMongoSetup>.Instance);
+        var recording = new RecordingMongoSetup(Database, NullLogger<RecordingMongoSetup>.Instance);
+        var transcript = new TranscriptMongoSetup(Database, NullLogger<TranscriptMongoSetup>.Instance);
+        var training = new TrainingMongoSetup(Database, NullLogger<TrainingMongoSetup>.Instance);
+        var notification = new NotificationMongoSetup(Database, NullLogger<NotificationMongoSetup>.Instance);
+
+        await live.EnsureIndexesAsync();
+        await cookie.EnsureIndexesAsync();
+        await weibo.EnsureIndexesAsync();
+        await recording.EnsureIndexesAsync();
+        await transcript.EnsureIndexesAsync();
+        await training.EnsureIndexesAsync();
+        await notification.EnsureIndexesAsync();
     }
 
     public Task DisposeAsync() => Task.CompletedTask;

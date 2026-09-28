@@ -45,7 +45,7 @@ public class AccountInfoCrawlerTests(MongoDbFixture fixture) : IClassFixture<Mon
         var localLiveId = Guid.NewGuid().ToString();
         var startDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
 
-        var sessions = fixture.Database.GetCollection<LiveSessionRecord>(MongoCollectionNames.LiveSession);
+        var sessions = fixture.Database.GetCollection<LiveSessionRecord>(LiveCollectionNames.LiveSession);
         await sessions.InsertOneAsync(new LiveSessionRecord
         {
             LiveId = localLiveId,

@@ -142,7 +142,7 @@ public class TranscriptTaskOffsetApiTests(MongoDbFixture mongo, RedisFixture red
         var model = await SeedModelAsync();
         var id = ObjectId.GenerateNewId();
         var now = DateTime.UtcNow;
-        var collection = mongo.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptTasks);
+        var collection = mongo.Database.GetCollection<BsonDocument>(TranscriptCollectionNames.TranscriptTasks);
         await collection.InsertOneAsync(new BsonDocument
         {
             { "_id", id },

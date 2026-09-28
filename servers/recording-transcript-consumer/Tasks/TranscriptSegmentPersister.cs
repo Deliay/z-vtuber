@@ -21,8 +21,8 @@ public sealed class MongoTranscriptSegmentPersister : ITranscriptSegmentPersiste
 
     public MongoTranscriptSegmentPersister(IMongoDatabase database)
     {
-        _segments = database.GetCollection<TranscriptSegmentRecord>(MongoCollectionNames.TranscriptSegments);
-        _tasks = database.GetCollection<TranscriptTaskRecord>(MongoCollectionNames.TranscriptTasks);
+        _segments = database.GetCollection<TranscriptSegmentRecord>(TranscriptCollectionNames.TranscriptSegments);
+        _tasks = database.GetCollection<TranscriptTaskRecord>(TranscriptCollectionNames.TranscriptTasks);
     }
 
     public async Task<bool> PersistAsync(

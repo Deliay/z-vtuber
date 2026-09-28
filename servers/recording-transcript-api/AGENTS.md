@@ -14,7 +14,7 @@ graph LR
     Web[apps/web] -->|/api 经 api 代理| TAPI[servers/recording-transcript-api]
     TAPI --> M[(MongoDB)]
     R[(Redis pub/sub)] -->|sub transcript-segment:{taskId}| TAPI
-    Common[servers/common Z.Vtuber.Common] -.被引用.-> TAPI
+    Common[servers/common Core+Live+Recording+Transcript] -.被引用.-> TAPI
 ```
 
 ## 模块结构

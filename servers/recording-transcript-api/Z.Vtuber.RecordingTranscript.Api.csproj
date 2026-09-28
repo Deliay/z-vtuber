@@ -17,7 +17,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\common\Z.Vtuber.Common.csproj" />
+    <ProjectReference Include="..\common\core\Z.Vtuber.Common.Core.csproj" />
+    <ProjectReference Include="..\common\live\Z.Vtuber.Common.Live.csproj" />
+    <ProjectReference Include="..\common\recording\Z.Vtuber.Common.Recording.csproj" />
+    <ProjectReference Include="..\common\transcript\Z.Vtuber.Common.Transcript.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Z.Vtuber.Common.Contracts" />
   </ItemGroup>
 
 </Project>

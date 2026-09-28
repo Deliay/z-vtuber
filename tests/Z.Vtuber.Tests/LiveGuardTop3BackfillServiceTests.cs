@@ -53,7 +53,7 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IClassF
 
     private async Task SeedAccountAsync(long mid, long roomId)
     {
-        var accounts = fixture.Database.GetCollection<AccountBasicInfoRecord>(MongoCollectionNames.AccountBasicInfo);
+        var accounts = fixture.Database.GetCollection<AccountBasicInfoRecord>(LiveCollectionNames.AccountBasicInfo);
         await accounts.InsertOneAsync(new AccountBasicInfoRecord
         {
             Mid = mid,
@@ -90,7 +90,7 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IClassF
 
     private async Task<bool> IsMarkedAsync(long mid)
     {
-        var metaCollection = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var metaCollection = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
         var key = $"live_guard_top3_backfill_v1:{mid}";
         var filter = Builders<MetaRecord>.Filter.Eq(m => m.Key, key);
         var result = await metaCollection.Find(filter).FirstOrDefaultAsync();
@@ -157,7 +157,7 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IClassF
 
         await service.ExecuteAsync(CancellationToken.None);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var todaySnapshot = await guards.Find(r => r.Mid == Mid1 && r.Date == today).FirstOrDefaultAsync();
         Assert.Null(todaySnapshot);
     }
@@ -232,7 +232,7 @@ public class LiveGuardTop3BackfillServiceTests(MongoDbFixture fixture) : IClassF
         var repo = new LiveGuardRepository(fixture.Database);
         await repo.UpsertDailySnapshotAsync(Record(Mid1, "2026-08-30", RoomId1, (1, "existing1", 3, "星", 5)));
 
-        var metaCollection = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var metaCollection = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
         await metaCollection.InsertOneAsync(new MetaRecord { Key = $"live_guard_top3_backfill_v1:{Mid1}" });
 
         var fetchCalls = 0;

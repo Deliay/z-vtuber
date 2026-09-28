@@ -27,7 +27,8 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
 
-builder.Services.AddSingleton<MongoDbInitializer>();
+builder.Services.AddSingleton<LiveMongoSetup>();
+    builder.Services.AddSingleton<RecordingMongoSetup>();
 builder.Services.AddSingleton<AccountBasicInfoRepository>();
 builder.Services.AddSingleton<RecordingStatusRepository>();
 builder.Services.AddSingleton<RecordingRepository>();
@@ -79,8 +80,10 @@ if (!mp3Support.Probe(recordingOptions.FfmpegPath))
 
 using (var scope = app.Services.CreateScope())
 {
-    var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
-    await initializer.EnsureIndexesAsync();
+    var live = scope.ServiceProvider.GetRequiredService<LiveMongoSetup>();
+    var recording = scope.ServiceProvider.GetRequiredService<RecordingMongoSetup>();
+    await live.EnsureIndexesAsync();
+    await recording.EnsureIndexesAsync();
 
     // 存量清洗：失败不阻断启动（幂等 marker 保证后续重试）
     try

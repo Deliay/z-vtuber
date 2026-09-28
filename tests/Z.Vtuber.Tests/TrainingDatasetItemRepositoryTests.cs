@@ -329,7 +329,7 @@ public class TrainingDatasetItemRepositoryTests(MongoDbFixture fixture) : IClass
         await repository.InsertManyIgnoreDuplicatesAsync([Item(datasetId, "transcript:task-1:0")]);
         fixture.Database.RunCommand<BsonDocument>(new BsonDocument
         {
-            { "collMod", MongoCollectionNames.TrainingDatasetItems },
+            { "collMod", TrainingCollectionNames.TrainingDatasetItems },
             { "validator", new BsonDocument("$expr", new BsonDocument("$ne", new BsonArray
             {
                 "$AudioType", "forbidden",

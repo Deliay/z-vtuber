@@ -207,7 +207,7 @@ public class TranscriptTaskRepositoryTests(MongoDbFixture fixture) : IClassFixtu
     {
         // 存量文档缺 OffsetMs 字段：无迁移，反序列化默认 0
         var collection = fixture.Database
-            .GetCollection<MongoDB.Bson.BsonDocument>(MongoCollectionNames.TranscriptTasks);
+            .GetCollection<MongoDB.Bson.BsonDocument>(TranscriptCollectionNames.TranscriptTasks);
         var id = ObjectId.GenerateNewId();
         var now = DateTime.UtcNow;
         await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument

@@ -30,7 +30,9 @@ builder.Services.AddSingleton<LiveSessionRepository>();
 builder.Services.AddSingleton<LiveEventTextIndexRepository>();
 builder.Services.AddSingleton<LiveGuardRepository>();
 builder.Services.AddSingleton<RecordingStatusRepository>();
-builder.Services.AddSingleton<MongoDbInitializer>();
+builder.Services.AddSingleton<LiveMongoSetup>();
+    builder.Services.AddSingleton<CookieMongoSetup>();
+    builder.Services.AddSingleton<WeiboMongoSetup>();
 
 builder.Services.AddBackstageDataAggregation();
 
@@ -65,24 +67,21 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
+    var live = scope.ServiceProvider.GetRequiredService<LiveMongoSetup>();
+    var cookie = scope.ServiceProvider.GetRequiredService<CookieMongoSetup>();
+    var weibo = scope.ServiceProvider.GetRequiredService<WeiboMongoSetup>();
 
     // Phase 4.2: 启动顺序固定为「删旧 Mid 唯一索引 → 迁移 → 建 (Mid,Type) 复合唯一索引」
-    // 1. 先删旧 Mid 唯一索引（避免迁移插入同 Mid 第二条记录时冲突）
-    await initializer.DropOldSubscriptionIndexAsync();
+    // 1-3. Live 迁移序列（删旧 Mid 唯一索引 → 存量迁移 → 建 (Mid, Type) 复合唯一索引）
+    await live.MigrateAsync();
 
-    // 2. 执行存量迁移（在复合唯一索引建立之前，避免与唯一索引竞争）
-    await initializer.MigrateSubscriptionTypeSplitAsync();
+    // 4. 各领域索引初始化（保持拆分前原顺序：Live → Cookie → Weibo）
+    await live.EnsureIndexesAsync();
+    await cookie.EnsureIndexesAsync();
+    await weibo.EnsureIndexesAsync();
 
-    // 3. 建 (Mid, Type) 复合唯一索引
-    await initializer.EnsureSubscriptionCompositeIndexAsync();
-
-    // 4. 其他索引与迁移
-    await initializer.EnsureIndexesAsync();
-    await initializer.BackfillSpaceTimelinePubTsAsync();
-    await initializer.BackfillGiftPriceAsync();
-    await initializer.BackfillLiveEventTextIndexAsync();
-    await initializer.BackfillLiveEventSenderAsync();
+    // 5. Live 域回填（不含需抢占锁的 payload object 回填）
+    await live.BackfillAsync();
 }
 
 if (app.Environment.IsDevelopment())

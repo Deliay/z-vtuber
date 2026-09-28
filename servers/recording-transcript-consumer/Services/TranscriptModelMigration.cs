@@ -19,10 +19,10 @@ public sealed class TranscriptModelMigration(
 
     public async Task MigrateAsync(CancellationToken ct = default)
     {
-        var meta = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        var meta = database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
         var markerExists = await meta.Find(r => r.Key == MigrationKey).AnyAsync(ct);
 
-        var models = database.GetCollection<TranscriptModelRecord>(MongoCollectionNames.TranscriptModels);
+        var models = database.GetCollection<TranscriptModelRecord>(TranscriptCollectionNames.TranscriptModels);
         var missingModelFilter = Builders<TranscriptModelRecord>.Filter.Or(
             Builders<TranscriptModelRecord>.Filter.Exists(m => m.Model, false),
             Builders<TranscriptModelRecord>.Filter.Eq(m => m.Model, string.Empty));
