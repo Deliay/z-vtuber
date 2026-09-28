@@ -113,4 +113,33 @@ public sealed class TrainingDatasetItemRepository(IMongoDatabase database)
             i => i.DatasetId == datasetId, ct);
         return result.DeletedCount;
     }
+
+    /// <summary>
+    /// 把情绪识别结果写入条目 <c>Extensions.emotion</c>（只 <c>$set</c> 该键，不动 <c>Extensions</c> 下其他键，
+    /// 兼容未来二次 ASR 等加工结果）；重复识别以最新结果覆盖。未命中返回 null。
+    /// </summary>
+    public async Task<TrainingDatasetItemRecord?> SetEmotionAsync(
+        ObjectId datasetId, ObjectId itemId, BsonDocument emotion, CancellationToken ct = default)
+    {
+        var filter = Builders<TrainingDatasetItemRecord>.Filter.Eq(i => i.DatasetId, datasetId)
+            & Builders<TrainingDatasetItemRecord>.Filter.Eq(i => i.Id, itemId);
+
+        // 兜底：Extensions 缺失或为 null 时先初始化为空文档——
+        // 否则 $set "Extensions.emotion" 会因父字段为 BSON null 报错（Cannot create field ... in element {Extensions: null}）。
+        await _collection.UpdateOneAsync(
+            filter & Builders<TrainingDatasetItemRecord>.Filter.Eq("Extensions", BsonNull.Value),
+            Builders<TrainingDatasetItemRecord>.Update.Set("Extensions", new BsonDocument()),
+            cancellationToken: ct);
+
+        var update = Builders<TrainingDatasetItemRecord>.Update
+            .Set("Extensions.emotion", emotion)
+            .Set(i => i.UpdatedAt, DateTime.UtcNow);
+        var result = await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
+        if (result.MatchedCount == 0)
+        {
+            return null;
+        }
+
+        return await _collection.Find(filter).FirstOrDefaultAsync(ct);
+    }
 }

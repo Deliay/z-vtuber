@@ -45,6 +45,55 @@ public sealed class TrainingMongoSetup(IMongoDatabase database, ILogger<Training
                 sourceKeys, new CreateIndexOptions { Name = "DatasetId_1_Source_1" }),
             cancellationToken: ct);
 
+        // training_providers：Name 唯一（重名天然 409）
+        var providers = Database.GetCollection<TrainingProviderRecord>(TrainingCollectionNames.TrainingProviders);
+        var providerNameKeys = Builders<TrainingProviderRecord>.IndexKeys.Ascending(p => p.Name);
+        await providers.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingProviderRecord>(
+                providerNameKeys, new CreateIndexOptions { Unique = true, Name = "Name_1" }),
+            cancellationToken: ct);
+
+        // training_models：(ProviderId, Model) 唯一；ProviderId（级联删除）
+        var models = Database.GetCollection<TrainingModelRecord>(TrainingCollectionNames.TrainingModels);
+        var modelUniqueKeys = Builders<TrainingModelRecord>.IndexKeys
+            .Ascending(m => m.ProviderId)
+            .Ascending(m => m.Model);
+        await models.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingModelRecord>(
+                modelUniqueKeys, new CreateIndexOptions { Unique = true, Name = "ProviderId_1_Model_1" }),
+            cancellationToken: ct);
+
+        var modelProviderKeys = Builders<TrainingModelRecord>.IndexKeys.Ascending(m => m.ProviderId);
+        await models.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingModelRecord>(
+                modelProviderKeys, new CreateIndexOptions { Name = "ProviderId_1" }),
+            cancellationToken: ct);
+
+        // training_emotion_tasks：(Status, CreatedAt) 扫描领取；DatasetId 队列查询；ItemId 重复提交判定
+        var emotionTasks = Database.GetCollection<TrainingEmotionTaskRecord>(
+            TrainingCollectionNames.TrainingEmotionTasks);
+        var statusCreatedKeys = Builders<TrainingEmotionTaskRecord>.IndexKeys
+            .Ascending(t => t.Status)
+            .Ascending(t => t.CreatedAt);
+        await emotionTasks.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingEmotionTaskRecord>(
+                statusCreatedKeys, new CreateIndexOptions { Name = "Status_1_CreatedAt_1" }),
+            cancellationToken: ct);
+
+        var datasetCreatedKeys = Builders<TrainingEmotionTaskRecord>.IndexKeys
+            .Ascending(t => t.DatasetId)
+            .Ascending(t => t.CreatedAt);
+        await emotionTasks.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingEmotionTaskRecord>(
+                datasetCreatedKeys, new CreateIndexOptions { Name = "DatasetId_1_CreatedAt_1" }),
+            cancellationToken: ct);
+
+        var itemKeys = Builders<TrainingEmotionTaskRecord>.IndexKeys.Ascending(t => t.ItemId);
+        await emotionTasks.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingEmotionTaskRecord>(
+                itemKeys, new CreateIndexOptions { Name = "ItemId_1" }),
+            cancellationToken: ct);
+
         Logger.LogInformation("Ensured training collection indexes.");
     }
 }
