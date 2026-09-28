@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
 using Z.Vtuber.Common.Persistence.Entities;
@@ -10,6 +11,18 @@ namespace Z.Vtuber.Training.Contracts;
 /// </summary>
 public static class TrainingMapping
 {
+    /// <summary>情绪维度强度上限（happy/angry/... 八维固定 0~1）。</summary>
+    public const double MaxEmotionDimension = 1d;
+
+    /// <summary>
+    /// 情绪控制权重上限（<c>emotionControlWeight</c> 允许超过 1，越界钳制到 0~10 —— 与
+    /// <see cref="Z.Vtuber.Training.Ai.ModelJsonParser.MaxEmotionControlWeight"/>、契约描述一致）。
+    /// </summary>
+    public const double MaxEmotionControlWeight = 10d;
+
+    /// <summary>情绪描述最大长度（字符数，超过截断并记 Warn）。</summary>
+    public const int MaxEmotionDescriptionLength = 200;
+
     /// <summary>
     /// 音频标识：<c>transcript:{taskId}:{原始startMs}</c>（原始 start 不含播放偏移，
     /// 保证任务偏移变更后重复导入仍命中 (datasetId, audioKey) 唯一索引而被去重）。
@@ -74,7 +87,11 @@ public static class TrainingMapping
 
         var roomPart = rest[..index];
         var file = rest[(index + marker.Length)..];
-        if (!long.TryParse(roomPart, out var roomId)
+        // roomId 收紧为纯 ASCII 数字：拒绝符号（-1/+1）、空白（" 1"）与非数字；file 为空或含 '/' 也拒绝
+        // （recording 片段端点单段路径无法承载嵌套文件名，虽 BuildAudioUri 允许写入嵌套名）。
+        if (roomPart.Length == 0
+            || !roomPart.All(char.IsAsciiDigit)
+            || !long.TryParse(roomPart, out var roomId)
             || string.IsNullOrEmpty(file)
             || file.Contains('/'))
         {
@@ -132,27 +149,27 @@ public static class TrainingMapping
             counts.GetValueOrDefault(TrainingEmotionTaskStatus.Done),
             counts.GetValueOrDefault(TrainingEmotionTaskStatus.Failed));
 
-    /// <summary>情绪结果 → BsonDocument（小驼峰字段，数值钳制）。</summary>
-    public static BsonDocument ToEmotionDocument(EmotionResult emotion) =>
+    /// <summary>情绪结果 → BsonDocument（小驼峰字段；数值越界钳制并记 Warn，描述超长截断并记 Warn）。</summary>
+    public static BsonDocument ToEmotionDocument(EmotionResult emotion, ILogger? logger = null) =>
         new()
         {
-            { "emotionControlWeight", Clamp(emotion.EmotionControlWeight, 0, MaxEmotionControlWeight) },
-            { "emotionDescription", emotion.EmotionDescription ?? string.Empty },
-            { "happy", Clamp01(emotion.Happy) },
-            { "angry", Clamp01(emotion.Angry) },
-            { "sad", Clamp01(emotion.Sad) },
-            { "afraid", Clamp01(emotion.Afraid) },
-            { "disgusted", Clamp01(emotion.Disgusted) },
-            { "melancholic", Clamp01(emotion.Melancholic) },
-            { "surprised", Clamp01(emotion.Surprised) },
-            { "calm", Clamp01(emotion.Calm) },
+            { "emotionControlWeight", ClampWithWarning(emotion.EmotionControlWeight, 0, MaxEmotionControlWeight, "emotionControlWeight", logger) },
+            { "emotionDescription", TruncateDescription(emotion.EmotionDescription, logger) },
+            { "happy", ClampWithWarning(emotion.Happy, 0, MaxEmotionDimension, "happy", logger) },
+            { "angry", ClampWithWarning(emotion.Angry, 0, MaxEmotionDimension, "angry", logger) },
+            { "sad", ClampWithWarning(emotion.Sad, 0, MaxEmotionDimension, "sad", logger) },
+            { "afraid", ClampWithWarning(emotion.Afraid, 0, MaxEmotionDimension, "afraid", logger) },
+            { "disgusted", ClampWithWarning(emotion.Disgusted, 0, MaxEmotionDimension, "disgusted", logger) },
+            { "melancholic", ClampWithWarning(emotion.Melancholic, 0, MaxEmotionDimension, "melancholic", logger) },
+            { "surprised", ClampWithWarning(emotion.Surprised, 0, MaxEmotionDimension, "surprised", logger) },
+            { "calm", ClampWithWarning(emotion.Calm, 0, MaxEmotionDimension, "calm", logger) },
         };
 
     /// <summary>
     /// BsonDocument → 情绪结果：缺失/格式不符（任一数值字段缺失或非数值）→ null 不抛；
-    /// 八维钳 0~1，<c>emotionControlWeight</c> 上限 10。
+    /// 八维钳 0~1、<c>emotionControlWeight</c> 钳 0~10、描述截断 ≤200（越界/截断记 Warn）。
     /// </summary>
-    public static EmotionResult? FromEmotionDocument(BsonDocument? document)
+    public static EmotionResult? FromEmotionDocument(BsonDocument? document, ILogger? logger = null)
     {
         if (document is null
             || !TryGetNumber(document, "emotionControlWeight", out var weight)
@@ -173,19 +190,17 @@ public static class TrainingMapping
             : string.Empty;
 
         return new EmotionResult(
-            Clamp(weight, 0, MaxEmotionControlWeight),
-            description,
-            Clamp01(happy),
-            Clamp01(angry),
-            Clamp01(sad),
-            Clamp01(afraid),
-            Clamp01(disgusted),
-            Clamp01(melancholic),
-            Clamp01(surprised),
-            Clamp01(calm));
+            ClampWithWarning(weight, 0, MaxEmotionControlWeight, "emotionControlWeight", logger),
+            TruncateDescription(description, logger),
+            ClampWithWarning(happy, 0, MaxEmotionDimension, "happy", logger),
+            ClampWithWarning(angry, 0, MaxEmotionDimension, "angry", logger),
+            ClampWithWarning(sad, 0, MaxEmotionDimension, "sad", logger),
+            ClampWithWarning(afraid, 0, MaxEmotionDimension, "afraid", logger),
+            ClampWithWarning(disgusted, 0, MaxEmotionDimension, "disgusted", logger),
+            ClampWithWarning(melancholic, 0, MaxEmotionDimension, "melancholic", logger),
+            ClampWithWarning(surprised, 0, MaxEmotionDimension, "surprised", logger),
+            ClampWithWarning(calm, 0, MaxEmotionDimension, "calm", logger));
     }
-
-    private const double MaxEmotionControlWeight = 10d;
 
     private static EmotionResult? ReadEmotion(BsonDocument? extensions) =>
         extensions is not null && extensions.TryGetValue("emotion", out var raw) && raw.IsBsonDocument
@@ -219,10 +234,39 @@ public static class TrainingMapping
         }
     }
 
-    private static double Clamp01(double value) => Clamp(value, 0, 1);
+    /// <summary>越界钳制并记 Warn（NaN 亦按越界处理）。</summary>
+    private static double ClampWithWarning(double value, double min, double max, string field, ILogger? logger)
+    {
+        if (double.IsNaN(value) || value < min || value > max)
+        {
+            var clamped = Clamp(value, min, max);
+            logger?.LogWarning(
+                "Training emotion field {Field} out of range ({Value}); clamped to {Clamped}",
+                field, value, clamped);
+            return clamped;
+        }
+
+        return value;
+    }
+
+    /// <summary>描述超长（&gt; 200 字符）截断并记 Warn。</summary>
+    private static string TruncateDescription(string? description, ILogger? logger)
+    {
+        var value = description ?? string.Empty;
+        if (value.Length <= MaxEmotionDescriptionLength)
+        {
+            return value;
+        }
+
+        logger?.LogWarning(
+            "Training emotion description too long ({Length} chars); truncated to {Max}",
+            value.Length, MaxEmotionDescriptionLength);
+        return value[..MaxEmotionDescriptionLength];
+    }
 
     private static double Clamp(double value, double min, double max) =>
         double.IsNaN(value) ? min : Math.Min(Math.Max(value, min), max);
+
 
     /// <summary>
     /// 导入映射：<c>rawStart = startMs - offsetMs</c>；<c>AudioKey = GenerateAudioKey(taskId, rawStart)</c>；

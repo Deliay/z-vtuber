@@ -47,9 +47,19 @@ public class ModelPromptTests
         }
 
         Assert.Contains("0~1", prompt.System);
+        Assert.Contains("0~10", prompt.System);
         Assert.Contains("200", prompt.System);
         Assert.Contains("只输出 JSON", prompt.System);
         Assert.Equal(itemText, prompt.User);
         Assert.Null(prompt.Audio);
+    }
+
+    [Fact]
+    public void EmotionPrompt_StatesControlWeightRange()
+    {
+        var prompt = EmotionPromptBuilder.Build("台词");
+
+        // 返工 #4：prompt 需给出 emotionControlWeight 的取值范围（0~10）
+        Assert.Matches("emotionControlWeight[^；]*0~10", prompt.System);
     }
 }

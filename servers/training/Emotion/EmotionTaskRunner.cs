@@ -78,7 +78,7 @@ public class EmotionTaskRunner(
             EmotionResult emotion;
             try
             {
-                emotion = ModelJsonParser.ParseEmotion(raw);
+                emotion = ModelJsonParser.ParseEmotion(raw, logger);
             }
             catch (ModelOutputException ex)
             {
@@ -87,7 +87,7 @@ public class EmotionTaskRunner(
                 return;
             }
 
-            var document = TrainingMapping.ToEmotionDocument(emotion);
+            var document = TrainingMapping.ToEmotionDocument(emotion, logger);
             await items.SetEmotionAsync(task.DatasetId, task.ItemId, document, ct);
 
             var update = Builders<TrainingEmotionTaskRecord>.Update

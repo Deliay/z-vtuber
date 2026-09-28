@@ -1207,7 +1207,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrainingModelImportResult"
         "400":
-          description: models 缺失
+          description: models 缺失或模型名过长
           content:
             application/json:
               schema:
@@ -1351,7 +1351,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrainingRecognizeResult"
         "400":
-          description: 模型不支持音频/音频地址为空/音频过大/模型停用
+          description: 模型不支持音频/音频地址为空/音频过大/模型停用/不支持的 Provider 类型
           content:
             application/json:
               schema:
@@ -1371,7 +1371,7 @@ paths:
   /api/training/datasets/{datasetId}/items/emotion-tasks:
     post:
       summary: 提交情绪识别任务（代理训练服务）
-      description: 代理 training 服务，body 原样透传；重复提交/空文本计 skipped。
+      description: 代理 training 服务，body 原样透传；重复提交/空文本/条目不存在或 id 非法计 skipped。
       operationId: createTrainingEmotionTasks
       parameters:
         - $ref: "#/components/parameters/TrainingDatasetId"
@@ -2722,8 +2722,10 @@ components:
       properties:
         emotionControlWeight:
           type: number
+          description: 情绪控制权重（0~10，服务端越界钳制）
         emotionDescription:
           type: string
+          description: 情绪描述（服务端截断至 ≤ 200 字）
         happy:
           type: number
         angry:

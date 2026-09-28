@@ -34,6 +34,8 @@ export function EmotionTaskQueue({ datasetId, reloadToken = 0 }: EmotionTaskQueu
   const [tasks, setTasks] = useState<TrainingEmotionTask[]>([])
   const [counts, setCounts] = useState(EMPTY_COUNTS)
   const [error, setError] = useState('')
+  /** 正在重试的任务 id（按任务禁用「重试」防重复提交）。 */
+  const [retryingIds, setRetryingIds] = useState<string[]>([])
 
   const load = useCallback(async () => {
     try {
@@ -58,11 +60,15 @@ export function EmotionTaskQueue({ datasetId, reloadToken = 0 }: EmotionTaskQueu
   }, [load])
 
   const handleRetry = async (task: TrainingEmotionTask) => {
+    if (retryingIds.includes(task.id)) return
+    setRetryingIds((prev) => [...prev, task.id])
     try {
       await retryEmotionTask(task.id)
       await load()
     } catch (err) {
       setError(apiErrorMessage(err, '重试任务失败'))
+    } finally {
+      setRetryingIds((prev) => prev.filter((id) => id !== task.id))
     }
   }
 
@@ -108,6 +114,7 @@ export function EmotionTaskQueue({ datasetId, reloadToken = 0 }: EmotionTaskQueu
                     <button
                       aria-label={`重试 ${task.id}`}
                       onClick={() => void handleRetry(task)}
+                      disabled={retryingIds.includes(task.id)}
                     >
                       重试
                     </button>

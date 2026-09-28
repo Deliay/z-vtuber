@@ -123,4 +123,39 @@ public class ModelJsonParserTests
         Assert.Equal(2, ModelJsonParser.Clamp(-1, 2, 5));
         Assert.Equal(3.5, ModelJsonParser.Clamp(3.5, 2, 5));
     }
+
+    // ---- 返工 #3/#4：越界钳制与描述超长需记 Warn，而非静默 ----
+
+    [Fact]
+    public void ParseEmotion_OutOfRangeAndLongDescription_LogsWarnings()
+    {
+        var logger = new ListLogger<ModelJsonParserTests>();
+        var longDescription = new string('呵', 260);
+        var raw = "{\"emotionControlWeight\":99,\"emotionDescription\":\"" + longDescription
+            + "\",\"happy\":2,\"angry\":0,\"sad\":0.5,\"afraid\":0,\"disgusted\":0,"
+            + "\"melancholic\":0.9,\"surprised\":0,\"calm\":0.5}";
+
+        var emotion = ModelJsonParser.ParseEmotion(raw, logger);
+
+        Assert.Equal(10, emotion.EmotionControlWeight);
+        Assert.Equal(1, emotion.Happy);
+        // 描述截断至 ≤ 200 字
+        Assert.Equal(200, emotion.EmotionDescription.Length);
+        Assert.True(logger.HasWarning);
+        Assert.Contains(logger.Entries, e => e.Message.Contains("emotionControlWeight") && e.Message.Contains("out of range"));
+        Assert.Contains(logger.Entries, e => e.Message.Contains("description too long"));
+    }
+
+    [Fact]
+    public void ParseEmotion_InRange_LogsNoWarning()
+    {
+        var logger = new ListLogger<ModelJsonParserTests>();
+
+        _ = ModelJsonParser.ParseEmotion(
+            "{\"emotionControlWeight\":1,\"emotionDescription\":\"正常\",\"happy\":0.2,\"angry\":0.1,"
+            + "\"sad\":0.1,\"afraid\":0.1,\"disgusted\":0.1,\"melancholic\":0.1,\"surprised\":0.1,\"calm\":0.1}",
+            logger);
+
+        Assert.False(logger.HasWarning);
+    }
 }

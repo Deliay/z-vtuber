@@ -206,9 +206,10 @@ public class EmotionTaskScannerTests(MongoDbFixture mongo) : IClassFixture<Mongo
     }
 
     [Fact]
-    public async Task AttemptsAtMax_MarksFailedWithoutRunning()
+    public async Task ZombieRunning_AttemptsAtMax_MarksFailedWithoutRunning()
     {
-        var taskId = await InsertTaskAsync(attempts: 1);
+        // 返工 #6：MaxAttempts 仅约束僵尸 RUNNING 接管；无锁 RUNNING 且次数耗尽 → FAILED
+        var taskId = await InsertTaskAsync(TrainingEmotionTaskStatus.Running, attempts: 1);
         var lockProvider = new EmotionScannerFakeLockProvider();
         var runner = CreateFakeRunner();
         var scanner = CreateScanner(lockProvider, runner, new EmotionTaskOptions { MaxAttempts = 1 });
@@ -219,6 +220,22 @@ public class EmotionTaskScannerTests(MongoDbFixture mongo) : IClassFixture<Mongo
         Assert.Equal(TrainingEmotionTaskStatus.Failed, stored!.Status);
         Assert.Equal("max attempts exceeded", stored.Error);
         Assert.Empty(runner.RunTaskIds);
+    }
+
+    [Fact]
+    public async Task PendingAtMaxAttempts_IsRun_SoManualRetryWorks()
+    {
+        // 返工 #6：人工 retry 保留 attempts 并置 PENDING，耗尽次数的 PENDING 仍须执行（失败可重试）
+        var taskId = await InsertTaskAsync(TrainingEmotionTaskStatus.Pending, attempts: 3);
+        var lockProvider = new EmotionScannerFakeLockProvider();
+        var runner = CreateFakeRunner();
+        var scanner = CreateScanner(lockProvider, runner, new EmotionTaskOptions { MaxAttempts = 3 });
+
+        await scanner.ScanOnceAsync();
+        await ReleaseGatesAsync(runner);
+
+        Assert.Contains(taskId, runner.RunTaskIds);
+        Assert.Equal(4, (await Tasks.GetByIdAsync(taskId))!.Attempts);
     }
 
     [Fact]

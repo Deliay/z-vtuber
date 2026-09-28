@@ -307,7 +307,7 @@ export interface paths {
         put?: never;
         /**
          * 提交情绪识别任务
-         * @description skipped 口径——条目已有 PENDING/RUNNING 任务（重复提交幂等）或条目 text 为空。
+         * @description skipped 口径——条目已有 PENDING/RUNNING 任务（重复提交幂等）、条目 text 为空、itemIds 非法或条目不存在。
          */
         post: operations["createTrainingEmotionTasks"];
         delete?: never;
@@ -534,9 +534,9 @@ export interface components {
         };
         /** @description 结构化情绪数据（十字段固定结构） */
         EmotionResult: {
-            /** @description 情绪控制权重（0~1） */
+            /** @description 情绪控制权重（0~10，服务端越界钳制） */
             emotionControlWeight: number;
-            /** @description 情绪描述（≤ 200 字） */
+            /** @description 情绪描述（服务端截断至 ≤ 200 字） */
             emotionDescription: string;
             /** @description 开心（0~1） */
             happy: number;
@@ -1203,7 +1203,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingModelImportResult"];
                 };
             };
-            /** @description {"error": "models is required"} */
+            /** @description {"error": "models is required"/"model too long"} */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1408,7 +1408,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingRecognizeResult"];
                 };
             };
-            /** @description {"error": "model does not support audio input"/"audio uri is empty"/"audio too large"/"model disabled"} */
+            /** @description {"error": "model does not support audio input"/"audio uri is empty"/"audio too large"/"model disabled"/"unsupported provider type"} */
             400: {
                 headers: {
                     [name: string]: unknown;

@@ -251,6 +251,10 @@ public class TrainingMappingTests
     [InlineData("   ")]
     [InlineData("x/live/100/recordings/a.flv")]
     [InlineData("b/live/abc/recordings/a.flv")]
+    [InlineData("b/live/-1/recordings/a.flv")]
+    [InlineData("b/live/+1/recordings/a.flv")]
+    [InlineData("b/live/ 1/recordings/a.flv")]
+    [InlineData("b/live/1a/recordings/a.flv")]
     [InlineData("b/live/100/recordings/")]
     [InlineData("b/live/100/recordings/a/b.flv")]
     [InlineData("b/live/100/recordingz/a.flv")]
@@ -359,5 +363,57 @@ public class TrainingMappingTests
         Assert.NotNull(dto.Emotion);
         Assert.Equal(0.7, dto.Emotion!.Sad);
         Assert.Equal("描述", dto.Emotion.EmotionDescription);
+    }
+
+    // ---- 返工 #3/#4：情绪钳制/描述截断需记 Warn，避免静默 ----
+
+    [Fact]
+    public void ToEmotionDocument_OutOfRange_LogsWarningAndTruncatesDescription()
+    {
+        var logger = new ListLogger<TrainingMappingTests>();
+        var longDescription = new string('呵', 250);
+
+        var document = TrainingMapping.ToEmotionDocument(
+            new EmotionResult(99, longDescription, 2, -1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5), logger);
+
+        Assert.Equal(10d, document["emotionControlWeight"].AsDouble);
+        Assert.Equal(1d, document["happy"].AsDouble);
+        Assert.Equal(0d, document["angry"].AsDouble);
+        Assert.Equal(200, document["emotionDescription"].AsString.Length);
+        Assert.True(logger.HasWarning);
+        Assert.Contains(logger.Entries, e => e.Message.Contains("out of range"));
+        Assert.Contains(logger.Entries, e => e.Message.Contains("description too long"));
+    }
+
+    [Fact]
+    public void FromEmotionDocument_OutOfRange_LogsWarningAndTruncatesDescription()
+    {
+        var logger = new ListLogger<TrainingMappingTests>();
+        var document = new BsonDocument
+        {
+            { "emotionControlWeight", 11.0 },
+            { "emotionDescription", new string('x', 300) },
+            { "happy", 1.5 }, { "angry", -1.0 }, { "sad", 0.5 }, { "afraid", 0.5 },
+            { "disgusted", 0.5 }, { "melancholic", 0.5 }, { "surprised", 0.5 }, { "calm", 0.5 },
+        };
+
+        var emotion = TrainingMapping.FromEmotionDocument(document, logger);
+
+        Assert.NotNull(emotion);
+        Assert.Equal(10d, emotion!.EmotionControlWeight);
+        Assert.Equal(0d, emotion.Angry);
+        Assert.Equal(200, emotion.EmotionDescription.Length);
+        Assert.True(logger.HasWarning);
+    }
+
+    [Fact]
+    public void ToEmotionDocument_InRange_LogsNoWarning()
+    {
+        var logger = new ListLogger<TrainingMappingTests>();
+
+        _ = TrainingMapping.ToEmotionDocument(
+            new EmotionResult(1, "正常", 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1), logger);
+
+        Assert.False(logger.HasWarning);
     }
 }

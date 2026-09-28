@@ -25,6 +25,7 @@ const mockListItems = vi.mocked(client.listTrainingDatasetItems)
 const mockUpdateItem = vi.mocked(client.updateTrainingDatasetItem)
 const mockBatchDelete = vi.mocked(client.batchDeleteTrainingDatasetItems)
 const mockListModels = vi.mocked(client.listTrainingModels)
+const mockRecognize = vi.mocked(client.recognizeTrainingDatasetItem)
 const mockCreateEmotionTasks = vi.mocked(client.createEmotionTasks)
 
 const baseItem = {
@@ -599,6 +600,38 @@ describe('DatasetItemList', () => {
     await waitFor(() => {
       expect(mockListModels).toHaveBeenCalledWith(true)
     })
+  })
+
+  it('should exit inline editing after a re-recognize save so the stale draft cannot overwrite the result', async () => {
+    const { loader } = createLoader()
+    mockRecognize.mockResolvedValue({ text: '识别后的文本' })
+    mockUpdateItem.mockResolvedValue({ ...items[0], text: '识别后的文本' })
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    // 进入内联编辑并留下一个未同步的过期草稿
+    editRow('transcript:t1:0')
+    fireEvent.change(screen.getByLabelText('文本'), { target: { value: '过期草稿' } })
+    fireEvent.click(screen.getByRole('button', { name: '重新识别' }))
+
+    const dialog = await screen.findByRole('dialog', { name: '重新识别' })
+    fireEvent.change(within(dialog).getByLabelText('识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '识别' }))
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText('文本')).toHaveValue('识别后的文本')
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(mockUpdateItem).toHaveBeenCalledWith('d1', 'i1', { text: '识别后的文本' })
+    })
+    // 保存成功后关闭对话框并退出该行内联编辑，旧草稿不再可回写
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '重新识别' })).not.toBeInTheDocument()
+    })
+    expect(screen.queryByLabelText('文本')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
+    expect(screen.getByText('识别后的文本')).toBeInTheDocument()
   })
 
   it('should disable 情绪识别 until something is selected and open the submit dialog', async () => {

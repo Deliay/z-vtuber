@@ -3,7 +3,7 @@ using Z.Vtuber.Common.Persistence;
 namespace Z.Vtuber.Tests;
 
 /// <summary>
-/// 常量等价测试：25 个集合名常量值逐一等于拆分前 MongoCollectionNames 的值（防「连错库」）。
+/// 常量等价测试：各域集合名常量值逐一等于拆分前 MongoCollectionNames 的值（防「连错库」）。
 /// </summary>
 public class CollectionNamesEquivalenceTests
 {

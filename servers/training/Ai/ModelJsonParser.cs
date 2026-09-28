@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Z.Vtuber.Training.Contracts;
 
 namespace Z.Vtuber.Training.Ai;
@@ -11,8 +12,8 @@ namespace Z.Vtuber.Training.Ai;
 /// </summary>
 public static class ModelJsonParser
 {
-    /// <summary>情绪维度/权重上限（<c>emotionControlWeight</c> 允许超过 1，上限 10）。</summary>
-    public const double MaxEmotionControlWeight = 10d;
+    /// <summary>情绪维度/权重上限（<c>emotionControlWeight</c> 允许 1~10，与 <see cref="TrainingMapping.MaxEmotionControlWeight"/> 同口径）。</summary>
+    public const double MaxEmotionControlWeight = TrainingMapping.MaxEmotionControlWeight;
 
     public static double Clamp01(double value) => Clamp(value, 0, 1);
 
@@ -34,24 +35,53 @@ public static class ModelJsonParser
 
     /// <summary>
     /// 情绪结果：要求 <c>emotionControlWeight</c> 与八个维度均为存在数值（大小写不敏感），
-    /// <c>emotionDescription</c> 可选（默认空串）；八维钳 0~1、权重钳 0~10；失败抛 <see cref="ModelOutputException"/>。
+    /// <c>emotionDescription</c> 可选（默认空串，超 200 字符截断并记 Warn）；
+    /// 八维钳 0~1、权重钳 0~10（越界记 Warn）；失败抛 <see cref="ModelOutputException"/>。
     /// </summary>
-    public static EmotionResult ParseEmotion(string raw)
+    public static EmotionResult ParseEmotion(string raw, ILogger? logger = null)
     {
         var element = ExtractObject(raw);
-        var weight = RequiredNumber(element, "emotionControlWeight");
 
         return new EmotionResult(
-            Clamp(weight, 0, MaxEmotionControlWeight),
-            OptionalString(element, "emotionDescription"),
-            Clamp01(RequiredNumber(element, "happy")),
-            Clamp01(RequiredNumber(element, "angry")),
-            Clamp01(RequiredNumber(element, "sad")),
-            Clamp01(RequiredNumber(element, "afraid")),
-            Clamp01(RequiredNumber(element, "disgusted")),
-            Clamp01(RequiredNumber(element, "melancholic")),
-            Clamp01(RequiredNumber(element, "surprised")),
-            Clamp01(RequiredNumber(element, "calm")));
+            ClampWithWarning(RequiredNumber(element, "emotionControlWeight"), 0, MaxEmotionControlWeight, "emotionControlWeight", logger),
+            TruncateDescription(OptionalString(element, "emotionDescription"), logger),
+            ClampWithWarning(RequiredNumber(element, "happy"), 0, 1, "happy", logger),
+            ClampWithWarning(RequiredNumber(element, "angry"), 0, 1, "angry", logger),
+            ClampWithWarning(RequiredNumber(element, "sad"), 0, 1, "sad", logger),
+            ClampWithWarning(RequiredNumber(element, "afraid"), 0, 1, "afraid", logger),
+            ClampWithWarning(RequiredNumber(element, "disgusted"), 0, 1, "disgusted", logger),
+            ClampWithWarning(RequiredNumber(element, "melancholic"), 0, 1, "melancholic", logger),
+            ClampWithWarning(RequiredNumber(element, "surprised"), 0, 1, "surprised", logger),
+            ClampWithWarning(RequiredNumber(element, "calm"), 0, 1, "calm", logger));
+    }
+
+    /// <summary>越界钳制并记 Warn（NaN 亦按越界处理）。</summary>
+    private static double ClampWithWarning(double value, double min, double max, string field, ILogger? logger)
+    {
+        if (double.IsNaN(value) || value < min || value > max)
+        {
+            var clamped = Clamp(value, min, max);
+            logger?.LogWarning(
+                "Model emotion field {Field} out of range ({Value}); clamped to {Clamped}",
+                field, value, clamped);
+            return clamped;
+        }
+
+        return value;
+    }
+
+    /// <summary>描述超长（&gt; 200 字符）截断并记 Warn。</summary>
+    private static string TruncateDescription(string description, ILogger? logger)
+    {
+        if (description.Length <= TrainingMapping.MaxEmotionDescriptionLength)
+        {
+            return description;
+        }
+
+        logger?.LogWarning(
+            "Model emotion description too long ({Length} chars); truncated to {Max}",
+            description.Length, TrainingMapping.MaxEmotionDescriptionLength);
+        return description[..TrainingMapping.MaxEmotionDescriptionLength];
     }
 
     /// <summary>剥离围栏 → 定位首个平衡对象 → 反序列化为可复用的 <see cref="JsonElement"/>。</summary>

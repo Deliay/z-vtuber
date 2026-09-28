@@ -108,6 +108,26 @@ describe('ModelSettingsTab', () => {
     expect(
       await screen.findByText('请先添加 Provider 并获取/添加模型'),
     ).toBeInTheDocument()
+    expect(
+      screen.getByText('暂无模型，请通过「获取模型」导入或手动添加'),
+    ).toBeInTheDocument()
+  })
+
+  it('should show the models empty guide when a provider exists but has no models', async () => {
+    mockListProviders.mockResolvedValue([providerA])
+    mockListModels.mockResolvedValue([])
+
+    render(<ModelSettingsTab />)
+
+    expect(await screen.findByText('openai-prod')).toBeInTheDocument()
+    // Provider 已存在、模型为空（最常见中间态）时，Models 区域仍须给出引导
+    expect(
+      screen.getByText('暂无模型，请通过「获取模型」导入或手动添加'),
+    ).toBeInTheDocument()
+    // 已有 Provider，不再显示 Provider 区域引导
+    expect(
+      screen.queryByText('请先添加 Provider 并获取/添加模型'),
+    ).not.toBeInTheDocument()
   })
 
   it('should only offer OpenAI and Claude as provider types', async () => {
@@ -244,6 +264,51 @@ describe('ModelSettingsTab', () => {
     fireEvent.click(screen.getByRole('button', { name: '获取模型 openai-prod' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('模型服务不可用')
+  })
+
+  it('should distinguish discover failures with the shared apiErrorMessage', async () => {
+    mockListProviders.mockResolvedValue([providerA])
+
+    mockDiscover.mockRejectedValue(apiError(502, '{"error":"invalid provider response"}'))
+    const first = render(<ModelSettingsTab />)
+    await screen.findByText('openai-prod')
+    fireEvent.click(screen.getByRole('button', { name: '获取模型 openai-prod' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('模型服务响应非法')
+    first.unmount()
+
+    mockDiscover.mockRejectedValue(apiError(404, '{"error":"provider not found"}'))
+    render(<ModelSettingsTab />)
+    await screen.findByText('openai-prod')
+    fireEvent.click(screen.getByRole('button', { name: '获取模型 openai-prod' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Provider 不存在')
+  })
+
+  it('should keep the discover dialog open while importing so the result feedback is not lost', async () => {
+    mockListProviders.mockResolvedValue([providerA])
+    mockDiscover.mockResolvedValue([{ model: 'gpt-4o' }])
+    let resolveImport: (value: { imported: number; skipped: number }) => void = () => {}
+    mockImport.mockReturnValue(
+      new Promise((resolve) => {
+        resolveImport = resolve
+      }),
+    )
+
+    render(<ModelSettingsTab />)
+    await screen.findByText('openai-prod')
+    fireEvent.click(screen.getByRole('button', { name: '获取模型 openai-prod' }))
+    fireEvent.click(await screen.findByLabelText('导入 gpt-4o'))
+    fireEvent.click(screen.getByRole('button', { name: '导入选中' }))
+
+    const dialog = screen.getByRole('dialog', { name: '获取模型 - openai-prod' })
+    const overlay = dialog.parentElement as HTMLElement
+    // 导入中：遮罩点击与关闭按钮都不应关闭弹窗（保住结果反馈）
+    fireEvent.click(overlay)
+    expect(screen.getByRole('dialog', { name: '获取模型 - openai-prod' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '关闭' })).toBeDisabled()
+
+    resolveImport({ imported: 1, skipped: 1 })
+    expect(await screen.findByRole('status')).toHaveTextContent('已导入 1 个，跳过 1 个')
+    expect(screen.getByRole('dialog', { name: '获取模型 - openai-prod' })).toBeInTheDocument()
   })
 
   it('should display the slug, add a model via the provider select, and toggle/delete', async () => {

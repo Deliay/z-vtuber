@@ -30,7 +30,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
 - `Controllers/`：
   - `TrainingDatasetsController`（`[Route("api/training/datasets")]`，接口 1-4）：列表（`type` 必填且本期固定 `audio`，否则 400 `unsupported dataset type`，按 `CreatedAt` 升序）、新建（201；名字 trim 后非空 ≤128，否则 400 `name is required`/`name too long`；同 `(Type,Name)` 重名 409 `dataset name exists`）、重命名（400/404/409/200）、删除（先 `DeleteByDatasetAsync` 级联清条目再删数据集，204/404）
   - `TrainingDatasetItemsController`（`[Route("api/training/datasets/{datasetId}/items")]`，接口 5-8）：列表（`audioType?`/`source?` 过滤，`CreatedAt`、`AudioKey` 升序）、导入、更新、批量删除；错误体统一 `{"error": "..."}`，非法 ObjectId 一律按「不存在」→ 404；存在性判定与前值回读走仓储 `GetByIdAsync` 单读
-  - `TrainingProvidersController`（`[Route("api/training/providers")]`，接口 9-14，新增）：Provider 列表/新建/更新/删除（删除**级联删其下 Models**）、`GET {id}/models/discover`（按 `type` 选协议并去重排序；不可达 502 `provider service unavailable`、响应非法 502 `invalid provider response`）、`POST {id}/models/import`（`{imported, skipped}`）；name 全局唯一（409 `provider name exists`）、type 白名单 `openai|claude`、endpoint 仅 http/https 且去尾 `/`；**响应永不含 apiKey，仅 `apiKeySet`**
+  - `TrainingProvidersController`（`[Route("api/training/providers")]`，接口 9-14，新增）：Provider 列表/新建/更新/删除（删除**级联删其下 Models**）、`GET {id}/models/discover`（按 `type` 选协议并去重排序；不可达 502 `provider service unavailable`、响应非法 502 `invalid provider response`）、`POST {id}/models/import`（`{imported, skipped}`；模型名 trim 后 > 128 → 400 `model too long`，与手动添加同口径）；name 全局唯一（409 `provider name exists`）、type 白名单 `openai|claude`、endpoint 仅 http/https 且去尾 `/`；**响应永不含 apiKey，仅 `apiKeySet`**
   - `TrainingModelsController`（`[Route("api/training/models")]`，接口 15-18，新增）：列表（`enabled?` 过滤，每项含服务端拼好的 `slug = {providerName}/{model}`）、手动添加（Provider 下拉口径，provider 404/重复 409 `model exists`）、更新（启停/改名 409）、删除
   - `TrainingItemToolsController`（`[Route("api/training/datasets/{datasetId}/items")]`，接口 19-20，新增）：`POST {itemId}/recognize`（单条重新识别：dataset/item/model 校验 → 取音频转 base64 → 识别 prompt → JSON 解析 → 200 `{text}`，**不写库**；400 `model disabled`/`audio uri is empty`/`audio too large`/`model does not support audio input`/`unsupported provider type`；404；502 `audio unavailable`/`model service unavailable`/`invalid model output`）、`POST emotion-tasks`（批量提交 `{itemIds, modelId}` → `{created, skipped}`；skipped = 条目已有 PENDING/RUNNING 任务、条目 `text` 为空或 id 非法）
   - `TrainingEmotionTasksController`（`[Route("api/training/emotion-tasks")]`，接口 21-22，新增）：队列查询（`datasetId?`/`status?`/`limit?`（默认 100 最大 500，`CreatedAt` 降序）+ `counts` 分组计数）、`POST {taskId}/retry`（仅 FAILED → PENDING，`attempts` 保留、`error` 清空；非 FAILED 400 `task not failed`）
@@ -44,7 +44,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
   - `ModelExceptions`（`ProviderTypeException`/`ModelAudioNotSupportedException`/`ModelOutputException`/`InvalidProviderResponseException`/`AudioUnavailableException`/`AudioTooLargeException`）；日志不打 apiKey 与音频内容
 - `Emotion/`（新增，语义逐条仿 `recording-transcript-consumer/Tasks/TranscriptTaskLock`）：
   - `EmotionTaskLock`（`IEmotionTaskLockProvider`/`RedisEmotionTaskLockProvider`，key `training:emotion-task-lock:{taskId}`，SET NX PX + 周期续期 + Lua token 比对释放 + `CheckOwnershipAsync` fencing；Redis 抖动 `IsHeldAsync` 保守按持有）
-  - `EmotionTaskScanner`（HostedService：`ScanIntervalSeconds` 周期 + 启动抖动、`ListClaimableAsync(ScanBatchSize)`、`MaxConcurrentTasks` 门控、僵尸 RUNNING 无锁接管、`MaxAttempts` 超限置 FAILED、异常不中断循环）
+  - `EmotionTaskScanner`（HostedService：`ScanIntervalSeconds` 周期 + 启动抖动、`ListClaimableAsync(ScanBatchSize)`、`MaxConcurrentTasks` 门控、僵尸 RUNNING 无锁接管、**僵尸 RUNNING** `MaxAttempts` 超限置 FAILED（PENDING 含人工 retry 保留 attempts 的任务放行执行）、异常不中断循环）
   - `EmotionTaskRunner`（单任务编排：置 RUNNING → 读条目 → 空文本 FAILED → 拼情绪 prompt → 调模型 → 解析 → `SetEmotionAsync` 写 `Extensions.emotion` → DONE + `Emotion` 快照 + `FinishedAt`；逐阶段 fencing，失锁放弃写入；`finally` 释放锁）
   - 状态机 `PENDING → RUNNING → DONE | FAILED`，retry 仅 `FAILED → PENDING`
 - `Clients/`：`ITranscriptApiClient`/`TranscriptApiClient`（named client `TranscriptService`，`GET api/transcripts/task/{taskId}`；404 → null 表示任务不存在，其余非 20xx 抛 `HttpRequestException` 供控制器映 502）；`IRecordingAudioClient`/`RecordingAudioClient`（取音频片段；`endMs` 空按 `Ai:AudioClipDefaultDurationMs`（默认 300000）补齐——recording 片段端点要求 `endMs` 必填）
@@ -97,7 +97,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
 - `training_providers`：`Name`(唯一)/`Type`/`Endpoint`/`ApiKey`(明文入库、永不回传)/时间戳；索引 `Name` **唯一**。
 - `training_models`：`ProviderId`/`Model`/`Enabled`(默认 true)/时间戳；索引 `(ProviderId, Model)` **唯一**、`ProviderId`；`slug` 为派生字段不落库。
 - `training_emotion_tasks`：`DatasetId`/`ItemId`/`AudioKey`/`ModelId`/`ModelSlug`(快照)/`Status`/`Attempts`/`Error`/`Emotion`(BsonDocument?)/时间戳；索引 `(Status, CreatedAt)`、`(DatasetId, CreatedAt)`、`ItemId`。
-- 情绪结果写入条目 `Extensions.emotion`（`SetEmotionAsync` 仅 `$set` 该键；重复识别以最新覆盖），零表结构变更；读取映射到 DTO `emotion`，缺失/格式不符 → null。
+- 情绪结果写入条目 `Extensions.emotion`（`SetEmotionAsync` 仅 `$set` 该键、同步刷新条目 `UpdatedAt`；重复识别以最新覆盖），零表结构变更；读取映射到 DTO `emotion`，缺失/格式不符 → null。情绪口径：八维强度 `0~1`、`emotionControlWeight` `0~10`、描述截断 ≤ 200 字，越界/超长均钳制/截断并记 Warn（`ModelJsonParser.ParseEmotion` 与 `TrainingMapping.To/FromEmotionDocument`）。
 - 实体与仓储位于 `servers/common/training`（`Z.Vtuber.Common.Training`），索引由 `TrainingMongoSetup.EnsureIndexesAsync` 幂等建立。
 
 ## 配置

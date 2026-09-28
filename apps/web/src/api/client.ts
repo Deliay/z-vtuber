@@ -83,6 +83,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   'provider service unavailable': '模型服务不可用',
   'invalid provider response': '模型服务响应非法',
   'models is required': '请选择要导入的模型',
+  'itemIds is required': '请选择要识别的条目',
   'task not failed': '任务未处于失败状态',
 }
 

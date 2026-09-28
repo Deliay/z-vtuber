@@ -43,7 +43,8 @@ public sealed class TrainingModelRepository(IMongoDatabase database)
 
     /// <summary>
     /// 无序批量导入：按 <c>(ProviderId, Model)</c> 唯一索引跳过重复，返回 (Imported, Skipped)。
-    /// 仅当全部写失败都是唯一键冲突才按去重计数；其余写失败原样上抛，避免把「未落库」误报为「已跳过」。
+    /// 仅当**全部**写失败都是唯一键冲突、且无未处理请求（<c>UnprocessedRequests</c> 为空）才按去重计数；
+    /// 其余写失败/中途中断一律原样上抛，避免把「未落库」误报为「已跳过」。
     /// </summary>
     public async Task<(long Imported, long Skipped)> InsertManyIgnoreDuplicatesAsync(
         IEnumerable<TrainingModelRecord> items, CancellationToken ct = default)
@@ -68,7 +69,8 @@ public sealed class TrainingModelRepository(IMongoDatabase database)
         catch (MongoBulkWriteException<TrainingModelRecord> ex)
         {
             if (ex.WriteErrors.Count > 0
-                && ex.WriteErrors.All(e => e.Category == ServerErrorCategory.DuplicateKey))
+                && ex.WriteErrors.All(e => e.Category == ServerErrorCategory.DuplicateKey)
+                && ex.UnprocessedRequests.Count == 0)
             {
                 var imported = ex.Result.InsertedCount;
                 return (imported, submitted.Count - imported);

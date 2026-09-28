@@ -73,6 +73,7 @@ public class TrainingEmotionTaskRepositoryTests(MongoDbFixture fixture) : IClass
         Assert.Equal(inserted.Id, stored.Id);
         Assert.Equal(datasetId, stored.DatasetId);
         Assert.Equal(itemId, stored.ItemId);
+        Assert.Equal($"transcript:t:{itemId}", stored.AudioKey);
         Assert.Equal("openai-prod/gpt-4o", stored.ModelSlug);
         Assert.Equal(TrainingEmotionTaskStatus.Pending, stored.Status);
         Assert.Equal(0, stored.Attempts);
@@ -210,6 +211,8 @@ public class TrainingEmotionTaskRepositoryTests(MongoDbFixture fixture) : IClass
         Assert.NotNull(updated);
         Assert.NotNull(updated!.Extensions);
         Assert.True(updated.Extensions!.Contains("emotion"));
+        // 返工 #8：除 Extensions.emotion 外仅刷新 UpdatedAt（与既有编辑口径一致，锁定该行为）
+        Assert.True(updated.UpdatedAt >= item.UpdatedAt);
         var mapped = TrainingMapping.FromEmotionDocument(updated.Extensions["emotion"].AsBsonDocument);
         Assert.NotNull(mapped);
         Assert.Equal("描述", mapped!.EmotionDescription);

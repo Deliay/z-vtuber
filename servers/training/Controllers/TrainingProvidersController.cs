@@ -259,10 +259,17 @@ public sealed class TrainingProvidersController(
                 continue;
             }
 
+            // 与手动添加模型同口径：trim 后长度 > 128 → 400 model too long（不得绕过校验）
+            var model = raw.Trim();
+            if (model.Length > TrainingModelsController.MaxModelLength)
+            {
+                return BadRequest(new ErrorResponse("model too long"));
+            }
+
             records.Add(new TrainingModelRecord
             {
                 ProviderId = provider.Id,
-                Model = raw.Trim(),
+                Model = model,
                 Enabled = true,
                 CreatedAt = now,
                 UpdatedAt = now,

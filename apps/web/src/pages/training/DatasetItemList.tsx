@@ -531,6 +531,20 @@ export function DatasetItemList({
                 setItems((prev) =>
                   prev.map((value) => (value.id === updated.id ? updated : value)),
                 )
+                // 重新识别保存成功后，若该行仍处于内联编辑态，必须同步草稿并退出编辑，
+                // 否则随后点击内联「保存」会用过期草稿覆盖刚识别并保存的文本。
+                if (editingId === updated.id) {
+                  setDraft({
+                    audioUri: updated.audioUri,
+                    text: updated.text,
+                    start: formatPosition(updated.startMs),
+                    end:
+                      updated.endMs === null || updated.endMs === undefined
+                        ? ''
+                        : formatPosition(updated.endMs),
+                  })
+                  cancelEdit()
+                }
                 setReRecognizeId(null)
               }}
             />

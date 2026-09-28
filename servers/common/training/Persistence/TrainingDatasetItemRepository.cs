@@ -40,8 +40,9 @@ public sealed class TrainingDatasetItemRepository(IMongoDatabase database)
     /// <summary>
     /// 无序批量导入：按 <c>(DatasetId, AudioKey)</c> 唯一索引跳过重复。
     /// 返回 (Imported, Skipped)，Skipped = 提交数 − Imported。
-    /// 仅当**全部**写失败都是唯一键冲突才按去重计数；其余写失败（集合校验、写关注异常、WriteErrors 为空等）
-    /// 一律原样上抛，避免把「未落库」误报成「已去重跳过」导致数据静默丢失。
+    /// 仅当**全部**写失败都是唯一键冲突、且无未处理请求（<c>UnprocessedRequests</c> 为空）才按去重计数；
+    /// 其余写失败（集合校验、写关注异常、WriteErrors 为空、中途中断等）一律原样上抛，
+    /// 避免把「未落库」误报成「已去重跳过」导致数据静默丢失。
     /// </summary>
     public async Task<(long Imported, long Skipped)> InsertManyIgnoreDuplicatesAsync(
         IEnumerable<TrainingDatasetItemRecord> items, CancellationToken ct = default)
@@ -61,7 +62,8 @@ public sealed class TrainingDatasetItemRepository(IMongoDatabase database)
         catch (MongoBulkWriteException<TrainingDatasetItemRecord> ex)
         {
             if (ex.WriteErrors.Count > 0
-                && ex.WriteErrors.All(e => e.Category == ServerErrorCategory.DuplicateKey))
+                && ex.WriteErrors.All(e => e.Category == ServerErrorCategory.DuplicateKey)
+                && ex.UnprocessedRequests.Count == 0)
             {
                 var imported = ex.Result.InsertedCount;
                 return (imported, submitted.Count - imported);
@@ -116,7 +118,8 @@ public sealed class TrainingDatasetItemRepository(IMongoDatabase database)
 
     /// <summary>
     /// 把情绪识别结果写入条目 <c>Extensions.emotion</c>（只 <c>$set</c> 该键，不动 <c>Extensions</c> 下其他键，
-    /// 兼容未来二次 ASR 等加工结果）；重复识别以最新结果覆盖。未命中返回 null。
+    /// 兼容未来二次 ASR 等加工结果）；同一数据重复识别以最新结果覆盖。除目标键外仅刷新条目
+    /// <c>UpdatedAt</c>（与既有编辑口径一致，属有意行为，测试已锁定）。未命中返回 null。
     /// </summary>
     public async Task<TrainingDatasetItemRecord?> SetEmotionAsync(
         ObjectId datasetId, ObjectId itemId, BsonDocument emotion, CancellationToken ct = default)

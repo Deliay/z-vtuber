@@ -1798,6 +1798,7 @@ describe('API Client', () => {
         ['audio unavailable', '音频暂不可用'],
         ['model service unavailable', '模型服务不可用'],
         ['invalid model output', '模型输出无法解析'],
+        ['itemIds is required', '请选择要识别的条目'],
         ['provider service unavailable', '模型服务不可用'],
         ['invalid provider response', '模型服务响应非法'],
         ['task not failed', '任务未处于失败状态'],

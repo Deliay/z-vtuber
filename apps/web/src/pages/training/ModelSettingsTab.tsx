@@ -66,6 +66,8 @@ export function ModelSettingsTab() {
   const [discovered, setDiscovered] = useState<string[]>([])
   const [discoverSelected, setDiscoverSelected] = useState<string[]>([])
   const [discoverBusy, setDiscoverBusy] = useState(false)
+  /** 导入选中模型请求进行中：此时忽略遮罩关闭并禁用关闭按钮，保住结果反馈。 */
+  const [discoverImporting, setDiscoverImporting] = useState(false)
   const [discoverError, setDiscoverError] = useState('')
   const [discoverResult, setDiscoverResult] = useState<{ imported: number; skipped: number } | null>(null)
 
@@ -122,12 +124,14 @@ export function ModelSettingsTab() {
     setDiscoverSelected([])
     setDiscoverError('')
     setDiscoverResult(null)
+    setDiscoverImporting(false)
     setDiscoverBusy(true)
     try {
       const list = await discoverTrainingModels(provider.id)
       setDiscovered(list.map((item) => item.model))
-    } catch {
-      setDiscoverError('模型服务不可用')
+    } catch (err) {
+      // 保留服务端错误码（不可达 / 响应非法 / Provider 不存在 等需区分）。
+      setDiscoverError(apiErrorMessage(err, '模型服务不可用'))
     } finally {
       setDiscoverBusy(false)
     }
@@ -136,6 +140,7 @@ export function ModelSettingsTab() {
   const handleImport = async () => {
     if (!discoverTarget || discoverSelected.length === 0 || discoverBusy) return
     setDiscoverBusy(true)
+    setDiscoverImporting(true)
     setDiscoverError('')
     try {
       const result = await importTrainingModels(discoverTarget.id, discoverSelected)
@@ -145,6 +150,7 @@ export function ModelSettingsTab() {
       setDiscoverError(apiErrorMessage(err, '导入模型失败'))
     } finally {
       setDiscoverBusy(false)
+      setDiscoverImporting(false)
     }
   }
 
@@ -184,17 +190,15 @@ export function ModelSettingsTab() {
     }
   }
 
-  const isEmpty = providers.length === 0 && models.length === 0
-
   return (
     <div className="model-settings-tab">
       {error && <div role="alert">{error}</div>}
 
-      {isEmpty && <p>请先添加 Provider 并获取/添加模型</p>}
-
       <section style={{ marginBottom: '2rem' }}>
         <h3>Providers</h3>
         <button onClick={openCreate}>新增 Provider</button>
+
+        {providers.length === 0 && <p>请先添加 Provider 并获取/添加模型</p>}
 
         {providers.length > 0 && (
           <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}>
@@ -247,6 +251,11 @@ export function ModelSettingsTab() {
         <h3>Models</h3>
         <button onClick={() => setManualOpen(true)}>手动添加模型</button>
 
+        {/* Provider 已存在但尚无模型时同样给出引导（最常见的中间态）。 */}
+        {models.length === 0 && (
+          <p>暂无模型，请通过「获取模型」导入或手动添加</p>
+        )}
+
         {models.length > 0 && (
           <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}>
             <thead>
@@ -294,7 +303,13 @@ export function ModelSettingsTab() {
       )}
 
       {discoverTarget && (
-        <div style={overlayStyle} onClick={() => setDiscoverTarget(null)}>
+        <div
+          style={overlayStyle}
+          // 导入进行中忽略遮罩关闭，避免卸载弹窗丢失「已导入/跳过」结果反馈
+          onClick={() => {
+            if (!discoverImporting) setDiscoverTarget(null)
+          }}
+        >
           <div
             role="dialog"
             aria-label={`获取模型 - ${discoverTarget.name}`}
@@ -342,7 +357,12 @@ export function ModelSettingsTab() {
               >
                 导入选中
               </button>
-              <button onClick={() => setDiscoverTarget(null)}>关闭</button>
+              <button
+                onClick={() => setDiscoverTarget(null)}
+                disabled={discoverImporting}
+              >
+                关闭
+              </button>
             </div>
           </div>
         </div>

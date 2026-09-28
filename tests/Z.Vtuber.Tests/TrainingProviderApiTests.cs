@@ -414,4 +414,21 @@ public class TrainingProviderApiTests(MongoDbFixture fixture) : IClassFixture<Mo
 
         Assert.Equal("provider not found", ErrorOf(result, StatusCodes.Status404NotFound));
     }
+
+    [Fact]
+    public async Task Import_ModelTooLong_Returns400_AndInsertsNothing()
+    {
+        // 返工 #11：导入不得绕过手动添加的 MaxModelLength(128) 校验
+        var provider = await Providers.InsertAsync(new TrainingProviderRecord
+        {
+            Name = "too-long", Type = "openai", Endpoint = "http://llm", ApiKey = "k",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+
+        var result = await CreateController().Import(
+            provider.Id.ToString(), new TrainingModelImportRequest(["ok", new string('m', 129)]));
+
+        Assert.Equal("model too long", ErrorOf(result, StatusCodes.Status400BadRequest));
+        Assert.Empty(await Models.ListAsync());
+    }
 }

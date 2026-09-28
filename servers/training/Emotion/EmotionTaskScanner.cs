@@ -76,7 +76,10 @@ public sealed class EmotionTaskScanner(
                 continue;
             }
 
-            if (task.Attempts >= options.MaxAttempts)
+            // MaxAttempts 仅约束「僵尸 RUNNING 接管」；PENDING（含人工 retry 保留 attempts 的任务）放行执行，
+            // 否则耗尽次数的任务点「重试」后会立即再次失败，违反「失败可重试」边界。
+            if (string.Equals(task.Status, TrainingEmotionTaskStatus.Running, StringComparison.Ordinal)
+                && task.Attempts >= options.MaxAttempts)
             {
                 await SetFailedAsync(task.Id, "max attempts exceeded", ct);
                 continue;

@@ -114,6 +114,30 @@ describe('EmotionTaskQueue', () => {
     })
   })
 
+  it('should ignore repeated retry clicks for a task while the request is in flight', async () => {
+    let resolveRetry: (value: TrainingEmotionTask) => void = () => {}
+    mockRetry.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRetry = resolve
+      }),
+    )
+
+    render(<EmotionTaskQueue datasetId="d1" />)
+    await screen.findByText('transcript:t1:0')
+
+    const retryButton = screen.getByRole('button', { name: '重试 t1' })
+    fireEvent.click(retryButton)
+    fireEvent.click(retryButton)
+
+    expect(mockRetry).toHaveBeenCalledTimes(1)
+    expect(retryButton).toBeDisabled()
+
+    resolveRetry({ ...failedTask, status: 'pending', error: null })
+    await waitFor(() => {
+      expect(mockListTasks).toHaveBeenCalledTimes(2)
+    })
+  })
+
   it('should poll every 10 seconds and clear the interval on unmount', async () => {
     vi.useFakeTimers()
     const { unmount } = render(<EmotionTaskQueue datasetId="d1" />)

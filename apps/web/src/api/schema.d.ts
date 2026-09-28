@@ -924,7 +924,7 @@ export interface paths {
         put?: never;
         /**
          * 提交情绪识别任务（代理训练服务）
-         * @description 代理 training 服务，body 原样透传；重复提交/空文本计 skipped。
+         * @description 代理 training 服务，body 原样透传；重复提交/空文本/条目不存在或 id 非法计 skipped。
          */
         post: operations["createTrainingEmotionTasks"];
         delete?: never;
@@ -1566,7 +1566,9 @@ export interface components {
         };
         /** @description 结构化情绪数据（十字段固定结构） */
         EmotionResult: {
+            /** @description 情绪控制权重（0~10，服务端越界钳制） */
             emotionControlWeight: number;
+            /** @description 情绪描述（服务端截断至 ≤ 200 字） */
             emotionDescription: string;
             happy: number;
             angry: number;
@@ -3614,7 +3616,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingModelImportResult"];
                 };
             };
-            /** @description models 缺失 */
+            /** @description models 缺失或模型名过长 */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3854,7 +3856,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingRecognizeResult"];
                 };
             };
-            /** @description 模型不支持音频/音频地址为空/音频过大/模型停用 */
+            /** @description 模型不支持音频/音频地址为空/音频过大/模型停用/不支持的 Provider 类型 */
             400: {
                 headers: {
                     [name: string]: unknown;

@@ -384,7 +384,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrainingModelImportResult"
         "400":
-          description: '{"error": "models is required"}'
+          description: '{"error": "models is required"/"model too long"}'
           content:
             application/json:
               schema:
@@ -517,7 +517,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrainingRecognizeResult"
         "400":
-          description: '{"error": "model does not support audio input"/"audio uri is empty"/"audio too large"/"model disabled"}'
+          description: '{"error": "model does not support audio input"/"audio uri is empty"/"audio too large"/"model disabled"/"unsupported provider type"}'
           content:
             application/json:
               schema:
@@ -537,7 +537,7 @@ paths:
   /api/training/datasets/{datasetId}/items/emotion-tasks:
     post:
       summary: 提交情绪识别任务
-      description: skipped 口径——条目已有 PENDING/RUNNING 任务（重复提交幂等）或条目 text 为空。
+      description: skipped 口径——条目已有 PENDING/RUNNING 任务（重复提交幂等）、条目 text 为空、itemIds 非法或条目不存在。
       operationId: createTrainingEmotionTasks
       parameters:
         - $ref: "#/components/parameters/DatasetId"
@@ -1002,10 +1002,10 @@ components:
       properties:
         emotionControlWeight:
           type: number
-          description: 情绪控制权重（0~1）
+          description: 情绪控制权重（0~10，服务端越界钳制）
         emotionDescription:
           type: string
-          description: 情绪描述（≤ 200 字）
+          description: 情绪描述（服务端截断至 ≤ 200 字）
         happy:
           type: number
           description: 开心（0~1）
