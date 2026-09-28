@@ -19,7 +19,7 @@
 | `Z.Vtuber.Common.Cookie` | `cookie/` | Cookie 域（含跨平台 Cookie 池与微博 cookie 两集合）：`CookieRecord`/`CookieSessionRecord`/`CookieAccountInfoRecord`、`ICookiePoolService`/`CookiePoolService`、`CookieAccountInfoRepository`、`CookieMongoSetup`、`CookieCollectionNames`、`BackstageDataAggregationExtensions` |
 | `Z.Vtuber.Common.Weibo` | `weibo/` | 微博域：`WeiboSubscriptionRecord`/`WeiboTimelineRecord`、2 仓储、`WeiboSubscriptionService`、`WeiboMongoSetup`、`WeiboCollectionNames` |
 | `Z.Vtuber.Common.Recording` | `recording/` | 录播域（含场次归档）：`RecordingStatusRecord`/`RecordingStatusRepository`、`RecordingRecord`/`RecordingRepository`、`RecordingMongoSetup`、`RecordingCollectionNames` |
-| `Z.Vtuber.Common.Transcript` | `transcript/` | 转写域：任务/片段/模型/自动入队实体与仓储、`TranscriptMongoSetup`（含 `CleanupAsync`）、`TranscriptCollectionNames` |
+| `Z.Vtuber.Common.Transcript` | `transcript/` | 转写域：任务/片段/模型/自动入队实体与仓储（`TranscriptTaskRecord`/`TranscriptModelRecord` 已标注 `[BsonIgnoreExtraElements]` 以容忍存量/异构版本未映射元素）、`TranscriptMongoSetup`（含 `CleanupAsync`）、`TranscriptCollectionNames` |
 | `Z.Vtuber.Common.Training` | `training/` | 训练域：数据集/条目实体与仓储、`TrainingMongoSetup`、`TrainingCollectionNames` |
 | `Z.Vtuber.Common.Notification` | `notification/` | 通知域：`NotificationSubscriptionRecord`、`INotificationSubscriptionRepository`/实现、`NotificationMongoSetup`（含 `MigrateAsync`）、`NotificationCollectionNames` |
 
