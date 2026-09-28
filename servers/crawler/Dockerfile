@@ -1,7 +1,9 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY servers/common/Z.Vtuber.Common.csproj servers/common/
+COPY servers/common/core/Z.Vtuber.Common.Core.csproj servers/common/core/
+COPY servers/common/live/Z.Vtuber.Common.Live.csproj servers/common/live/
+COPY servers/common/weibo/Z.Vtuber.Common.Weibo.csproj servers/common/weibo/
 COPY servers/crawler/Z.Vtuber.Crawler.csproj servers/crawler/
 RUN dotnet restore servers/crawler/Z.Vtuber.Crawler.csproj
 

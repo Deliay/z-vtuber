@@ -22,7 +22,7 @@ public class CookieDispatchTests(MongoDbFixture db) : IClassFixture<MongoDbFixtu
     public Task DisposeAsync() => Task.CompletedTask;
 
     private IMongoCollection<CookieRecord> Collection =>
-        db.Database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
+        db.Database.GetCollection<CookieRecord>(CookieCollectionNames.Cookies);
 
     private CookieDispatchService CreateService() => new(db.Database);
 
@@ -123,7 +123,7 @@ public class CookieDispatchTests(MongoDbFixture db) : IClassFixture<MongoDbFixtu
             Cookie = cookie.Cookie,
             CookieId = cookie.Id.ToString(),
         };
-        await db.Database.GetCollection<CookieSessionRecord>(MongoCollectionNames.CookieSessions).InsertOneAsync(session);
+        await db.Database.GetCollection<CookieSessionRecord>(CookieCollectionNames.CookieSessions).InsertOneAsync(session);
 
         var controller = new CookieAccountController(
             new CookieSessionRepository(db.Database),

@@ -2,7 +2,14 @@
 
   <Folder Name="/servers/">
     <Project Path="api/Z.Vtuber.csproj" />
-    <Project Path="common/Z.Vtuber.Common.csproj" />
+    <Project Path="common/core/Z.Vtuber.Common.Core.csproj" />
+    <Project Path="common/live/Z.Vtuber.Common.Live.csproj" />
+    <Project Path="common/cookie/Z.Vtuber.Common.Cookie.csproj" />
+    <Project Path="common/weibo/Z.Vtuber.Common.Weibo.csproj" />
+    <Project Path="common/recording/Z.Vtuber.Common.Recording.csproj" />
+    <Project Path="common/transcript/Z.Vtuber.Common.Transcript.csproj" />
+    <Project Path="common/training/Z.Vtuber.Common.Training.csproj" />
+    <Project Path="common/notification/Z.Vtuber.Common.Notification.csproj" />
     <Project Path="crawler/Z.Vtuber.Crawler.csproj" />
     <Project Path="notifier/Z.Vtuber.Notifier.csproj" />
     <Project Path="cookie/Z.Vtuber.Cookie.csproj" />

@@ -48,7 +48,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
         var mids = await repository.GetMidsWithSnapshotAsync("2026-08-31");
         Assert.Equal([1001L], mids);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001).FirstOrDefaultAsync();
         Assert.Equal(2, stored.Guards.Count);
         Assert.Equal(2, stored.GuardCount);
@@ -92,7 +92,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
             (1, "regular", 3, "星", 5),
             (2, "former_guard", 5, "舰", 10)));
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001).FirstOrDefaultAsync();
         Assert.NotNull(stored);
         Assert.Equal(2, stored.Guards.Count);
@@ -127,7 +127,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
         var mids = await repository.GetMidsWithSnapshotAsync("2026-08-31");
         Assert.Equal([1001L], mids);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001).FirstOrDefaultAsync();
         Assert.NotNull(stored);
         Assert.Equal(3, stored.Guards.Count);
@@ -357,7 +357,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
         };
         await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 3);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
         Assert.NotNull(stored);
         Assert.Equal(3, stored.GuardCount);
@@ -378,7 +378,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
         };
         await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 2);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
         Assert.NotNull(stored);
         var entry1 = stored.Guards.First(g => g.Uid == 1);
@@ -400,7 +400,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
         };
         await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 2);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
         Assert.Equal(stored.Guards.Count, stored.GuardCount);
     }
@@ -418,7 +418,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
         };
         await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 2);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored2 = await guards.Find(r => r.Mid == 1002 && r.Date == "2026-08-30").FirstOrDefaultAsync();
         Assert.Single(stored2.Guards);
         Assert.Equal(2L, stored2.Guards[0].Uid);
@@ -437,7 +437,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
         };
         await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 2);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored29 = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-29").FirstOrDefaultAsync();
         Assert.Single(stored29.Guards);
         Assert.Equal(1L, stored29.Guards[0].Uid);
@@ -452,7 +452,7 @@ public class LiveGuardRepositoryTests(MongoDbFixture fixture) : IClassFixture<Mo
         var missing = new List<LiveGuardEntry>();
         await repository.BackfillMissingEntriesAsync(1001, "2026-08-30", missing, 1);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == 1001 && r.Date == "2026-08-30").FirstOrDefaultAsync();
         Assert.Single(stored.Guards);
         Assert.Equal(1, stored.GuardCount);

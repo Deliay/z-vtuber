@@ -36,7 +36,7 @@ builder.Services.AddSingleton<IValidateOptions<CookieServiceOptions>, CookieServ
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
 
-builder.Services.AddSingleton<MongoDbInitializer>();
+builder.Services.AddSingleton<CookieMongoSetup>();
 builder.Services.AddSingleton<IDistributedLockProvider, RedisDistributedLockProvider>();
 builder.Services.AddSingleton<ICookieAccountInfoRepository, CookieAccountInfoRepository>();
 
@@ -67,11 +67,11 @@ builder.Services.AddSingleton<IBrowserSessionManager>(sp => new BrowserSessionMa
     sp.GetRequiredService<IOptions<CookieServiceOptions>>(),
     sp.GetRequiredService<ILogger<BrowserSessionManager>>()));
 builder.Services.AddSingleton<ICookieSessionRepository>(sp => new CookieSessionRepository(
-    sp.GetRequiredService<IMongoDatabase>(), MongoCollectionNames.CookieSessions));
+    sp.GetRequiredService<IMongoDatabase>(), CookieCollectionNames.CookieSessions));
 builder.Services.AddSingleton<ICookiePoolService>(sp => new CookiePoolService(
-    sp.GetRequiredService<IMongoDatabase>(), MongoCollectionNames.Cookies));
+    sp.GetRequiredService<IMongoDatabase>(), CookieCollectionNames.Cookies));
 builder.Services.AddSingleton<ICookieDispatchService>(sp => new CookieDispatchService(
-    sp.GetRequiredService<IMongoDatabase>(), MongoCollectionNames.Cookies, MongoCollectionNames.CookieSessions));
+    sp.GetRequiredService<IMongoDatabase>(), CookieCollectionNames.Cookies, CookieCollectionNames.CookieSessions));
 builder.Services.AddSingleton<ICookieInvalidEventPublisher>(sp => new RedisCookieInvalidEventPublisher(
     sp.GetRequiredService<IConnectionMultiplexer>(),
     Bilibili,
@@ -95,11 +95,11 @@ builder.Services.AddKeyedSingleton<IBrowserSessionManager>(Weibo, (sp, _) => new
     sp.GetRequiredService<IOptions<CookieServiceOptions>>(),
     sp.GetRequiredService<ILogger<BrowserSessionManager>>()));
 builder.Services.AddKeyedSingleton<ICookieSessionRepository>(Weibo, (sp, _) => new CookieSessionRepository(
-    sp.GetRequiredService<IMongoDatabase>(), MongoCollectionNames.WeiboCookieSessions));
+    sp.GetRequiredService<IMongoDatabase>(), CookieCollectionNames.WeiboCookieSessions));
 builder.Services.AddKeyedSingleton<ICookiePoolService>(Weibo, (sp, _) => new CookiePoolService(
-    sp.GetRequiredService<IMongoDatabase>(), MongoCollectionNames.WeiboCookies));
+    sp.GetRequiredService<IMongoDatabase>(), CookieCollectionNames.WeiboCookies));
 builder.Services.AddKeyedSingleton<ICookieDispatchService>(Weibo, (sp, _) => new CookieDispatchService(
-    sp.GetRequiredService<IMongoDatabase>(), MongoCollectionNames.WeiboCookies, MongoCollectionNames.WeiboCookieSessions));
+    sp.GetRequiredService<IMongoDatabase>(), CookieCollectionNames.WeiboCookies, CookieCollectionNames.WeiboCookieSessions));
 builder.Services.AddKeyedSingleton<ICookieInvalidEventPublisher>(Weibo, (sp, _) => new RedisCookieInvalidEventPublisher(
     sp.GetRequiredService<IConnectionMultiplexer>(),
     Weibo,
@@ -157,8 +157,8 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
-    await initializer.EnsureIndexesAsync();
+    var cookie = scope.ServiceProvider.GetRequiredService<CookieMongoSetup>();
+    await cookie.EnsureIndexesAsync();
 }
 
 app.MapHealthChecks("/health");

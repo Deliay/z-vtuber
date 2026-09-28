@@ -20,8 +20,8 @@ public class CookieDispatchService : ICookieDispatchService
 
     public CookieDispatchService(
         IMongoDatabase database,
-        string cookiesCollection = MongoCollectionNames.Cookies,
-        string sessionsCollection = MongoCollectionNames.CookieSessions)
+        string cookiesCollection = CookieCollectionNames.Cookies,
+        string sessionsCollection = CookieCollectionNames.CookieSessions)
     {
         _collection = database.GetCollection<CookieRecord>(cookiesCollection);
         _sessionCollection = database.GetCollection<CookieSessionRecord>(sessionsCollection);

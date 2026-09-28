@@ -17,7 +17,7 @@ public class TranscriptModelMigrationTests(MongoDbFixture mongo) : IClassFixture
     private TranscriptModelRepository Models => new(mongo.Database);
 
     private IMongoCollection<MetaRecord> Meta =>
-        mongo.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        mongo.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
 
     private TranscriptModelMigration Migration(string? asrModel = null) =>
         new(mongo.Database,

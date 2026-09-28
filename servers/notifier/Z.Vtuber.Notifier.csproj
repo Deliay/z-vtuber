@@ -22,7 +22,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\common\Z.Vtuber.Common.csproj" />
+    <ProjectReference Include="..\common\core\Z.Vtuber.Common.Core.csproj" />
+    <ProjectReference Include="..\common\notification\Z.Vtuber.Common.Notification.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Z.Vtuber.Common.Contracts" />
   </ItemGroup>
 
 </Project>

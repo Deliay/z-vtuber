@@ -17,7 +17,7 @@ graph LR
     CookieService --> M[(MongoDB)]
     CookieService --> R[(Redis)]
     CookieService --> PW[Playwright 浏览器]
-    Common[servers/common Z.Vtuber.Common] -.被引用.-> CookieService
+    Common[servers/common Core+Cookie] -.被引用.-> CookieService
 ```
 
 ## 模块结构

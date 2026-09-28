@@ -19,22 +19,26 @@ dotnet new webapi -n Z.Vtuber -o servers/api --no-https --use-controllers
 
 ```
 servers/
-├── Z.Vtuber.slnx                # 解决方案：api/common/crawler/cookie/recording/recording-transcript-*/training + tests + apphost
+├── Z.Vtuber.slnx                # 解决方案：api + common(8 个领域项目) + crawler/cookie/notifier/recording/recording-transcript-*/training + tests + apphost
 ├── api/                         # 纯 API 服务（Z.Vtuber）
 │   ├── Controllers/             # API 控制器
 │   ├── Live/LiveEventBus.cs     # SSE 订阅门控（Redis pub/sub 驱动，按需订阅/退订）
 │   ├── Program.cs               # 应用入口
-│   └── Z.Vtuber.csproj          # 引用 common + 消息客户端
-├── common/                      # 共享类库（Z.Vtuber.Common）
-│   ├── Persistence/             # 实体/仓储/MongoDbInitializer/BsonConvert/聚合扩展
-│   ├── Services/                # 共享领域服务 + ICookieNavProbeService 契约
-│   ├── Live/                    # LiveEvent 模型/提取器/频道名约定
-│   └── Z.Vtuber.Common.csproj
+│   └── Z.Vtuber.csproj          # 引用 common 领域项目 + 消息客户端
+├── common/                      # 共享类库（按领域拆 8 个项目，星型依赖 Core）
+│   ├── core/                    # Z.Vtuber.Common.Core：Mongo 基座/迁移 marker/Contracts/Locking/Bson 工具
+│   ├── live/                    # Z.Vtuber.Common.Live：直播实体/仓储/服务/提取器
+│   ├── cookie/                  # Z.Vtuber.Common.Cookie：Cookie 池/仓储（含微博 cookie 两集合索引）
+│   ├── weibo/                   # Z.Vtuber.Common.Weibo：微博实体/仓储/订阅服务
+│   ├── recording/               # Z.Vtuber.Common.Recording：录播状态与场次归档
+│   ├── transcript/              # Z.Vtuber.Common.Transcript：转写任务/片段/模型
+│   ├── training/                # Z.Vtuber.Common.Training：训练数据集
+│   └── notification/            # Z.Vtuber.Common.Notification：通知订阅
 └── crawler/                     # 抓取服务（Z.Vtuber.Crawler）
     ├── Crawlers/                # 抓取通道/风控/退避
     ├── Jobs/                    # 周期任务 + 基类 + 锁
     ├── Live/                    # LiveEventSource/弹幕客户端/归一化/事件发布
-    ├── Services/                # AccountInfoCrawler/CookieNavProbeService
+    ├── Services/                # AccountInfoCrawler
     ├── Configuration/           # BilibiliCrawlerOptions
     ├── Program.cs               # Worker 宿主 + /health 健康检查
     ├── Dockerfile
@@ -78,7 +82,7 @@ servers/
     └── Z.Vtuber.Training.csproj
 ```
 
-> 归属约定：仅被一方使用的代码归该方；被双方使用的代码入 `common`。抓取专用在 `servers/crawler`，对外接口与 SSE 在 `servers/api`。`ICookieNavProbeService` 契约在 common，具体实现（依赖抓取通道）在 crawler。
+> 归属约定：每个公共类型唯一归属一个领域项目，领域项目只引用 `Core`，禁止领域间互相引用。仅被一方使用的代码归该方（抓取专用在 `servers/crawler`，对外接口与 SSE 在 `servers/api`）；跨服务事件/异常契约与 Mongo 基座在 `Z.Vtuber.Common.Core`，其余实体/仓储/共享服务按领域归入对应项目。
 
 ## 契约（codegen）
 

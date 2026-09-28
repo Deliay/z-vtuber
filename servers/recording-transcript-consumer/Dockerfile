@@ -1,7 +1,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY servers/common/Z.Vtuber.Common.csproj servers/common/
+COPY servers/common/core/Z.Vtuber.Common.Core.csproj servers/common/core/
+COPY servers/common/live/Z.Vtuber.Common.Live.csproj servers/common/live/
+COPY servers/common/recording/Z.Vtuber.Common.Recording.csproj servers/common/recording/
+COPY servers/common/transcript/Z.Vtuber.Common.Transcript.csproj servers/common/transcript/
 COPY servers/recording-transcript-consumer/Z.Vtuber.RecordingTranscript.Consumer.csproj servers/recording-transcript-consumer/
 RUN dotnet restore servers/recording-transcript-consumer/Z.Vtuber.RecordingTranscript.Consumer.csproj
 

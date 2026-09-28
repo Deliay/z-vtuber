@@ -1,7 +1,8 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY servers/common/Z.Vtuber.Common.csproj servers/common/
+COPY servers/common/core/Z.Vtuber.Common.Core.csproj servers/common/core/
+COPY servers/common/notification/Z.Vtuber.Common.Notification.csproj servers/common/notification/
 COPY servers/notifier/Z.Vtuber.Notifier.csproj servers/notifier/
 RUN dotnet restore servers/notifier/Z.Vtuber.Notifier.csproj
 

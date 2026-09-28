@@ -46,9 +46,8 @@ builder.Services.AddSingleton<SpaceTimelineRepository>();
 builder.Services.AddSingleton<LiveSessionRepository>();
 builder.Services.AddSingleton<LiveEventTextIndexRepository>();
 builder.Services.AddSingleton<LiveGuardRepository>();
-builder.Services.AddSingleton<MongoDbInitializer>();
-
-builder.Services.AddBackstageDataAggregation();
+builder.Services.AddSingleton<LiveMongoSetup>();
+    builder.Services.AddSingleton<WeiboMongoSetup>();
 
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 builder.Services.AddSingleton<ILiveSessionTracker, LiveSessionTracker>();
@@ -120,18 +119,15 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
+    var live = scope.ServiceProvider.GetRequiredService<LiveMongoSetup>();
+    var weibo = scope.ServiceProvider.GetRequiredService<WeiboMongoSetup>();
 
     // 幂等的索引初始化与回填，与 api 服务并存执行安全
-    await initializer.DropOldSubscriptionIndexAsync();
-    await initializer.MigrateSubscriptionTypeSplitAsync();
-    await initializer.EnsureSubscriptionCompositeIndexAsync();
-    await initializer.EnsureIndexesAsync();
-    await initializer.BackfillSpaceTimelinePubTsAsync();
-    await initializer.BackfillGiftPriceAsync();
-    await initializer.BackfillLiveEventTextIndexAsync();
-    await initializer.BackfillLiveEventSenderAsync();
-    await initializer.BackfillLiveEventPayloadObjectAsync();
+    await live.MigrateAsync();
+    await live.EnsureIndexesAsync();
+    await weibo.EnsureIndexesAsync();
+    await live.BackfillAsync();
+    await live.BackfillLiveEventPayloadObjectAsync();
 }
 
 app.MapHealthChecks("/health");

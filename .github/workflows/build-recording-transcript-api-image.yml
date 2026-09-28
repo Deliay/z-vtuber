@@ -8,7 +8,10 @@ on:
       - 'release/**'
     paths:
       - 'servers/recording-transcript-api/**'
-      - 'servers/common/**'
+      - 'servers/common/core/**'
+      - 'servers/common/live/**'
+      - 'servers/common/recording/**'
+      - 'servers/common/transcript/**'
       - '.github/workflows/build-recording-transcript-api-image.yml'
 
 jobs:

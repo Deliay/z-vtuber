@@ -14,7 +14,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
     [Fact]
     public async Task BackfillLiveEventSender_PopulatesSenderFields_FromDanmaku()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -25,10 +25,10 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventSenderAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var record = await textIndexCollection.Find(FilterDefinition<LiveEventTextIndexRecord>.Empty).FirstOrDefaultAsync();
 
         Assert.NotNull(record);
@@ -41,7 +41,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
     [Fact]
     public async Task BackfillLiveEventSender_PopulatesSenderFields_FromSuperChat()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -52,10 +52,10 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventSenderAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var record = await textIndexCollection.Find(FilterDefinition<LiveEventTextIndexRecord>.Empty).FirstOrDefaultAsync();
 
         Assert.NotNull(record);
@@ -68,7 +68,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
     [Fact]
     public async Task BackfillLiveEventSender_SkipsNonTextType()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -79,10 +79,10 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventSenderAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(0, count);
     }
@@ -90,7 +90,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
     [Fact]
     public async Task BackfillLiveEventSender_SkipsRecordsWithNullText()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -101,10 +101,10 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventSenderAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(0, count);
     }
@@ -112,7 +112,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
     [Fact]
     public async Task BackfillLiveEventSender_IsIdempotent()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -123,11 +123,11 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventSenderAsync();
         await initializer.BackfillLiveEventSenderAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(1, count);
 
@@ -139,10 +139,10 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
     [Fact]
     public async Task BackfillLiveEventSender_Marker_PreventsRerun()
     {
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        await meta.InsertOneAsync(new MetaRecord { Key = MongoDbInitializer.LiveEventSenderBackfillMigrationKey });
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
+        await meta.InsertOneAsync(new MetaRecord { Key = LiveMongoSetup.LiveEventSenderBackfillMigrationKey });
 
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -153,10 +153,10 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventSenderAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(0, count);
     }
@@ -165,7 +165,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
     public async Task BackfillLiveEventSender_PopulatesSenderFields_WithMissingSenderInfo()
     {
         // 弹幕中 info[2] 缺失时发送者字段降级为空值
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
         await eventCollection.InsertOneAsync(new LiveEventRecord
         {
@@ -176,10 +176,10 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventSenderAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var record = await textIndexCollection.Find(FilterDefinition<LiveEventTextIndexRecord>.Empty).FirstOrDefaultAsync();
 
         Assert.NotNull(record);
@@ -192,7 +192,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
     [Fact]
     public async Task BackfillLiveEventSender_ProcessesLargeBatch()
     {
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var docs = Enumerable.Range(0, 600)
             .Select(i => new LiveEventRecord
             {
@@ -205,10 +205,10 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             .ToList();
         await eventCollection.InsertManyAsync(docs);
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventSenderAsync();
 
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
         var count = await textIndexCollection.CountDocumentsAsync(FilterDefinition<LiveEventTextIndexRecord>.Empty);
         Assert.Equal(600, count);
 
@@ -220,8 +220,8 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
     public async Task BackfillLiveEventSender_UpdatesExistingRecord_WithSenderFields()
     {
         // 存量记录（v1 回填）缺少发送者字段，回填后应补齐
-        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(MongoCollectionNames.LiveEventTextIndex);
-        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var textIndexCollection = fixture.Database.GetCollection<LiveEventTextIndexRecord>(LiveCollectionNames.LiveEventTextIndex);
+        var eventCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var eventId = MongoDB.Bson.ObjectId.GenerateNewId();
 
         // 先插入一条只有 Text 的存量事件
@@ -244,7 +244,7 @@ public class LiveEventSenderBackfillTests(MongoDbFixture fixture) : IClassFixtur
             OccurredAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc),
         });
 
-        var initializer = new MongoDbInitializer(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new LiveMongoSetup(fixture.Database, NullLogger<LiveMongoSetup>.Instance);
         await initializer.BackfillLiveEventSenderAsync();
 
         var record = await textIndexCollection.Find(r => r.EventId == eventId).FirstOrDefaultAsync();

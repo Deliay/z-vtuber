@@ -71,13 +71,13 @@ public class RecordingStatusRepositoryTests(MongoDbFixture fixture) : IClassFixt
     [Fact]
     public async Task EnsureIndexes_IsIdempotent()
     {
-        var initializer = new MongoDbInitializer(fixture.Database, Microsoft.Extensions.Logging.Abstractions.NullLogger<MongoDbInitializer>.Instance);
+        var initializer = new RecordingMongoSetup(fixture.Database, Microsoft.Extensions.Logging.Abstractions.NullLogger<RecordingMongoSetup>.Instance);
 
         await initializer.EnsureIndexesAsync();
         await initializer.EnsureIndexesAsync();
 
         var indexes = await fixture.Database
-            .GetCollection<RecordingStatusRecord>(MongoCollectionNames.RecordingStatus)
+            .GetCollection<RecordingStatusRecord>(RecordingCollectionNames.RecordingStatus)
             .Indexes.ListAsync();
         var list = await indexes.ToListAsync();
         Assert.Contains(list, i => i["name"].AsString == "RoomId_1");

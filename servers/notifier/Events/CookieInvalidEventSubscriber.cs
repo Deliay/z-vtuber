@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using StackExchange.Redis;
-using Z.Vtuber.Common.Live;
 using Z.Vtuber.Notifier.Dispatch;
 
 namespace Z.Vtuber.Notifier.Events;

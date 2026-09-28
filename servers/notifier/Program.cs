@@ -28,7 +28,7 @@ builder.Services.AddOptions<MilkyOptions>()
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
 
-builder.Services.AddSingleton<MongoDbInitializer>();
+builder.Services.AddSingleton<NotificationMongoSetup>();
 builder.Services.AddSingleton<INotificationSubscriptionRepository, NotificationSubscriptionRepository>();
 // 注册 MilkyHttpClient 和 MilkyApiClient
 builder.Services.AddSingleton<MilkyHttpClient>(sp =>
@@ -51,10 +51,10 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
-    await initializer.EnsureIndexesAsync();
+    var notification = scope.ServiceProvider.GetRequiredService<NotificationMongoSetup>();
+    await notification.EnsureIndexesAsync();
     // 存量 cookie_invalid 订阅迁移为 bilibili_cookie_invalid（幂等）
-    await initializer.MigrateCookieInvalidEventTypeSplitAsync();
+    await notification.MigrateAsync();
 }
 
 app.MapHealthChecks("/health");

@@ -55,7 +55,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
 
     private async Task SeedSubscriptionAsync(SubscriptionType type)
     {
-        var subscriptions = fixture.Database.GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+        var subscriptions = fixture.Database.GetCollection<SubscriptionRecord>(LiveCollectionNames.Subscriptions);
         await subscriptions.InsertOneAsync(new SubscriptionRecord
         {
             Mid = Mid,
@@ -66,7 +66,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
 
     private async Task SeedAccountAsync(long roomId)
     {
-        var accounts = fixture.Database.GetCollection<AccountBasicInfoRecord>(MongoCollectionNames.AccountBasicInfo);
+        var accounts = fixture.Database.GetCollection<AccountBasicInfoRecord>(LiveCollectionNames.AccountBasicInfo);
         await accounts.InsertOneAsync(new AccountBasicInfoRecord
         {
             Mid = Mid,
@@ -150,7 +150,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
 
         await job.RunOnceAsync(CancellationToken.None);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
         Assert.NotNull(stored);
         Assert.Equal("2026-08-31", stored.Date);
@@ -456,7 +456,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
 
         await job.RunOnceAsync(CancellationToken.None);
 
-        var guards = fixture.Database.GetCollection<LiveGuardRecord>(MongoCollectionNames.LiveGuards);
+        var guards = fixture.Database.GetCollection<LiveGuardRecord>(LiveCollectionNames.LiveGuards);
         var stored = await guards.Find(r => r.Mid == Mid).FirstOrDefaultAsync();
         Assert.NotNull(stored);
         Assert.Empty(stored.Guards);
