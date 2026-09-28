@@ -15,7 +15,7 @@ graph LR
     Crawler[servers/crawler Z.Vtuber.Crawler] --> M[(MongoDB)]
     Crawler --> BILI[B站接口/弹幕长连接]
     Crawler -->|PUBLISH live-event:{roomId}| R[(Redis pub/sub)]
-    Common[servers/common Z.Vtuber.Common] -.被引用.-> Crawler
+    Common[servers/common Core+Live+Weibo] -.被引用.-> Crawler
 ```
 
 ## 模块结构

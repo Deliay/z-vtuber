@@ -506,7 +506,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
     private async Task<ObjectId> SeedLegacyModelDocAsync(string name)
     {
         var id = ObjectId.GenerateNewId();
-        var collection = mongo.Database.GetCollection<BsonDocument>(MongoCollectionNames.TranscriptModels);
+        var collection = mongo.Database.GetCollection<BsonDocument>(TranscriptCollectionNames.TranscriptModels);
         await collection.InsertOneAsync(new BsonDocument
         {
             { "_id", id },

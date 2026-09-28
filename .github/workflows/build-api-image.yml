@@ -8,7 +8,11 @@ on:
       - 'release/**'
     paths:
       - 'servers/api/**'
-      - 'servers/common/**'
+      - 'servers/common/core/**'
+      - 'servers/common/live/**'
+      - 'servers/common/cookie/**'
+      - 'servers/common/weibo/**'
+      - 'servers/common/recording/**'
 
 jobs:
   build:

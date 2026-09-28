@@ -25,7 +25,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\servers\api\Z.Vtuber.csproj" />
-    <ProjectReference Include="..\..\servers\common\Z.Vtuber.Common.csproj" />
+    <ProjectReference Include="..\..\servers\common\core\Z.Vtuber.Common.Core.csproj" />
+    <ProjectReference Include="..\..\servers\common\live\Z.Vtuber.Common.Live.csproj" />
+    <ProjectReference Include="..\..\servers\common\cookie\Z.Vtuber.Common.Cookie.csproj" />
+    <ProjectReference Include="..\..\servers\common\weibo\Z.Vtuber.Common.Weibo.csproj" />
+    <ProjectReference Include="..\..\servers\common\recording\Z.Vtuber.Common.Recording.csproj" />
+    <ProjectReference Include="..\..\servers\common\transcript\Z.Vtuber.Common.Transcript.csproj" />
+    <ProjectReference Include="..\..\servers\common\training\Z.Vtuber.Common.Training.csproj" />
+    <ProjectReference Include="..\..\servers\common\notification\Z.Vtuber.Common.Notification.csproj" />
     <ProjectReference Include="..\..\servers\crawler\Z.Vtuber.Crawler.csproj" />
     <ProjectReference Include="..\..\servers\notifier\Z.Vtuber.Notifier.csproj" />
     <ProjectReference Include="..\..\servers\cookie\Z.Vtuber.Cookie.csproj" />
@@ -33,6 +40,10 @@
     <ProjectReference Include="..\..\servers\recording-transcript-api\Z.Vtuber.RecordingTranscript.Api.csproj" />
     <ProjectReference Include="..\..\servers\recording-transcript-consumer\Z.Vtuber.RecordingTranscript.Consumer.csproj" />
     <ProjectReference Include="..\..\servers\training\Z.Vtuber.Training.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Z.Vtuber.Common.Contracts" />
   </ItemGroup>
 
 </Project>

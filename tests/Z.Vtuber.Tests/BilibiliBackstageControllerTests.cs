@@ -43,11 +43,11 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
     {
         const long mid = 1150976664;
         var subscriptions = fixture.Database
-            .GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+            .GetCollection<SubscriptionRecord>(LiveCollectionNames.Subscriptions);
         await subscriptions.InsertOneAsync(Subscription(mid, SubscriptionType.Danmaku));
 
         var accountInfo = fixture.Database
-            .GetCollection<AccountBasicInfoRecord>(MongoCollectionNames.AccountBasicInfo);
+            .GetCollection<AccountBasicInfoRecord>(LiveCollectionNames.AccountBasicInfo);
         await accountInfo.InsertOneAsync(new AccountBasicInfoRecord
         {
             Mid = mid,
@@ -68,12 +68,12 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
     {
         const long mid = 1150976664;
         var subscriptions = fixture.Database
-            .GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+            .GetCollection<SubscriptionRecord>(LiveCollectionNames.Subscriptions);
         await subscriptions.InsertOneAsync(Subscription(mid, SubscriptionType.Danmaku));
         await subscriptions.InsertOneAsync(Subscription(mid, SubscriptionType.Dynamic));
 
         var accountInfo = fixture.Database
-            .GetCollection<AccountBasicInfoRecord>(MongoCollectionNames.AccountBasicInfo);
+            .GetCollection<AccountBasicInfoRecord>(LiveCollectionNames.AccountBasicInfo);
         await accountInfo.InsertOneAsync(new AccountBasicInfoRecord
         {
             Mid = mid,
@@ -94,7 +94,7 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
     {
         const long mid = 1150976664;
         var subscriptions = fixture.Database
-            .GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+            .GetCollection<SubscriptionRecord>(LiveCollectionNames.Subscriptions);
         await subscriptions.InsertOneAsync(Subscription(mid, SubscriptionType.Danmaku));
 
         var json = Ok(await CreateController(fixture.Database).ListSubscriptions(CancellationToken.None));
@@ -108,11 +108,11 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
     {
         const long mid = 1150976664;
         var subscriptions = fixture.Database
-            .GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+            .GetCollection<SubscriptionRecord>(LiveCollectionNames.Subscriptions);
         await subscriptions.InsertOneAsync(Subscription(mid, SubscriptionType.Danmaku));
 
         var accountInfo = fixture.Database
-            .GetCollection<AccountBasicInfoRecord>(MongoCollectionNames.AccountBasicInfo);
+            .GetCollection<AccountBasicInfoRecord>(LiveCollectionNames.AccountBasicInfo);
         await accountInfo.InsertOneAsync(new AccountBasicInfoRecord
         {
             Mid = mid,
@@ -132,12 +132,12 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
     public async Task Subscription_InvalidJsonData_DoesNotBreakOtherRows()
     {
         var subscriptions = fixture.Database
-            .GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+            .GetCollection<SubscriptionRecord>(LiveCollectionNames.Subscriptions);
         await subscriptions.InsertOneAsync(Subscription(111, SubscriptionType.Danmaku));
         await subscriptions.InsertOneAsync(Subscription(222, SubscriptionType.Danmaku));
 
         var accountInfo = fixture.Database
-            .GetCollection<AccountBasicInfoRecord>(MongoCollectionNames.AccountBasicInfo);
+            .GetCollection<AccountBasicInfoRecord>(LiveCollectionNames.AccountBasicInfo);
         await accountInfo.InsertOneAsync(new AccountBasicInfoRecord
         {
             Mid = 111,
@@ -168,7 +168,7 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
         // /api/b/backstage/subscription 服务不可用；Guard=2 合入后须正常返回。
         const long mid = 1150976664;
         var subscriptions = fixture.Database
-            .GetCollection<SubscriptionRecord>(MongoCollectionNames.Subscriptions);
+            .GetCollection<SubscriptionRecord>(LiveCollectionNames.Subscriptions);
         await subscriptions.InsertOneAsync(Subscription(mid, SubscriptionType.Guard));
 
         var json = Ok(await CreateController(fixture.Database).ListSubscriptions(CancellationToken.None));
@@ -182,7 +182,7 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
     public async Task Cookie_WithAccountInfo_ReturnsAccountNameWithoutCookiePlaintext()
     {
         var cookies = fixture.Database
-            .GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
+            .GetCollection<CookieRecord>(CookieCollectionNames.Cookies);
         var record = new CookieRecord
         {
             Cookie = "SECRET-COOKIE",
@@ -191,7 +191,7 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
         await cookies.InsertOneAsync(record);
 
         var accountInfo = fixture.Database
-            .GetCollection<CookieAccountInfoRecord>(MongoCollectionNames.CookieAccountInfo);
+            .GetCollection<CookieAccountInfoRecord>(CookieCollectionNames.CookieAccountInfo);
         await accountInfo.InsertOneAsync(new CookieAccountInfoRecord
         {
             CookieId = record.Id,
@@ -213,7 +213,7 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
     public async Task Cookie_WithoutAccountInfo_AccountIsNull()
     {
         var cookies = fixture.Database
-            .GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
+            .GetCollection<CookieRecord>(CookieCollectionNames.Cookies);
         await cookies.InsertOneAsync(new CookieRecord
         {
             Cookie = "some-cookie",
@@ -230,14 +230,14 @@ public class BilibiliBackstageControllerTests(MongoDbFixture fixture) : IClassFi
     public async Task Cookie_MultipleCookies_EachAccountJoined()
     {
         var cookies = fixture.Database
-            .GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
+            .GetCollection<CookieRecord>(CookieCollectionNames.Cookies);
         var cookieA = new CookieRecord { Cookie = "cookie-a", Status = CookieStatus.Active };
         var cookieB = new CookieRecord { Cookie = "cookie-b", Status = CookieStatus.Active };
         await cookies.InsertOneAsync(cookieA);
         await cookies.InsertOneAsync(cookieB);
 
         var accountInfo = fixture.Database
-            .GetCollection<CookieAccountInfoRecord>(MongoCollectionNames.CookieAccountInfo);
+            .GetCollection<CookieAccountInfoRecord>(CookieCollectionNames.CookieAccountInfo);
         await accountInfo.InsertOneAsync(new CookieAccountInfoRecord
         {
             CookieId = cookieA.Id,

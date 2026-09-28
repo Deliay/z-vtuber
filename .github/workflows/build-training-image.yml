@@ -8,7 +8,9 @@ on:
       - 'release/**'
     paths:
       - 'servers/training/**'
-      - 'servers/common/**'
+      - 'servers/common/core/**'
+      - 'servers/common/training/**'
+      - 'servers/common/transcript/**'
       - '.github/workflows/build-training-image.yml'
 
 jobs:

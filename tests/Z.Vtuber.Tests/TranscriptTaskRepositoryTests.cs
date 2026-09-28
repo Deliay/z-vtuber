@@ -207,7 +207,7 @@ public class TranscriptTaskRepositoryTests(MongoDbFixture fixture) : IClassFixtu
     {
         // 存量文档缺 OffsetMs 字段：无迁移，反序列化默认 0
         var collection = fixture.Database
-            .GetCollection<MongoDB.Bson.BsonDocument>(MongoCollectionNames.TranscriptTasks);
+            .GetCollection<MongoDB.Bson.BsonDocument>(TranscriptCollectionNames.TranscriptTasks);
         var id = ObjectId.GenerateNewId();
         var now = DateTime.UtcNow;
         await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument
@@ -240,7 +240,7 @@ public class TranscriptTaskRepositoryTests(MongoDbFixture fixture) : IClassFixtu
         // BsonClassMapSerializer 默认对未映射元素抛 FormatException；[BsonIgnoreExtraElements] 使其跳过
         // 该类元素（与 TranscriptModelRecord.IsDefault 同类故障修复同模式）。
         var collection = fixture.Database
-            .GetCollection<MongoDB.Bson.BsonDocument>(MongoCollectionNames.TranscriptTasks);
+            .GetCollection<MongoDB.Bson.BsonDocument>(TranscriptCollectionNames.TranscriptTasks);
         var id = ObjectId.GenerateNewId();
         var now = DateTime.UtcNow;
         await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument

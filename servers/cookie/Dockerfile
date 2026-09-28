@@ -1,7 +1,8 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY servers/common/Z.Vtuber.Common.csproj servers/common/
+COPY servers/common/core/Z.Vtuber.Common.Core.csproj servers/common/core/
+COPY servers/common/cookie/Z.Vtuber.Common.Cookie.csproj servers/common/cookie/
 COPY servers/cookie/Z.Vtuber.Cookie.csproj servers/cookie/
 RUN dotnet restore servers/cookie/Z.Vtuber.Cookie.csproj
 

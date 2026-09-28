@@ -21,7 +21,7 @@ graph LR
     CONS -->|"实时任务: ffmpeg 拉 /api/{roomId}/stream/audio"| REC
     CONS -->|"离线任务: ffmpeg -ss 拉录播文件"| REC
     CONS -->|websocket| ASR[阿里云 FunASR]
-    Common[servers/common Z.Vtuber.Common] -.被引用.-> CONS
+    Common[servers/common Core+Live+Recording+Transcript] -.被引用.-> CONS
 ```
 
 ## 模块结构

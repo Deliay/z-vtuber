@@ -15,7 +15,7 @@ graph LR
     Web[apps/web] --> API[servers/api Z.Vtuber]
     API --> M[(MongoDB)]
     R[(Redis pub/sub)] -->|按需订阅 live-event:{roomId}| API
-    Common[servers/common Z.Vtuber.Common] -.被引用.-> API
+    Common[servers/common Core+Live+Cookie+Weibo+Recording] -.被引用.-> API
 ```
 
 ## 模块结构
@@ -28,7 +28,7 @@ graph LR
 
 ## 共享依赖（servers/common）
 
-实体、仓储、共享领域服务（`CookiePoolService`、`SubscriptionService`、`LiveSessionTracker`、`LiveStatusStateMachine`、`PubTsExtractor`、`SpaceTimelinePaging`、`WeiboSubscriptionService`）、共享模型 `LiveEvent`、`LiveGuardRepository`、`MongoDbInitializer`、`BsonConvert`、backstage 聚合扩展均位于 `servers/common`（`Z.Vtuber.Common`），本服务与 crawler 共同引用单份实现。
+实体、仓储与共享服务按领域归入 `servers/common/{core,live,cookie,weibo,recording}`：直播实体/仓储/共享服务（`SubscriptionService`、`LiveSessionTracker`、`LiveStatusStateMachine`、`PubTsExtractor`、`SpaceTimelinePaging`、`LiveEvent`、`LiveGuardRepository`）在 `Z.Vtuber.Common.Live`，Cookie 池与 backstage 聚合扩展在 `Z.Vtuber.Common.Cookie`，微博在 `Z.Vtuber.Common.Weibo`，录播状态在 `Z.Vtuber.Common.Recording`；Mongo 基座 `MongoDbInitializer` 与 `BsonConvert`、跨服务契约在 `Z.Vtuber.Common.Core`。本服务按引用矩阵只引用 `Core+Live+Cookie+Weibo+Recording`。
 
 ## 开发流程
 

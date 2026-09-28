@@ -26,7 +26,7 @@ public sealed class RecordingBackfillMigration(
     private readonly LiveStatusRepository _statuses = new(database);
     private readonly AccountBasicInfoRepository _accounts = new(database);
     private readonly IMongoCollection<MetaRecord> _meta =
-        database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
 
     public async Task RunAsync(CancellationToken ct = default)
     {

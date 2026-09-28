@@ -20,7 +20,7 @@ graph LR
     REC -->|checkout cookie| COOKIE[servers/cookie]
     REC -->|拉流| BILI[B站直播CDN]
     REC -->|ffmpeg 多输出| FS[(录播存储卷)]
-    Common[servers/common Z.Vtuber.Common] -.被引用.-> REC
+    Common[servers/common Core+Live+Recording] -.被引用.-> REC
 ```
 
 ## 模块结构

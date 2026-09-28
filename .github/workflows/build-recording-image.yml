@@ -8,7 +8,9 @@ on:
       - 'release/**'
     paths:
       - 'servers/recording/**'
-      - 'servers/common/**'
+      - 'servers/common/core/**'
+      - 'servers/common/live/**'
+      - 'servers/common/recording/**'
 
 jobs:
   build:
