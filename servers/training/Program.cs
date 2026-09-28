@@ -23,7 +23,8 @@ builder.Services.AddHttpClient<ITranscriptApiClient, TranscriptApiClient>(
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
 
-builder.Services.AddSingleton<MongoDbInitializer>();
+builder.Services.AddSingleton<TrainingMongoSetup>();
+    builder.Services.AddSingleton<TranscriptMongoSetup>();
 builder.Services.AddSingleton<TrainingDatasetRepository>();
 builder.Services.AddSingleton<TrainingDatasetItemRepository>();
 
@@ -33,8 +34,10 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
-    await initializer.EnsureIndexesAsync();
+    var training = scope.ServiceProvider.GetRequiredService<TrainingMongoSetup>();
+    var transcript = scope.ServiceProvider.GetRequiredService<TranscriptMongoSetup>();
+    await training.EnsureIndexesAsync();
+    await transcript.EnsureIndexesAsync();
 }
 
 app.MapHealthChecks("/health");

@@ -13,7 +13,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
     [Fact]
     public async Task Read_DocumentTypePayload_ReturnsDocument()
     {
-        var collection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var docPayload = new BsonDocument { { "key", "value" }, { "num", 42 } };
         await collection.InsertOneAsync(new LiveEventRecord
         {
@@ -33,7 +33,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
     [Fact]
     public async Task Read_StringTypePayload_ValidJson_ReturnsParsedDocument()
     {
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
 
         // Insert with string Payload directly (simulating old data)
         var rawDoc = new BsonDocument
@@ -48,7 +48,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
         await collection.InsertOneAsync(rawDoc);
 
         // Read through entity (tolerant serializer invoked)
-        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await entityCollection.Find(FilterDefinition<LiveEventRecord>.Empty).SingleAsync();
 
         Assert.Equal(BsonType.Document, record.Payload.BsonType);
@@ -59,7 +59,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
     [Fact]
     public async Task Read_StringTypePayload_InvalidJson_WrapsInRaw()
     {
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         var rawDoc = new BsonDocument
         {
             { "_id", ObjectId.GenerateNewId() },
@@ -71,7 +71,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
         };
         await collection.InsertOneAsync(rawDoc);
 
-        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await entityCollection.Find(FilterDefinition<LiveEventRecord>.Empty).SingleAsync();
 
         Assert.Equal(BsonType.Document, record.Payload.BsonType);
@@ -82,7 +82,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
     [Fact]
     public async Task Read_NullPayload_ReturnsEmptyDocument()
     {
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         var rawDoc = new BsonDocument
         {
             { "_id", ObjectId.GenerateNewId() },
@@ -94,7 +94,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
         };
         await collection.InsertOneAsync(rawDoc);
 
-        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await entityCollection.Find(FilterDefinition<LiveEventRecord>.Empty).SingleAsync();
 
         Assert.Equal(BsonType.Document, record.Payload.BsonType);
@@ -104,7 +104,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
     [Fact]
     public async Task Read_NonObjectJsonString_WrapsInRaw()
     {
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         var rawDoc = new BsonDocument
         {
             { "_id", ObjectId.GenerateNewId() },
@@ -116,7 +116,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
         };
         await collection.InsertOneAsync(rawDoc);
 
-        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await entityCollection.Find(FilterDefinition<LiveEventRecord>.Empty).SingleAsync();
 
         Assert.Equal(BsonType.Document, record.Payload.BsonType);
@@ -127,7 +127,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
     [Fact]
     public async Task Read_EmptyJsonObjectString_ReturnsEmptyDocument()
     {
-        var collection = fixture.Database.GetCollection<BsonDocument>(MongoCollectionNames.LiveEvent);
+        var collection = fixture.Database.GetCollection<BsonDocument>(LiveCollectionNames.LiveEvent);
         var rawDoc = new BsonDocument
         {
             { "_id", ObjectId.GenerateNewId() },
@@ -139,7 +139,7 @@ public class StringTolerantBsonDocumentSerializerTests(MongoDbFixture fixture) :
         };
         await collection.InsertOneAsync(rawDoc);
 
-        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(MongoCollectionNames.LiveEvent);
+        var entityCollection = fixture.Database.GetCollection<LiveEventRecord>(LiveCollectionNames.LiveEvent);
         var record = await entityCollection.Find(FilterDefinition<LiveEventRecord>.Empty).SingleAsync();
 
         Assert.Equal(BsonType.Document, record.Payload.BsonType);

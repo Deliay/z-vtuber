@@ -36,7 +36,7 @@ public class LiveGuardTop3BackfillService
         _guardRepository = guardRepository;
         _cookieServiceClient = cookieServiceClient;
         _accountInfoCrawler = accountInfoCrawler;
-        _metaCollection = database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
+        _metaCollection = database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
         _fetcher = fetcher;
         _timeProvider = timeProvider;
         _logger = logger;

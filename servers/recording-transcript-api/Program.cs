@@ -41,7 +41,9 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     return ConnectionMultiplexer.Connect(connectionString);
 });
 
-builder.Services.AddSingleton<MongoDbInitializer>();
+builder.Services.AddSingleton<RecordingMongoSetup>();
+    builder.Services.AddSingleton<TranscriptMongoSetup>();
+    builder.Services.AddSingleton<LiveMongoSetup>();
 builder.Services.AddSingleton<AccountBasicInfoRepository>();
 builder.Services.AddSingleton<RecordingRepository>();
 builder.Services.AddSingleton<TranscriptTaskRepository>();
@@ -56,9 +58,13 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var initializer = scope.ServiceProvider.GetRequiredService<MongoDbInitializer>();
-    await initializer.EnsureIndexesAsync();
-    await initializer.CleanupTranscriptModelIsDefaultAsync();
+    var recording = scope.ServiceProvider.GetRequiredService<RecordingMongoSetup>();
+    var transcript = scope.ServiceProvider.GetRequiredService<TranscriptMongoSetup>();
+    var live = scope.ServiceProvider.GetRequiredService<LiveMongoSetup>();
+    await recording.EnsureIndexesAsync();
+    await transcript.EnsureIndexesAsync();
+    await live.EnsureIndexesAsync();
+    await transcript.CleanupAsync();
 }
 
 app.MapHealthChecks("/health");

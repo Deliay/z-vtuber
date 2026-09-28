@@ -12,10 +12,10 @@ public class CookieInvalidEventTypeSplitMigrationTests(MongoDbFixture fixture) :
     public Task DisposeAsync() => Task.CompletedTask;
 
     private IMongoCollection<NotificationSubscriptionRecord> Collection =>
-        fixture.Database.GetCollection<NotificationSubscriptionRecord>(MongoCollectionNames.NotificationSubscriptions);
+        fixture.Database.GetCollection<NotificationSubscriptionRecord>(NotificationCollectionNames.NotificationSubscriptions);
 
-    private MongoDbInitializer CreateInitializer() =>
-        new(fixture.Database, NullLogger<MongoDbInitializer>.Instance);
+    private NotificationMongoSetup CreateInitializer() =>
+        new(fixture.Database, NullLogger<NotificationMongoSetup>.Instance);
 
     private async Task InsertAsync(string eventType, string groupId = "123456")
         => await Collection.InsertOneAsync(new NotificationSubscriptionRecord
@@ -72,8 +72,8 @@ public class CookieInvalidEventTypeSplitMigrationTests(MongoDbFixture fixture) :
     [Fact]
     public async Task Migrate_MarkerExistsButLegacyRecordsRemain_StillMigrates()
     {
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        await meta.InsertOneAsync(new MetaRecord { Key = MongoDbInitializer.CookieInvalidEventTypeSplitMigrationKey });
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
+        await meta.InsertOneAsync(new MetaRecord { Key = NotificationMongoSetup.CookieInvalidEventTypeSplitMigrationKey });
         await InsertAsync("cookie_invalid", "1");
 
         await CreateInitializer().MigrateCookieInvalidEventTypeSplitAsync();
@@ -91,8 +91,8 @@ public class CookieInvalidEventTypeSplitMigrationTests(MongoDbFixture fixture) :
 
         await CreateInitializer().MigrateCookieInvalidEventTypeSplitAsync();
 
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        var markerExists = await meta.Find(r => r.Key == MongoDbInitializer.CookieInvalidEventTypeSplitMigrationKey).AnyAsync();
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == NotificationMongoSetup.CookieInvalidEventTypeSplitMigrationKey).AnyAsync();
         Assert.True(markerExists);
     }
 
@@ -101,8 +101,8 @@ public class CookieInvalidEventTypeSplitMigrationTests(MongoDbFixture fixture) :
     {
         await CreateInitializer().MigrateCookieInvalidEventTypeSplitAsync();
 
-        var meta = fixture.Database.GetCollection<MetaRecord>(MongoCollectionNames.Meta);
-        var markerExists = await meta.Find(r => r.Key == MongoDbInitializer.CookieInvalidEventTypeSplitMigrationKey).AnyAsync();
+        var meta = fixture.Database.GetCollection<MetaRecord>(CoreCollectionNames.Meta);
+        var markerExists = await meta.Find(r => r.Key == NotificationMongoSetup.CookieInvalidEventTypeSplitMigrationKey).AnyAsync();
         Assert.True(markerExists);
     }
 

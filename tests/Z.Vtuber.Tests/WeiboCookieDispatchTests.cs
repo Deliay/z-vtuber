@@ -21,13 +21,13 @@ public class WeiboCookieDispatchTests(MongoDbFixture db) : IClassFixture<MongoDb
     public Task DisposeAsync() => Task.CompletedTask;
 
     private IMongoCollection<CookieRecord> WeiboCollection =>
-        db.Database.GetCollection<CookieRecord>(MongoCollectionNames.WeiboCookies);
+        db.Database.GetCollection<CookieRecord>(CookieCollectionNames.WeiboCookies);
 
     private IMongoCollection<CookieRecord> BilibiliCollection =>
-        db.Database.GetCollection<CookieRecord>(MongoCollectionNames.Cookies);
+        db.Database.GetCollection<CookieRecord>(CookieCollectionNames.Cookies);
 
     private CookieDispatchService CreateService() => new(
-        db.Database, MongoCollectionNames.WeiboCookies, MongoCollectionNames.WeiboCookieSessions);
+        db.Database, CookieCollectionNames.WeiboCookies, CookieCollectionNames.WeiboCookieSessions);
 
     private WeiboCookieDispatchController CreateController(CookieDispatchService dispatch) => new(
         dispatch,
@@ -160,8 +160,8 @@ public class WeiboCookieDispatchTests(MongoDbFixture db) : IClassFixture<MongoDb
     public async Task DeleteAccount_OfflinesLinkedCookie_SoItCannotBeCheckedOut()
     {
         var cookie = await InsertWeiboCookieAsync();
-        var sessionRepo = new CookieSessionRepository(db.Database, MongoCollectionNames.WeiboCookieSessions);
-        var pool = new CookiePoolService(db.Database, MongoCollectionNames.WeiboCookies);
+        var sessionRepo = new CookieSessionRepository(db.Database, CookieCollectionNames.WeiboCookieSessions);
+        var pool = new CookiePoolService(db.Database, CookieCollectionNames.WeiboCookies);
         var session = new CookieSessionRecord
         {
             Status = "active",
