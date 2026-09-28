@@ -14,6 +14,9 @@ vi.mock('../../api/client', async (importOriginal) => {
     listTrainingDatasetItems: vi.fn(),
     listTranscriptTasks: vi.fn(),
     importTrainingDatasetItems: vi.fn(),
+    listTrainingProviders: vi.fn(),
+    listTrainingModels: vi.fn(),
+    listEmotionTasks: vi.fn(),
   }
 })
 
@@ -23,6 +26,9 @@ const mockRenameDataset = vi.mocked(client.renameTrainingDataset)
 const mockDeleteDataset = vi.mocked(client.deleteTrainingDataset)
 const mockListItems = vi.mocked(client.listTrainingDatasetItems)
 const mockListTasks = vi.mocked(client.listTranscriptTasks)
+const mockListProviders = vi.mocked(client.listTrainingProviders)
+const mockListModels = vi.mocked(client.listTrainingModels)
+const mockListEmotionTasks = vi.mocked(client.listEmotionTasks)
 
 type Dataset = Awaited<ReturnType<typeof client.listTrainingDatasets>>[number]
 
@@ -51,18 +57,50 @@ describe('DatasetsPage', () => {
     mockRenameDataset.mockResolvedValue({ ...datasetA, name: '歌回语料·修订' })
     mockDeleteDataset.mockResolvedValue(undefined)
     mockListTasks.mockResolvedValue([])
+    mockListProviders.mockResolvedValue([])
+    mockListModels.mockResolvedValue([])
+    mockListEmotionTasks.mockResolvedValue({
+      items: [],
+      counts: { pending: 0, running: 0, done: 0, failed: 0 },
+    })
   })
 
-  it('should render a multi tab container with only the 音频数据集 tab', async () => {
+  it('should render the 音频数据集 and 模型设置 tabs side by side', async () => {
     render(<DatasetsPage />)
 
     expect(screen.getByRole('tablist')).toBeInTheDocument()
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(1)
+    expect(tabs).toHaveLength(2)
     expect(tabs[0]).toHaveTextContent('音频数据集')
+    expect(tabs[1]).toHaveTextContent('模型设置')
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true')
+    expect(tabs[1]).toHaveAttribute('aria-selected', 'false')
 
     await screen.findByLabelText('数据集')
+  })
+
+  it('should switch to 模型设置 and hide the dataset block, then switch back', async () => {
+    render(<DatasetsPage />)
+    await screen.findByLabelText('数据集')
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型设置' }))
+
+    expect(screen.getByRole('tab', { name: '模型设置' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(await screen.findByText('请先添加 Provider 并获取/添加模型')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Providers' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Models' })).toBeInTheDocument()
+    // 模型设置 Tab 不渲染数据集选择器/导入入口/条目列表
+    expect(screen.queryByLabelText('数据集')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '从 Transcript 导入' }),
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '音频数据集' }))
+    expect(await screen.findByLabelText('数据集')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '从 Transcript 导入' })).toBeInTheDocument()
   })
 
   it('should list the datasets in the dropdown and switch the selection', async () => {

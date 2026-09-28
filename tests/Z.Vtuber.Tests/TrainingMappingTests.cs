@@ -229,4 +229,135 @@ public class TrainingMappingTests
         Assert.Equal(JsonValueKind.Object, extensions.ValueKind);
         Assert.Equal("happy", extensions.GetProperty("emotion").GetProperty("label").GetString());
     }
+
+    // ---- 数据集工具优化（Plan 1.4）：ParseAudioUri / BuildModelSlug / 情绪 Bson 映射 ----
+
+    [Theory]
+    [InlineData("b/live/100/recordings/a.flv", 100L, "a.flv")]
+    [InlineData("b/live/300/recordings/nested.flv", 300L, "nested.flv")]
+    [InlineData("b/live/1/recordings/%E6%88%BF%E9%97%B4.flv", 1L, "%E6%88%BF%E9%97%B4.flv")]
+    public void ParseAudioUri_ValidUri_ReturnsRoomAndFile(string uri, long roomId, string file)
+    {
+        var parsed = TrainingMapping.ParseAudioUri(uri);
+
+        Assert.NotNull(parsed);
+        Assert.Equal(roomId, parsed!.RoomId);
+        Assert.Equal(file, parsed.File);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("x/live/100/recordings/a.flv")]
+    [InlineData("b/live/abc/recordings/a.flv")]
+    [InlineData("b/live/100/recordings/")]
+    [InlineData("b/live/100/recordings/a/b.flv")]
+    [InlineData("b/live/100/recordingz/a.flv")]
+    [InlineData("b/live/100")]
+    public void ParseAudioUri_InvalidUri_ReturnsNull(string? uri)
+    {
+        Assert.Null(TrainingMapping.ParseAudioUri(uri));
+    }
+
+    [Fact]
+    public void BuildModelSlug_JoinsProviderAndModel()
+    {
+        Assert.Equal("openai-prod/gpt-4o-audio-preview",
+            TrainingMapping.BuildModelSlug("openai-prod", "gpt-4o-audio-preview"));
+    }
+
+    [Fact]
+    public void ToEmotionDocument_MapsFieldsAndClamps()
+    {
+        var emotion = new EmotionResult(
+            EmotionControlWeight: 12.5,
+            EmotionDescription: "克制的失落",
+            Happy: 1.4, Angry: -0.2, Sad: 0.7, Afraid: 0.05,
+            Disgusted: 0, Melancholic: 0.8, Surprised: 0.1, Calm: 0.4);
+
+        var document = TrainingMapping.ToEmotionDocument(emotion);
+
+        Assert.Equal(10d, document["emotionControlWeight"].AsDouble);
+        Assert.Equal("克制的失落", document["emotionDescription"].AsString);
+        Assert.Equal(1d, document["happy"].AsDouble);
+        Assert.Equal(0d, document["angry"].AsDouble);
+        Assert.Equal(0.7, document["sad"].AsDouble);
+        Assert.Equal(0.4, document["calm"].AsDouble);
+    }
+
+    [Fact]
+    public void FromEmotionDocument_Null_ReturnsNull()
+    {
+        Assert.Null(TrainingMapping.FromEmotionDocument(null));
+    }
+
+    [Fact]
+    public void FromEmotionDocument_MissingOrNonNumericField_ReturnsNull()
+    {
+        var missingField = new BsonDocument
+        {
+            { "emotionControlWeight", 0.5 },
+            { "emotionDescription", "x" },
+            { "happy", 0.1 },
+        };
+        Assert.Null(TrainingMapping.FromEmotionDocument(missingField));
+
+        var nonNumeric = new BsonDocument
+        {
+            { "emotionControlWeight", "high" },
+            { "emotionDescription", "x" },
+            { "happy", 0.1 }, { "angry", 0.1 }, { "sad", 0.1 }, { "afraid", 0.1 },
+            { "disgusted", 0.1 }, { "melancholic", 0.1 }, { "surprised", 0.1 }, { "calm", 0.1 },
+        };
+        Assert.Null(TrainingMapping.FromEmotionDocument(nonNumeric));
+    }
+
+    [Fact]
+    public void EmotionDocument_RoundTripsAndClamps()
+    {
+        var original = new EmotionResult(0.6, "描述", 0.05, 0, 0.7, 0.05, 0, 0.8, 0.1, 0.4);
+
+        var roundTripped = TrainingMapping.FromEmotionDocument(
+            TrainingMapping.ToEmotionDocument(original));
+
+        Assert.NotNull(roundTripped);
+        Assert.Equal(original, roundTripped);
+
+        var outOfRange = TrainingMapping.FromEmotionDocument(new BsonDocument
+        {
+            { "emotionControlWeight", 11.0 },
+            { "emotionDescription", "越界" },
+            { "happy", 1.5 }, { "angry", -1.0 }, { "sad", 0.5 }, { "afraid", 0.5 },
+            { "disgusted", 0.5 }, { "melancholic", 0.5 }, { "surprised", 0.5 }, { "calm", 0.5 },
+        });
+
+        Assert.NotNull(outOfRange);
+        Assert.Equal(10d, outOfRange!.EmotionControlWeight);
+        Assert.Equal(1d, outOfRange.Happy);
+        Assert.Equal(0d, outOfRange.Angry);
+    }
+
+    [Fact]
+    public void ToItemDto_WithFullEmotionExtension_MapsEmotion()
+    {
+        var record = new TrainingDatasetItemRecord
+        {
+            DatasetId = ObjectId.GenerateNewId(),
+            AudioType = "transcript",
+            Source = TaskId,
+            AudioKey = $"transcript:{TaskId}:0",
+            Extensions = new BsonDocument(
+                "emotion",
+                TrainingMapping.ToEmotionDocument(new EmotionResult(0.6, "描述", 0.05, 0, 0.7, 0.05, 0, 0.8, 0.1, 0.4))),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+
+        var dto = TrainingMapping.ToItemDto(record);
+
+        Assert.NotNull(dto.Emotion);
+        Assert.Equal(0.7, dto.Emotion!.Sad);
+        Assert.Equal("描述", dto.Emotion.EmotionDescription);
+    }
 }

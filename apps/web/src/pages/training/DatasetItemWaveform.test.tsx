@@ -228,7 +228,9 @@ describe('DatasetItemWaveform', () => {
 
     render(<DatasetItemList datasetId="d1" waveformLoader={loader} />)
 
-    fireEvent.click(await screen.findByText('transcript:t1:1000'))
+    await screen.findByText('第一句')
+    fireEvent.click(screen.getByLabelText('音频信息'))
+    fireEvent.click(screen.getByText('transcript:t1:1000'))
 
     expect(await screen.findByTestId('waveform-container')).toBeInTheDocument()
     await waitFor(() => {

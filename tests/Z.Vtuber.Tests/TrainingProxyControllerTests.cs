@@ -399,4 +399,264 @@ public class TrainingProxyControllerTests
             """{"error":"training service unavailable"}""",
             JsonSerializer.Serialize(status.Value));
     }
+
+    // ---- 数据集工具优化：14 条新镜像路由的方法 + 上游路径断言 ----
+
+    [Fact]
+    public async Task ListProviders_ForwardsGet()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"items":[]}""") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ListProviders(CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("GET", handler.Methods[0]);
+        Assert.Equal("/api/training/providers", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task CreateProvider_ForwardsPostBodyAndContentType()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.Created, """{"id":"p1","name":"n","apiKeySet":true}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"name":"n","type":"openai","endpoint":"https://x","apiKey":"k"}""");
+
+        var result = await controller.CreateProvider(CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/providers", handler.Requests[0]);
+        Assert.Equal("application/json", handler.ContentTypes[0]);
+        Assert.Contains("apiKey", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task UpdateProvider_ForwardsPutBody()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"id":"p1"}""") };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Put, """{"name":"renamed"}""");
+
+        var result = await controller.UpdateProvider("p1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("PUT", handler.Methods[0]);
+        Assert.Equal("/api/training/providers/p1", handler.Requests[0]);
+        Assert.Equal("application/json", handler.ContentTypes[0]);
+    }
+
+    [Fact]
+    public async Task DeleteProvider_ForwardsDelete()
+    {
+        var handler = new StubHandler { Handler = _ => new HttpResponseMessage(HttpStatusCode.NoContent) };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DeleteProvider("p1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("DELETE", handler.Methods[0]);
+        Assert.Equal("/api/training/providers/p1", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task DiscoverProviderModels_ForwardsGet()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"models":[{"model":"m"}]}""") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DiscoverProviderModels("p1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("GET", handler.Methods[0]);
+        Assert.Equal("/api/training/providers/p1/models/discover", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task ImportProviderModels_ForwardsPostBody()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"imported":1,"skipped":0}""") };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"models":["m"]}""");
+
+        var result = await controller.ImportProviderModels("p1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/providers/p1/models/import", handler.Requests[0]);
+        Assert.Contains("m", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task ListModels_ForwardsGetWithQuery()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"items":[]}""") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.QueryString = new QueryString("?enabled=true");
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ListModels(true, CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("GET", handler.Methods[0]);
+        Assert.Equal("/api/training/models?enabled=true", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task CreateModel_ForwardsPostBody()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.Created, """{"id":"m1"}""") };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"providerId":"p1","model":"gpt"}""");
+
+        var result = await controller.CreateModel(CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/models", handler.Requests[0]);
+        Assert.Contains("gpt", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task UpdateModel_ForwardsPutBody()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"id":"m1"}""") };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Put, """{"enabled":false}""");
+
+        var result = await controller.UpdateModel("m1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("PUT", handler.Methods[0]);
+        Assert.Equal("/api/training/models/m1", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task DeleteModel_ForwardsDelete()
+    {
+        var handler = new StubHandler { Handler = _ => new HttpResponseMessage(HttpStatusCode.NoContent) };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.DeleteModel("m1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("DELETE", handler.Methods[0]);
+        Assert.Equal("/api/training/models/m1", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task RecognizeItem_ForwardsPostBody()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"text":"hi"}""") };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"modelId":"m1"}""");
+
+        var result = await controller.RecognizeItem("ds1", "it1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/datasets/ds1/items/it1/recognize", handler.Requests[0]);
+        Assert.Contains("m1", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task CreateEmotionTasks_ForwardsPostBody()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"created":2,"skipped":0}""") };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"itemIds":["a","b"],"modelId":"m1"}""");
+
+        var result = await controller.CreateEmotionTasks("ds1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/datasets/ds1/items/emotion-tasks", handler.Requests[0]);
+        Assert.Contains("itemIds", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task ListEmotionTasks_ForwardsGetWithQuery()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"items":[],"counts":{}}""") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.QueryString = new QueryString("?datasetId=ds1&status=done&limit=10");
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ListEmotionTasks("ds1", "done", 10, CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("GET", handler.Methods[0]);
+        Assert.Equal("/api/training/emotion-tasks?datasetId=ds1&status=done&limit=10", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task RetryEmotionTask_ForwardsPost()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"id":"t1","status":"pending"}""") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.RetryEmotionTask("t1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/emotion-tasks/t1/retry", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task CreateProvider_Upstream201_Passthrough()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.Created, """{"id":"p1","apiKeySet":true}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"name":"n"}""");
+
+        var result = await controller.CreateProvider(CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status201Created, controller.Response.StatusCode);
+        Assert.Contains("apiKeySet", await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task CreateEmotionTasks_Upstream404_Passthrough()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.NotFound, """{"error":"model not found"}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"itemIds":["a"],"modelId":"m1"}""");
+
+        var result = await controller.CreateEmotionTasks("ds1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status404NotFound, controller.Response.StatusCode);
+        Assert.Contains("model not found", await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task RecognizeItem_Unreachable_Returns502()
+    {
+        var handler = new StubHandler { Handler = _ => throw new HttpRequestException("boom") };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"modelId":"m1"}""");
+
+        var result = await controller.RecognizeItem("ds1", "it1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+        Assert.Equal(
+            """{"error":"training service unavailable"}""",
+            JsonSerializer.Serialize(status.Value));
+    }
 }
