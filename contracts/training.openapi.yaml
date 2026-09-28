@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Training Service API
   version: 1.0.0
-  description: AI 训练模块「音频数据集」服务 API（数据集管理、条目管理、从识别结果导入、条目编辑与批量删除）
+  description: AI 训练模块「数据集工具」服务 API（数据集/条目管理、从识别结果导入、模型设置 Providers/Models、单条重新识别、批量情绪识别任务与队列）
 servers:
   - url: /
 paths:
@@ -243,6 +243,371 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/training/providers:
+    get:
+      summary: 查询 Provider 列表
+      description: CreatedAt 升序；API key 永不回传，仅以 apiKeySet 表示是否已配置。
+      operationId: listTrainingProviders
+      responses:
+        "200":
+          description: Provider 列表（CreatedAt 升序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingProviderList"
+    post:
+      summary: 新建 Provider
+      description: name 全局唯一、type 白名单 openai|claude、endpoint 仅 http/https 且去尾部 `/`；apiKey 写入后不回显。
+      operationId: createTrainingProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingProviderCreateRequest"
+      responses:
+        "201":
+          description: Provider 已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingProvider"
+        "400":
+          description: '{"error": "name is required"/"name too long"/"unsupported provider type"/"endpoint is required"/"invalid endpoint"/"api key is required"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: '{"error": "provider name exists"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/providers/{providerId}:
+    put:
+      summary: 更新 Provider
+      description: 缺失字段不变；apiKey 传空串视为不改；重名 409。
+      operationId: updateTrainingProvider
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingProviderUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingProvider"
+        "400":
+          description: '{"error": "name is required"/"name too long"/"unsupported provider type"/"endpoint is required"/"invalid endpoint"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "provider not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: '{"error": "provider name exists"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: 删除 Provider
+      description: 级联删除其下全部 Models；已入队任务仍保留 modelSlug 快照。
+      operationId: deleteTrainingProvider
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+      responses:
+        "204":
+          description: 已删除（含级联删除其下 Models）
+        "404":
+          description: '{"error": "provider not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/providers/{providerId}/models/discover:
+    get:
+      summary: 从 Endpoint 同步模型列表
+      description: OpenAI-like 调 GET {endpoint}/models、Claude-like 调 GET {endpoint}/v1/models，解析后去重排序返回。
+      operationId: discoverTrainingModels
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+      responses:
+        "200":
+          description: 发现的可导入模型列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingModelDiscoverResult"
+        "404":
+          description: '{"error": "provider not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: '{"error": "provider service unavailable"}（不可达/超时/非 2xx）或 {"error": "invalid provider response"}（响应无法解析）'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/providers/{providerId}/models/import:
+    post:
+      summary: 批量导入模型
+      description: 与 (ProviderId, Model) 唯一索引冲突的计 skipped。
+      operationId: importTrainingModels
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingModelImportRequest"
+      responses:
+        "200":
+          description: 导入完成（imported + skipped = 提交数）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingModelImportResult"
+        "400":
+          description: '{"error": "models is required"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "provider not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/models:
+    get:
+      summary: 查询模型列表
+      description: 每项含服务端拼好的 slug（{providerName}/{model}）。
+      operationId: listTrainingModels
+      parameters:
+        - $ref: "#/components/parameters/TrainingModelEnabledQuery"
+      responses:
+        "200":
+          description: 模型列表（CreatedAt 升序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingModelList"
+    post:
+      summary: 手动添加模型
+      operationId: createTrainingModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingModelCreateRequest"
+      responses:
+        "201":
+          description: 模型已添加
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingModel"
+        "400":
+          description: '{"error": "model is required"/"model too long"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "provider not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: '{"error": "model exists"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/models/{modelId}:
+    put:
+      summary: 更新模型
+      description: 缺失字段不变；改名撞唯一索引 409。
+      operationId: updateTrainingModel
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingModelUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingModel"
+        "400":
+          description: '{"error": "model is required"/"model too long"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "model not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: '{"error": "model exists"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: 删除模型
+      operationId: deleteTrainingModel
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+      responses:
+        "204":
+          description: 已删除
+        "404":
+          description: '{"error": "model not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/items/{itemId}/recognize:
+    post:
+      summary: 单条重新识别
+      description: 服务端取音频转 base64 携识别 prompt 调模型要求 JSON 输出，仅返回文本、不写库（保存由前端走更新条目端点）。
+      operationId: recognizeTrainingDatasetItem
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/ItemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingRecognizeRequest"
+      responses:
+        "200":
+          description: 识别结果（仅文本，不写库）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingRecognizeResult"
+        "400":
+          description: '{"error": "model does not support audio input"/"audio uri is empty"/"audio too large"/"model disabled"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "dataset not found"/"item not found"/"model not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: '{"error": "audio unavailable"/"model service unavailable"/"invalid model output"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/items/emotion-tasks:
+    post:
+      summary: 提交情绪识别任务
+      description: skipped 口径——条目已有 PENDING/RUNNING 任务（重复提交幂等）或条目 text 为空。
+      operationId: createTrainingEmotionTasks
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingEmotionTaskCreateRequest"
+      responses:
+        "200":
+          description: 提交结果（created + skipped = 提交条目数）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingEmotionTaskCreateResult"
+        "400":
+          description: '{"error": "itemIds is required"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "dataset not found"/"model not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/emotion-tasks:
+    get:
+      summary: 查询情绪识别任务队列
+      description: 按 datasetId/status 过滤，CreatedAt 降序，limit 默认 100 最大 500；counts 为各状态分组计数。
+      operationId: listTrainingEmotionTasks
+      parameters:
+        - $ref: "#/components/parameters/EmotionDatasetIdQuery"
+        - $ref: "#/components/parameters/EmotionStatusQuery"
+        - $ref: "#/components/parameters/EmotionLimitQuery"
+      responses:
+        "200":
+          description: 任务列表与状态计数
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingEmotionTaskList"
+  /api/training/emotion-tasks/{taskId}/retry:
+    post:
+      summary: 重试失败任务
+      description: 仅 FAILED → PENDING；attempts 保留、error 清空。
+      operationId: retryTrainingEmotionTask
+      parameters:
+        - $ref: "#/components/parameters/EmotionTaskId"
+      responses:
+        "200":
+          description: 任务已置回 pending
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingEmotionTask"
+        "400":
+          description: '{"error": "task not failed"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "task not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   parameters:
     DatasetId:
@@ -280,6 +645,58 @@ components:
       description: 按音频来源过滤（如某个 transcript 任务 id），支撑「按来源分组」
       schema:
         type: string
+    ProviderId:
+      name: providerId
+      in: path
+      required: true
+      description: Provider id（ObjectId）
+      schema:
+        type: string
+    ModelId:
+      name: modelId
+      in: path
+      required: true
+      description: 模型 id（ObjectId）
+      schema:
+        type: string
+    EmotionTaskId:
+      name: taskId
+      in: path
+      required: true
+      description: 情绪识别任务 id（ObjectId）
+      schema:
+        type: string
+    TrainingModelEnabledQuery:
+      name: enabled
+      in: query
+      required: false
+      description: 按启用状态过滤
+      schema:
+        type: boolean
+    EmotionDatasetIdQuery:
+      name: datasetId
+      in: query
+      required: false
+      description: 按数据集过滤
+      schema:
+        type: string
+    EmotionStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: 按任务状态过滤 pending/running/done/failed
+      schema:
+        type: string
+    EmotionLimitQuery:
+      name: limit
+      in: query
+      required: false
+      description: 返回条数上限，默认 100、最大 500
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
   schemas:
     ErrorResponse:
       type: object
@@ -369,6 +786,11 @@ components:
           nullable: true
           additionalProperties: true
           description: 扩展信息承载（预留：情感识别/二次 ASR 等加工结果按键名挂接）
+        emotion:
+          description: 情绪识别结果（由 Extensions.emotion 映射；缺失/格式不符即 null）
+          oneOf:
+            - $ref: "#/components/schemas/EmotionResult"
+            - type: "null"
         createdAt:
           type: string
           format: date-time
@@ -436,3 +858,273 @@ components:
         deleted:
           type: integer
           description: 实际删除条数（不存在的 id 跳过）
+    TrainingProvider:
+      type: object
+      required: [id, name, type, endpoint, apiKeySet, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: 名称（trim 后非空 ≤ 64，全局唯一）
+        type:
+          type: string
+          description: 模型类型 openai | claude（开放枚举）
+        endpoint:
+          type: string
+          description: 服务地址（http/https，去尾部 /）
+        apiKeySet:
+          type: boolean
+          description: 是否已配置 API key（明文永不回传）
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TrainingProviderList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 按 CreatedAt 升序
+          items:
+            $ref: "#/components/schemas/TrainingProvider"
+    TrainingProviderCreateRequest:
+      type: object
+      required: [name, type, endpoint, apiKey]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        endpoint:
+          type: string
+        apiKey:
+          type: string
+    TrainingProviderUpdateRequest:
+      type: object
+      description: 缺失字段不变；apiKey 传空串视为不改
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        endpoint:
+          type: string
+        apiKey:
+          type: string
+    TrainingModel:
+      type: object
+      required: [id, providerId, providerName, model, slug, enabled, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        providerId:
+          type: string
+        providerName:
+          type: string
+          description: 所属 Provider 名称
+        model:
+          type: string
+          description: 实际发给服务商的模型 ID
+        slug:
+          type: string
+          description: "{providerName}/{model}，服务端拼好供展示"
+        enabled:
+          type: boolean
+          description: 是否启用（默认 true）
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TrainingModelList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrainingModel"
+    TrainingModelCreateRequest:
+      type: object
+      required: [providerId, model]
+      properties:
+        providerId:
+          type: string
+        model:
+          type: string
+    TrainingModelUpdateRequest:
+      type: object
+      description: 缺失字段不变
+      properties:
+        model:
+          type: string
+        enabled:
+          type: boolean
+    TrainingModelDiscoverResult:
+      type: object
+      required: [models]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrainingDiscoveredModel"
+    TrainingDiscoveredModel:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+    TrainingModelImportRequest:
+      type: object
+      required: [models]
+      properties:
+        models:
+          type: array
+          items:
+            type: string
+    TrainingModelImportResult:
+      type: object
+      required: [imported, skipped]
+      properties:
+        imported:
+          type: integer
+        skipped:
+          type: integer
+    EmotionResult:
+      type: object
+      description: 结构化情绪数据（十字段固定结构）
+      required: [emotionControlWeight, emotionDescription, happy, angry, sad, afraid, disgusted, melancholic, surprised, calm]
+      properties:
+        emotionControlWeight:
+          type: number
+          description: 情绪控制权重（0~1）
+        emotionDescription:
+          type: string
+          description: 情绪描述（≤ 200 字）
+        happy:
+          type: number
+          description: 开心（0~1）
+        angry:
+          type: number
+          description: 愤怒（0~1）
+        sad:
+          type: number
+          description: 悲伤（0~1）
+        afraid:
+          type: number
+          description: 恐惧（0~1）
+        disgusted:
+          type: number
+          description: 厌恶（0~1）
+        melancholic:
+          type: number
+          description: 忧郁（0~1）
+        surprised:
+          type: number
+          description: 惊讶（0~1）
+        calm:
+          type: number
+          description: 平静（0~1）
+    TrainingEmotionTask:
+      type: object
+      required: [id, datasetId, itemId, audioKey, modelId, modelSlug, status, attempts, error, emotion, createdAt, startedAt, finishedAt]
+      properties:
+        id:
+          type: string
+        datasetId:
+          type: string
+        itemId:
+          type: string
+        audioKey:
+          type: string
+          description: 条目音频标识快照
+        modelId:
+          type: string
+        modelSlug:
+          type: string
+          description: slug 快照（模型删除后任务仍可读）
+        status:
+          type: string
+          description: pending | running | done | failed
+        attempts:
+          type: integer
+          description: 执行次数（重试累加）
+        error:
+          type: string
+          nullable: true
+          description: 失败原因
+        emotion:
+          description: 识别结果快照（DONE 时写入）
+          oneOf:
+            - $ref: "#/components/schemas/EmotionResult"
+            - type: "null"
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+    TrainingEmotionTaskList:
+      type: object
+      required: [items, counts]
+      properties:
+        items:
+          type: array
+          description: 按 CreatedAt 降序
+          items:
+            $ref: "#/components/schemas/TrainingEmotionTask"
+        counts:
+          $ref: "#/components/schemas/TrainingEmotionTaskCounts"
+    TrainingEmotionTaskCounts:
+      type: object
+      required: [pending, running, done, failed]
+      properties:
+        pending:
+          type: integer
+        running:
+          type: integer
+        done:
+          type: integer
+        failed:
+          type: integer
+    TrainingRecognizeRequest:
+      type: object
+      required: [modelId]
+      properties:
+        modelId:
+          type: string
+    TrainingRecognizeResult:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: 识别出的文本（未写库，保存由前端走更新条目端点）
+    TrainingEmotionTaskCreateRequest:
+      type: object
+      required: [itemIds, modelId]
+      properties:
+        itemIds:
+          type: array
+          items:
+            type: string
+        modelId:
+          type: string
+    TrainingEmotionTaskCreateResult:
+      type: object
+      required: [created, skipped]
+      properties:
+        created:
+          type: integer
+        skipped:
+          type: integer

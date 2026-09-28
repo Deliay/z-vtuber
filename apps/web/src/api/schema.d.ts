@@ -760,6 +760,219 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询 Provider 列表（代理训练服务）
+         * @description 代理 training 服务；CreatedAt 升序；API key 永不回传，仅 apiKeySet。
+         */
+        get: operations["listTrainingProviders"];
+        put?: never;
+        /**
+         * 新建 Provider（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；name 唯一、type 白名单、endpoint 去尾 /。
+         */
+        post: operations["createTrainingProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/providers/{providerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 更新 Provider（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；缺失字段不变、apiKey 空串不改。
+         */
+        put: operations["updateTrainingProvider"];
+        post?: never;
+        /**
+         * 删除 Provider（代理训练服务）
+         * @description 代理 training 服务；级联删除其下 Models。
+         */
+        delete: operations["deleteTrainingProvider"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/providers/{providerId}/models/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 从 Endpoint 同步模型列表（代理训练服务）
+         * @description 代理 training 服务；按 Provider 类型选择模型列表协议并去重排序。
+         */
+        get: operations["discoverTrainingModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/providers/{providerId}/models/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批量导入模型（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；撞唯一索引计 skipped。
+         */
+        post: operations["importTrainingModels"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询模型列表（代理训练服务）
+         * @description 代理 training 服务，query 原样透传；每项含服务端拼好的 slug。
+         */
+        get: operations["listTrainingModels"];
+        put?: never;
+        /**
+         * 手动添加模型（代理训练服务）
+         * @description 代理 training 服务，body 原样透传。
+         */
+        post: operations["createTrainingModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/models/{modelId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 更新模型（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；启停/改名。
+         */
+        put: operations["updateTrainingModel"];
+        post?: never;
+        /** 删除模型（代理训练服务） */
+        delete: operations["deleteTrainingModel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}/items/{itemId}/recognize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 单条重新识别（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；仅返回文本不写库。
+         */
+        post: operations["recognizeTrainingDatasetItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}/items/emotion-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 提交情绪识别任务（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；重复提交/空文本计 skipped。
+         */
+        post: operations["createTrainingEmotionTasks"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/emotion-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询情绪识别任务队列（代理训练服务）
+         * @description 代理 training 服务，query 原样透传；含 items 与 counts。
+         */
+        get: operations["listTrainingEmotionTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/emotion-tasks/{taskId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重试失败任务（代理训练服务）
+         * @description 代理 training 服务；仅 FAILED → PENDING。
+         */
+        post: operations["retryTrainingEmotionTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1251,6 +1464,8 @@ export interface components {
             extensions?: {
                 [key: string]: unknown;
             } | null;
+            /** @description 情绪识别结果（由 Extensions.emotion 映射；缺失/格式不符即 null） */
+            emotion?: components["schemas"]["EmotionResult"] | null;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -1283,6 +1498,128 @@ export interface components {
         TrainingDatasetBatchDeleteResult: {
             deleted: number;
         };
+        TrainingProvider: {
+            id: string;
+            /** @description 名称（trim 后非空 ≤ 64，全局唯一） */
+            name: string;
+            /** @description 模型类型 openai | claude（开放枚举） */
+            type: string;
+            endpoint: string;
+            /** @description 是否已配置 API key（明文永不回传） */
+            apiKeySet: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TrainingProviderList: {
+            items: components["schemas"]["TrainingProvider"][];
+        };
+        TrainingProviderCreateRequest: {
+            name: string;
+            type: string;
+            endpoint: string;
+            apiKey: string;
+        };
+        TrainingProviderUpdateRequest: {
+            name?: string;
+            type?: string;
+            endpoint?: string;
+            apiKey?: string;
+        };
+        TrainingModel: {
+            id: string;
+            providerId: string;
+            providerName: string;
+            model: string;
+            /** @description {providerName}/{model}，展示用 */
+            slug: string;
+            enabled: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TrainingModelList: {
+            items: components["schemas"]["TrainingModel"][];
+        };
+        TrainingModelCreateRequest: {
+            providerId: string;
+            model: string;
+        };
+        TrainingModelUpdateRequest: {
+            model?: string;
+            enabled?: boolean;
+        };
+        TrainingModelDiscoverResult: {
+            models: components["schemas"]["TrainingDiscoveredModel"][];
+        };
+        TrainingDiscoveredModel: {
+            model: string;
+        };
+        TrainingModelImportRequest: {
+            models: string[];
+        };
+        TrainingModelImportResult: {
+            imported: number;
+            skipped: number;
+        };
+        /** @description 结构化情绪数据（十字段固定结构） */
+        EmotionResult: {
+            emotionControlWeight: number;
+            emotionDescription: string;
+            happy: number;
+            angry: number;
+            sad: number;
+            afraid: number;
+            disgusted: number;
+            melancholic: number;
+            surprised: number;
+            calm: number;
+        };
+        TrainingEmotionTask: {
+            id: string;
+            datasetId: string;
+            itemId: string;
+            audioKey: string;
+            modelId: string;
+            modelSlug: string;
+            /** @description pending | running | done | failed */
+            status: string;
+            attempts: number;
+            error: string | null;
+            emotion: components["schemas"]["EmotionResult"] | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            startedAt: string | null;
+            /** Format: date-time */
+            finishedAt: string | null;
+        };
+        TrainingEmotionTaskList: {
+            items: components["schemas"]["TrainingEmotionTask"][];
+            counts: components["schemas"]["TrainingEmotionTaskCounts"];
+        };
+        TrainingEmotionTaskCounts: {
+            pending: number;
+            running: number;
+            done: number;
+            failed: number;
+        };
+        TrainingRecognizeRequest: {
+            modelId: string;
+        };
+        TrainingRecognizeResult: {
+            text: string;
+        };
+        TrainingEmotionTaskCreateRequest: {
+            itemIds: string[];
+            modelId: string;
+        };
+        TrainingEmotionTaskCreateResult: {
+            created: number;
+            skipped: number;
+        };
     };
     responses: never;
     parameters: {
@@ -1296,6 +1633,20 @@ export interface components {
         TrainingAudioTypeQuery: string;
         /** @description 按音频来源过滤（如某个 transcript 任务 id） */
         TrainingSourceQuery: string;
+        /** @description Provider id（ObjectId） */
+        TrainingProviderId: string;
+        /** @description 模型 id（ObjectId） */
+        TrainingModelId: string;
+        /** @description 情绪识别任务 id（ObjectId） */
+        TrainingEmotionTaskId: string;
+        /** @description 按启用状态过滤 */
+        TrainingModelEnabledQuery: boolean;
+        /** @description 按数据集过滤 */
+        TrainingEmotionDatasetIdQuery: string;
+        /** @description 按任务状态过滤 pending/running/done/failed */
+        TrainingEmotionStatusQuery: string;
+        /** @description 返回条数上限，默认 100、最大 500 */
+        TrainingEmotionLimitQuery: number;
         Mid: number;
         RoomId: number;
         /** @description 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整文件 */
@@ -3006,6 +3357,649 @@ export interface operations {
                 };
             };
             /** @description 数据集或条目不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTrainingProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProviderList"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createTrainingProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingProviderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Provider 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProvider"];
+                };
+            };
+            /** @description 字段非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description Provider 重名 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateTrainingProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Provider id（ObjectId） */
+                providerId: components["parameters"]["TrainingProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingProviderUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProvider"];
+                };
+            };
+            /** @description 字段非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description Provider 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description Provider 重名 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteTrainingProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Provider id（ObjectId） */
+                providerId: components["parameters"]["TrainingProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除（含级联删除 Models） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Provider 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    discoverTrainingModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Provider id（ObjectId） */
+                providerId: components["parameters"]["TrainingProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 发现的可导入模型列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingModelDiscoverResult"];
+                };
+            };
+            /** @description Provider 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 模型服务不可达或响应非法 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+        };
+    };
+    importTrainingModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Provider id（ObjectId） */
+                providerId: components["parameters"]["TrainingProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingModelImportRequest"];
+            };
+        };
+        responses: {
+            /** @description 导入完成 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingModelImportResult"];
+                };
+            };
+            /** @description models 缺失 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description Provider 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTrainingModels: {
+        parameters: {
+            query?: {
+                /** @description 按启用状态过滤 */
+                enabled?: components["parameters"]["TrainingModelEnabledQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 模型列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingModelList"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createTrainingModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingModelCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 模型已添加 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingModel"];
+                };
+            };
+            /** @description 字段非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description Provider 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 模型重复 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateTrainingModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 模型 id（ObjectId） */
+                modelId: components["parameters"]["TrainingModelId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingModelUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingModel"];
+                };
+            };
+            /** @description 字段非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 模型不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 模型重复 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteTrainingModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 模型 id（ObjectId） */
+                modelId: components["parameters"]["TrainingModelId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 模型不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    recognizeTrainingDatasetItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+                /** @description 条目 id（ObjectId） */
+                itemId: components["parameters"]["TrainingItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingRecognizeRequest"];
+            };
+        };
+        responses: {
+            /** @description 识别结果（仅文本） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingRecognizeResult"];
+                };
+            };
+            /** @description 模型不支持音频/音频地址为空/音频过大/模型停用 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 数据集/条目/模型不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 音频不可用/模型服务不可用/模型输出非法 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+        };
+    };
+    createTrainingEmotionTasks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingEmotionTaskCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 提交结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingEmotionTaskCreateResult"];
+                };
+            };
+            /** @description itemIds 缺失 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 数据集或模型不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTrainingEmotionTasks: {
+        parameters: {
+            query?: {
+                /** @description 按数据集过滤 */
+                datasetId?: components["parameters"]["TrainingEmotionDatasetIdQuery"];
+                /** @description 按任务状态过滤 pending/running/done/failed */
+                status?: components["parameters"]["TrainingEmotionStatusQuery"];
+                /** @description 返回条数上限，默认 100、最大 500 */
+                limit?: components["parameters"]["TrainingEmotionLimitQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务列表与状态计数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingEmotionTaskList"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    retryTrainingEmotionTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 情绪识别任务 id（ObjectId） */
+                taskId: components["parameters"]["TrainingEmotionTaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务已置回 pending */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingEmotionTask"];
+                };
+            };
+            /** @description 任务非失败态 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 任务不存在 */
             404: {
                 headers: {
                     [name: string]: unknown;
