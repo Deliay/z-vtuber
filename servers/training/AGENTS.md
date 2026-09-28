@@ -15,7 +15,7 @@ graph LR
     A -->|/api/training/**| T[servers/training]
     T --> M[(MongoDB training_datasets / training_dataset_items)]
     T -->|GET api/transcripts/task/{id}| X[servers/recording-transcript-api]
-    Common[servers/common Z.Vtuber.Common] -.被引用.-> T
+    Common[servers/common Core+Training+Transcript] -.被引用.-> T
 ```
 
 ## 模块结构
@@ -54,7 +54,7 @@ AI 训练模块第一期「音频数据集」的独立服务：数据集管理�
 - `MongoDbHealthCheck.cs`：与 crawler 同模式
 - `Properties/launchSettings.json`：本地 8086
 - `Dockerfile`：两阶段构建（纯 aspnet 运行时，`EXPOSE 8080`）
-- 镜像流水线：`.github/workflows/build-training-image.yml`（`zero-tools/z-vtuber-training`，paths `servers/training/**` + `servers/common/**`）
+- 镜像流水线：`.github/workflows/build-training-image.yml`（`zero-tools/z-vtuber-training`，paths `servers/training/**` + `servers/common/core/**` + `servers/common/training/**` + `servers/common/transcript/**`）
 
 ## API 面
 
@@ -80,7 +80,7 @@ AI 训练模块第一期「音频数据集」的独立服务：数据集管理�
 - `training_dataset_items`：`DatasetId`/`AudioType`/`Source`/`AudioUri`/`AudioKey`/`StartMs`/`EndMs`(long?) /
   `Text`/`Extensions`(BsonDocument?，**预留**情感识别、二次 ASR 等加工结果)/时间戳；
   索引 `(DatasetId, AudioKey)` **唯一**（导入去重与标识唯一性基础）、`(DatasetId, AudioType)`、`(DatasetId, Source)`。
-- 实体与仓储位于 `servers/common/Persistence`（`TrainingDatasetRecord`/`TrainingDatasetItemRecord`、
+- 实体与仓储位于 `servers/common/training/Persistence`（`TrainingDatasetRecord`/`TrainingDatasetItemRecord`、
   `TrainingDatasetRepository`/`TrainingDatasetItemRepository`），索引由 `MongoDbInitializer.EnsureTrainingIndexesAsync` 幂等建立。
 - 无存量数据，无迁移。
 
