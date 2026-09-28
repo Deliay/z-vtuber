@@ -8,7 +8,9 @@ on:
       - 'release/**'
     paths:
       - 'servers/crawler/**'
-      - 'servers/common/**'
+      - 'servers/common/core/**'
+      - 'servers/common/live/**'
+      - 'servers/common/weibo/**'
 
 jobs:
   build:
