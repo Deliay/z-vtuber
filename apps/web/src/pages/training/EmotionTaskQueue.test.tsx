@@ -138,6 +138,45 @@ describe('EmotionTaskQueue', () => {
     })
   })
 
+  it('should ignore a stale response that resolves after a newer one', async () => {
+    type List = components['schemas']['TrainingEmotionTaskList']
+    let resolveStale: (value: List) => void = () => {}
+    mockListTasks
+      .mockReturnValueOnce(
+        new Promise<List>((resolve) => {
+          resolveStale = resolve
+        }),
+      )
+      .mockResolvedValueOnce({
+        items: [{ ...failedTask, id: 'fresh', audioKey: 'fresh-key' }],
+        counts,
+      })
+
+    const { rerender } = render(<EmotionTaskQueue datasetId="d1" />)
+    rerender(<EmotionTaskQueue datasetId="d1" reloadToken={1} />)
+
+    await screen.findByText('fresh-key')
+
+    // 慢响应后到：序号已过期，不得覆盖新数据
+    resolveStale({ items: [{ ...failedTask, id: 'stale', audioKey: 'stale-key' }], counts })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('stale-key')).not.toBeInTheDocument()
+    expect(screen.getByText('fresh-key')).toBeInTheDocument()
+  })
+
+  it('should translate server error codes in the error column', async () => {
+    mockListTasks.mockResolvedValue({
+      items: [{ ...failedTask, error: 'model service unavailable' }],
+      counts,
+    })
+
+    render(<EmotionTaskQueue datasetId="d1" />)
+
+    expect(await screen.findByText('模型服务不可用')).toBeInTheDocument()
+  })
+
   it('should poll every 10 seconds and clear the interval on unmount', async () => {
     vi.useFakeTimers()
     const { unmount } = render(<EmotionTaskQueue datasetId="d1" />)

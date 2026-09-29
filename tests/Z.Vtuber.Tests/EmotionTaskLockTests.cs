@@ -162,4 +162,29 @@ public class EmotionTaskLockTests(RedisFixture fixture)
         Assert.False(await handle.CheckOwnershipAsync());
         Assert.True(handle.Lost);
     }
+
+    [Fact]
+    public async Task RedisUnavailable_RenewTreatsAsLost_WithoutThrowing()
+    {
+        // Redis 抖动时 RenewAsync 必须自行兜底（置 Lost、返回 false），不得把异常抛进续期循环导致循环终止
+        var config = ConfigurationOptions.Parse("127.0.0.1:1");
+        config.ConnectTimeout = 200;
+        config.ConnectRetry = 1;
+        config.AbortOnConnectFail = false;
+        using var dead = await ConnectionMultiplexer.ConnectAsync(config);
+        var taskId = ObjectId.GenerateNewId();
+
+        var handle = new RedisEmotionTaskLockProvider.RedisEmotionTaskLock(
+            dead.GetDatabase(),
+            RedisEmotionTaskLockProvider.KeyFor(taskId),
+            taskId,
+            "token",
+            new EmotionTaskOptions(),
+            NullLogger<RedisEmotionTaskLockProvider>.Instance);
+
+        var renewed = await handle.RenewAsync();
+
+        Assert.False(renewed);
+        Assert.True(handle.Lost);
+    }
 }

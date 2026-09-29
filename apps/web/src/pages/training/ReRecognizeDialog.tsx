@@ -5,10 +5,19 @@ import {
   recognizeTrainingDatasetItem,
   updateTrainingDatasetItem,
 } from '../../api/client'
+import { parsePosition } from '../../utils/format'
 import type { components } from '../../api/schema-training'
 
 type TrainingModel = components['schemas']['TrainingModel']
 type TrainingDatasetItem = components['schemas']['TrainingDatasetItem']
+
+/** 内联编辑草稿（`m:ss`/`m:ss.S` 字符串口径），保存时与识别文本一并提交，避免静默丢弃。 */
+export interface ReRecognizeDialogDraft {
+  audioUri: string
+  text: string
+  start: string
+  end: string
+}
 
 export interface ReRecognizeDialogItem {
   id: string
@@ -18,10 +27,14 @@ export interface ReRecognizeDialogItem {
 export interface ReRecognizeDialogProps {
   datasetId: string
   item: ReRecognizeDialogItem
+  /** 该行内联编辑草稿：传入则「保存」与内联保存同 payload（audioUri/startMs/endMs + text）。 */
+  draft?: ReRecognizeDialogDraft
   onClose: () => void
   /** 保存成功后回调（携带更新后的条目）。 */
   onSaved: (updated: TrainingDatasetItem) => void
 }
+
+const TIME_INVALID = '时间输入无效'
 
 const inputStyle: CSSProperties = {
   width: '100%',
@@ -41,12 +54,14 @@ const inputStyle: CSSProperties = {
 export function ReRecognizeDialog({
   datasetId,
   item,
+  draft,
   onClose,
   onSaved,
 }: ReRecognizeDialogProps) {
   const [models, setModels] = useState<TrainingModel[]>([])
   const [modelId, setModelId] = useState('')
-  const [text, setText] = useState(item.text)
+  // 有内联草稿时以草稿文本为起点，保证「仅保存」也能保留用户的内联文本修改。
+  const [text, setText] = useState(draft?.text ?? item.text)
   const [error, setError] = useState('')
   const [recognizing, setRecognizing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -84,10 +99,29 @@ export function ReRecognizeDialog({
 
   const handleSave = async () => {
     if (busy) return
+
+    // 有内联草稿时保存行为与内联保存一致：一并提交 audioUri/startMs/endMs，避免未保存的修改被静默丢弃。
+    let payload: {
+      text: string
+      audioUri?: string
+      startMs?: number
+      endMs?: number | null
+    } = { text }
+    if (draft) {
+      const startMs = parsePosition(draft.start)
+      const hasEnd = draft.end.trim() !== ''
+      const endMs = hasEnd ? parsePosition(draft.end) : null
+      if (startMs === null || (hasEnd && endMs === null) || (endMs !== null && endMs <= startMs)) {
+        setError(TIME_INVALID)
+        return
+      }
+      payload = { audioUri: draft.audioUri, text, startMs, endMs }
+    }
+
     setSaving(true)
     setError('')
     try {
-      const updated = await updateTrainingDatasetItem(datasetId, item.id, { text })
+      const updated = await updateTrainingDatasetItem(datasetId, item.id, payload)
       onSaved(updated)
     } catch (err) {
       setError(apiErrorMessage(err, '保存失败'))
@@ -168,10 +202,10 @@ export function ReRecognizeDialog({
 
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
           <button onClick={() => void handleRecognize()} disabled={!modelId || busy}>
-            识别
+            {recognizing ? '识别中...' : '识别'}
           </button>
           <button onClick={() => void handleSave()} disabled={busy}>
-            保存
+            {saving ? '保存中...' : '保存'}
           </button>
           <button onClick={onClose} disabled={busy}>
             取消

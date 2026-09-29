@@ -13,6 +13,8 @@ type: Permanent
 **作者**: Workflow Agent（代起草）
 **feat-branch**: `feat/training-dataset-emotion`（需求总分支，已推送 origin；需求总 PR：<https://github.com/Deliay/z-vtuber/pull/144>）
 
+> v1.1 返工说明（2026-09-29，PR #146 代码 Review 打回）：修复 4 项 P2——① 重新识别保存携带内联草稿（`apps/web` `ReRecognizeDialog`/`DatasetItemList`）；② 情绪任务补 `model.Enabled` 校验（`TrainingItemToolsController.CreateEmotionTasks` + `EmotionTaskRunner`）；③ 任务状态机并发原子（`TrainingEmotionTaskRepository.TryInsertActiveAsync`/`RetryFailedAsync`/`UpdateRunningAsync`、`TrainingMongoSetup` 加 `ItemId_1_Active` 部分唯一索引、`TrainingEmotionTasksController.Retry` CAS + 409）；④ `EmotionTaskLock.RenewAsync` 异常兜底 + 续期循环不终止。并随返工处理 P3/P4（错误码口径统一、失败原因白名单、条目缺失 FAILED、防重复提交、轮询防覆盖、LLM 禁自动重定向）。契约同步（emotion-tasks 400 `model disabled`、retry 409 `active task exists`）与 AGENTS.md 已更新。
+
 ## 1. 概述
 
 本 Plan 基于 PRD v1.0 与技术提案 v1.0 编写，指导「AI 训练 - 数据集工具优化」的编码实施。改动分四条线：① 数据层——`servers/common/training` 新增 `TrainingProviderRecord`/`TrainingModelRecord`/`TrainingEmotionTaskRecord` 三实体、三仓储、三集合常量与索引，`TrainingDatasetItemRepository` 增 `SetEmotionAsync`（`$set Extensions.emotion`，零表结构变更）；② training 服务——`Ai/`（`IChatModelClient` + OpenAI-like/Claude-like 两适配器 + JSON 输出解析 + 识别/情绪 prompt）、`Clients/RecordingAudioClient`（服务端取音频转 base64）、`Emotion/`（任务锁 + 扫描器 + Runner，**周期扫描 + Redis 抢锁**后台消费，不新建服务）、4 组控制器共 14 端点；③ api 代理——`/api/training/**` 14 端点镜像（`ForwardAsync` 既有透传模式）；④ web——「模型设置」Tab（Providers/Models）、重新识别对话框、情绪识别提交与「任务队列」区块、「展示类型」列显隐（音频信息默认隐藏 / 情绪信息默认展示）。转写链路（consumer/ASR/transcript 端点）与 recording 音频片段端点零改动。实施全程遵循 `docs/engineering/common-rules.md`（契约先行、TDD、核心逻辑覆盖率 ≥ 80%）、`backend-rules.md`、`frontend-rules.md`、z-coding 开发流程与各服务 `AGENTS.md`。

@@ -3910,7 +3910,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingEmotionTaskCreateResult"];
                 };
             };
-            /** @description itemIds 缺失 */
+            /** @description itemIds 缺失或模型已停用 */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4003,6 +4003,15 @@ export interface operations {
             };
             /** @description 任务不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 同条目已有活跃任务 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

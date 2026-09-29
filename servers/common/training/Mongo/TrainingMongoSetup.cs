@@ -94,6 +94,22 @@ public sealed class TrainingMongoSetup(IMongoDatabase database, ILogger<Training
                 itemKeys, new CreateIndexOptions { Name = "ItemId_1" }),
             cancellationToken: ct);
 
+        // 活跃任务幂等：同一条目最多一个 PENDING/RUNNING 任务（部分唯一索引）——
+        // 并发重复提交由唯一键冲突兜底计 skipped，取代纯 check-then-act。
+        var activeItemKeys = Builders<TrainingEmotionTaskRecord>.IndexKeys.Ascending(t => t.ItemId);
+        await emotionTasks.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingEmotionTaskRecord>(
+                activeItemKeys,
+                new CreateIndexOptions<TrainingEmotionTaskRecord>
+                {
+                    Unique = true,
+                    Name = "ItemId_1_Active",
+                    PartialFilterExpression = Builders<TrainingEmotionTaskRecord>.Filter.In(
+                        t => t.Status,
+                        new[] { TrainingEmotionTaskStatus.Pending, TrainingEmotionTaskStatus.Running }),
+                }),
+            cancellationToken: ct);
+
         Logger.LogInformation("Ensured training collection indexes.");
     }
 }

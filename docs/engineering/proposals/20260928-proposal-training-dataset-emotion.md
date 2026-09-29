@@ -10,6 +10,8 @@ type: Permanent
 - feat-branch：`feat/training-dataset-emotion`
 - 关联文档：[PRD](../../product/draft/20260928-training-dataset-emotion-prd.md)
 
+> v1.1 返工说明（2026-09-29，PR #146 代码 Review 打回 4 项 P2）：① 重新识别「保存」改为携带行内联草稿一并提交（`audioUri/startMs/endMs`），消除未保存修改被静默丢弃；② 情绪识别链路补 `model.Enabled` 校验（提交 400 `model disabled`、执行置 FAILED），与单条重新识别同口径；③ 情绪任务状态机并发原子化——活跃任务 `ItemId_1_Active` 部分唯一索引 + 幂等插入、retry `Id+Status==FAILED` 原子 CAS、Runner 写库带 `Id+Status==RUNNING+Attempts` 条件（fencing 落到写操作）；④ 锁续期 `RenewAsync` 捕获 Redis 异常置 `Lost` 且续期循环单轮异常不终止。另随返工处理 P3/P4：错误码口径统一与队列错误文案中文化、失败原因不透传 `ex.Message`、条目缺失改标 FAILED、识别/添加/内联保存防重复提交、队列轮询请求序号防覆盖、LLM Endpoint 禁用自动重定向（SSRF）。详见 §6.1 决策与 §6.2 约束新增行。
+
 ## 1. 概述
 
 ### 1.1 背景
@@ -247,7 +249,7 @@ TrainingModel:
 EmotionResult:
   description: 结构化情绪数据（十字段，PRD 固定结构）
   properties:
-    emotionControlWeight: { type: number, description: "情绪控制权重（Emotion control weight，0~1）" }
+    emotionControlWeight: { type: number, description: "情绪控制权重（Emotion control weight，0~10；越界钳制）" }
     emotionDescription: { type: string, description: 情绪描述（Emotion description） }
     happy: { type: number, description: 开心（Happy，0~1） }
     angry: { type: number, description: 愤怒（Angry，0~1） }
@@ -586,6 +588,9 @@ flowchart LR
 | 展示类型显隐持久化 | 本地组件状态（刷新重置为需求默认值） | localStorage 持久化 | **A** | 需求明确「默认隐藏/默认显示」，本地状态即满足；避免跨版本状态迁移与额外测试面 |
 | 模型 slug 生成 | 服务端拼好返回 | 前端用 providerName + model 自行拼 | **A** | 单一来源，避免前后端拼接口径漂移；任务记录同时存 `modelSlug` 快照保证模型删除后可读 |
 | LLM 依赖 | 手写 HTTP 适配器 | 引入 OpenAI/Anthropic SDK | **A** | 两类协议面窄（chat/completions、/v1/messages），仓库零新增 NuGet 依赖，可控且易做假服务契约测试 |
+| model 启用语义 | 提交与执行均校验 `Enabled`（停用拒提交/拒执行） | 仅提交校验、在途任务继续 | **A** | 与单条「重新识别」同口径（停用即不可用），避免「停用只对重新识别生效」的语义缺口；已入队未执行任务在 Runner 执行时同样校验并置 FAILED `model disabled` |
+| 重复提交/重试并发 | 活跃任务部分唯一索引 + 幂等插入 + retry 原子 CAS | 纯 check-then-act | **A** | 并发双击/双副本可绕过预检双建任务；retry 先读后写可把 RUNNING/DONE 重置为 PENDING。改为 `ItemId_1_Active` 部分唯一索引兜底 + `RetryFailedAsync`（filter `Id+Status==FAILED`），并在 Runner 写库带 `Id+Status==RUNNING+Attempts` 条件闭合 TOCTOU |
+| LLM Endpoint 重定向 | `AllowAutoRedirect=false` | 默认跟随重定向 | **A** | Endpoint 为用户可配任意 http(s)，默认跟随会把存储的 API key 带到 3xx 目标主机；禁用重定向（内网自用口径，另见 §6.2 安全约束） |
 
 ### 6.2 依赖与约束
 
@@ -598,6 +603,7 @@ flowchart LR
 | 约束 | 不新建服务、不改转写链路 | PRD 明确；transcript/ASR 零改动 |
 | 约束 | 领域边界 | 新实体/仓储归 `Z.Vtuber.Common.Training`，领域项目零引用（`ProjectReferenceGuardTests`） |
 | 约束 | apiKey 不回显、日志不含密钥与音频内容 | 沿用 `transcript_models` 口径 |
+| 安全约束 | LLM Endpoint 为任意 http(s)（内网自用无鉴权口径） | SSRF 面：已禁用 HTTP 自动重定向（`SocketsHttpHandler.AllowAutoRedirect=false`）避免 API key 被 3xx 带到其他主机；仍属内网可信部署假设，跨网暴露需另加 Endpoint 白名单/网络策略 |
 | 约束 | .NET 10、TDD、核心逻辑覆盖率 ≥ 80% | 项目既有规范 |
 
 ## 7. 项目结构

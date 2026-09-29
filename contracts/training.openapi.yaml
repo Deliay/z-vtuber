@@ -537,7 +537,7 @@ paths:
   /api/training/datasets/{datasetId}/items/emotion-tasks:
     post:
       summary: 提交情绪识别任务
-      description: skipped 口径——条目已有 PENDING/RUNNING 任务（重复提交幂等）、条目 text 为空、itemIds 非法或条目不存在。
+      description: skipped 口径——条目已有 PENDING/RUNNING 任务（重复提交幂等，并发由唯一索引兜底）、条目 text 为空、itemIds 非法或条目不存在。
       operationId: createTrainingEmotionTasks
       parameters:
         - $ref: "#/components/parameters/DatasetId"
@@ -555,7 +555,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrainingEmotionTaskCreateResult"
         "400":
-          description: '{"error": "itemIds is required"}'
+          description: '{"error": "itemIds is required"/"model disabled"}'
           content:
             application/json:
               schema:
@@ -585,7 +585,7 @@ paths:
   /api/training/emotion-tasks/{taskId}/retry:
     post:
       summary: 重试失败任务
-      description: 仅 FAILED → PENDING；attempts 保留、error 清空。
+      description: 仅 FAILED → PENDING（原子 CAS：Id + Status==FAILED）；attempts 保留、error 清空。同条目已有其他活跃任务时 409。
       operationId: retryTrainingEmotionTask
       parameters:
         - $ref: "#/components/parameters/EmotionTaskId"
@@ -604,6 +604,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: '{"error": "task not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: '{"error": "active task exists"}'
           content:
             application/json:
               schema:

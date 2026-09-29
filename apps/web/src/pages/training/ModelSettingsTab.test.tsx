@@ -361,4 +361,35 @@ describe('ModelSettingsTab', () => {
       expect(mockDeleteModel).toHaveBeenCalledWith('m1')
     })
   })
+
+  it('should ignore repeated manual model submissions while in flight', async () => {
+    mockListProviders.mockResolvedValue([providerA])
+    mockListModels.mockResolvedValue([])
+    let resolveCreate: (value: TrainingModel) => void = () => {}
+    mockCreateModel.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve
+      }),
+    )
+
+    render(<ModelSettingsTab />)
+    await screen.findByText('暂无模型，请通过「获取模型」导入或手动添加')
+
+    fireEvent.click(screen.getByRole('button', { name: '手动添加模型' }))
+    fireEvent.change(screen.getByLabelText('所属 Provider'), { target: { value: 'p1' } })
+    fireEvent.change(screen.getByLabelText('模型名'), { target: { value: 'gpt-4o-audio' } })
+    const confirm = screen.getByRole('button', { name: '确认添加' })
+    fireEvent.click(confirm)
+    fireEvent.click(confirm)
+
+    expect(mockCreateModel).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '添加中...' })).toBeDisabled()
+    })
+
+    resolveCreate({ ...modelA, id: 'm3' })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '手动添加模型' })).not.toBeInTheDocument()
+    })
+  })
 })

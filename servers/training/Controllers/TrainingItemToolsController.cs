@@ -168,6 +168,11 @@ public sealed class TrainingItemToolsController(
             return NotFound(new ErrorResponse("model not found"));
         }
 
+        if (!model.Enabled)
+        {
+            return BadRequest(new ErrorResponse("model disabled"));
+        }
+
         if (await providers.GetByIdAsync(model.ProviderId, ct) is not { } provider)
         {
             return NotFound(new ErrorResponse("model not found"));
@@ -211,7 +216,8 @@ public sealed class TrainingItemToolsController(
                 continue;
             }
 
-            await tasks.InsertAsync(new TrainingEmotionTaskRecord
+            // 原子幂等：即便并发（双击/双副本）绕过上面的预检查，唯一索引也只允许建一条活跃任务。
+            var inserted = await tasks.TryInsertActiveAsync(new TrainingEmotionTaskRecord
             {
                 DatasetId = datasetObjectId,
                 ItemId = itemObjectId,
@@ -221,6 +227,12 @@ public sealed class TrainingItemToolsController(
                 Status = TrainingEmotionTaskStatus.Pending,
                 CreatedAt = DateTime.UtcNow,
             }, ct);
+            if (inserted is null)
+            {
+                skipped++;
+                continue;
+            }
+
             created++;
         }
 

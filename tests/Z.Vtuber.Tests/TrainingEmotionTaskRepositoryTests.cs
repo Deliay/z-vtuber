@@ -177,6 +177,90 @@ public class TrainingEmotionTaskRepositoryTests(MongoDbFixture fixture) : IClass
     }
 
     [Fact]
+    public async Task TryInsertActive_RejectsSecondActiveForSameItem()
+    {
+        var repository = Tasks;
+        var itemId = ObjectId.GenerateNewId();
+
+        var first = await repository.TryInsertActiveAsync(TaskRecord(ObjectId.GenerateNewId(), itemId));
+        Assert.NotNull(first);
+
+        // 同条目第二条活跃任务命中部分唯一索引，返回 null 计 skipped
+        var second = await repository.TryInsertActiveAsync(TaskRecord(ObjectId.GenerateNewId(), itemId));
+        Assert.Null(second);
+
+        // 终态（FAILED）不受活跃唯一索引约束，可再建
+        await repository.UpdateAsync(first!.Id, Builders<TrainingEmotionTaskRecord>.Update
+            .Set(t => t.Status, TrainingEmotionTaskStatus.Failed));
+        var afterTerminal = await repository.TryInsertActiveAsync(TaskRecord(ObjectId.GenerateNewId(), itemId));
+        Assert.NotNull(afterTerminal);
+    }
+
+    [Fact]
+    public async Task ConcurrentTryInsertActive_OnlyOneSucceeds()
+    {
+        var repository = Tasks;
+        var itemId = ObjectId.GenerateNewId();
+
+        // 并发重复提交：唯一索引兜底，仅一条落库
+        var attempts = Enumerable.Range(0, 8)
+            .Select(_ => repository.TryInsertActiveAsync(
+                TaskRecord(ObjectId.GenerateNewId(), itemId)))
+            .ToArray();
+        var results = await Task.WhenAll(attempts);
+
+        Assert.Single(results, r => r is not null);
+        Assert.Single(await repository.ListAsync(null, null, 100));
+    }
+
+    [Fact]
+    public async Task UpdateRunning_FencesOnStatusAndAttempts()
+    {
+        var repository = Tasks;
+        var task = await repository.InsertAsync(TaskRecord(
+            ObjectId.GenerateNewId(), ObjectId.GenerateNewId(), TrainingEmotionTaskStatus.Running, attempts: 2));
+
+        // 条件匹配（RUNNING + attempts=2）→ 命中
+        var matched = await repository.UpdateRunningAsync(task.Id, 2,
+            Builders<TrainingEmotionTaskRecord>.Update.Set(t => t.Status, TrainingEmotionTaskStatus.Done));
+        Assert.NotNull(matched);
+        Assert.Equal(TrainingEmotionTaskStatus.Done, matched!.Status);
+
+        // 已是 DONE：不再命中
+        Assert.Null(await repository.UpdateRunningAsync(task.Id, 2,
+            Builders<TrainingEmotionTaskRecord>.Update.Set(t => t.Status, TrainingEmotionTaskStatus.Failed)));
+
+        // 新建一条 RUNNING attempts=0，用陈旧 attempts=1 更新 → 不命中（被接管语义）
+        var running = await repository.InsertAsync(TaskRecord(
+            ObjectId.GenerateNewId(), ObjectId.GenerateNewId(), TrainingEmotionTaskStatus.Running));
+        Assert.Null(await repository.UpdateRunningAsync(running.Id, 1,
+            Builders<TrainingEmotionTaskRecord>.Update.Set(t => t.Status, TrainingEmotionTaskStatus.Done)));
+        Assert.Equal(TrainingEmotionTaskStatus.Running, (await repository.GetByIdAsync(running.Id))!.Status);
+    }
+
+    [Fact]
+    public async Task RetryFailed_OnlyTransitionsFromFailed()
+    {
+        var repository = Tasks;
+
+        var failed = await repository.InsertAsync(TaskRecord(
+            ObjectId.GenerateNewId(), ObjectId.GenerateNewId(), TrainingEmotionTaskStatus.Failed));
+        var retried = await repository.RetryFailedAsync(failed.Id,
+            Builders<TrainingEmotionTaskRecord>.Update.Set(t => t.Status, TrainingEmotionTaskStatus.Pending));
+        Assert.NotNull(retried);
+        Assert.Equal(TrainingEmotionTaskStatus.Pending, retried!.Status);
+
+        // 已是 PENDING：再次原子重试不命中（避免把 RUNNING/DONE 重置）
+        Assert.Null(await repository.RetryFailedAsync(failed.Id,
+            Builders<TrainingEmotionTaskRecord>.Update.Set(t => t.Status, TrainingEmotionTaskStatus.Pending)));
+
+        var running = await repository.InsertAsync(TaskRecord(
+            ObjectId.GenerateNewId(), ObjectId.GenerateNewId(), TrainingEmotionTaskStatus.Running));
+        Assert.Null(await repository.RetryFailedAsync(running.Id,
+            Builders<TrainingEmotionTaskRecord>.Update.Set(t => t.Status, TrainingEmotionTaskStatus.Pending)));
+    }
+
+    [Fact]
     public async Task Update_StatusTransition_ReturnsUpdatedRecord()
     {
         var repository = Tasks;

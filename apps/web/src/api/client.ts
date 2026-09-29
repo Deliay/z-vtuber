@@ -85,6 +85,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   'models is required': '请选择要导入的模型',
   'itemIds is required': '请选择要识别的条目',
   'task not failed': '任务未处于失败状态',
+  'active task exists': '该条目已有进行中的识别任务',
+  'emotion task failed': '情绪识别失败',
+  'item text is empty': '条目文本为空，无法识别',
+  'max attempts exceeded': '已超过最大重试次数，无法自动重试',
 }
 
 /**
@@ -109,6 +113,13 @@ export function apiErrorMessage(error: unknown, fallback = '操作失败'): stri
   }
 
   return ERROR_MESSAGES[code] ?? (code || fallback)
+}
+
+/**
+ * 仅有服务端错误码字符串时（如任务记录 `error` 字段）映射为可读文案；未收录原样返回。
+ */
+export function apiErrorCodeText(code: string): string {
+  return ERROR_MESSAGES[code] ?? code
 }
 
 async function request<T>(

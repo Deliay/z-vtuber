@@ -602,14 +602,14 @@ describe('DatasetItemList', () => {
     })
   })
 
-  it('should exit inline editing after a re-recognize save so the stale draft cannot overwrite the result', async () => {
+  it('should submit the inline draft together with the re-recognized text so no edit is lost', async () => {
     const { loader } = createLoader()
     mockRecognize.mockResolvedValue({ text: '识别后的文本' })
     mockUpdateItem.mockResolvedValue({ ...items[0], text: '识别后的文本' })
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
 
-    // 进入内联编辑并留下一个未同步的过期草稿
+    // 进入内联编辑并留下未保存的文本修改
     editRow('transcript:t1:0')
     fireEvent.change(screen.getByLabelText('文本'), { target: { value: '过期草稿' } })
     fireEvent.click(screen.getByRole('button', { name: '重新识别' }))
@@ -622,8 +622,14 @@ describe('DatasetItemList', () => {
     })
     fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
 
+    // 保存与内联保存同 payload：audioUri/startMs/endMs 一并与识别文本提交，不再静默丢弃
     await waitFor(() => {
-      expect(mockUpdateItem).toHaveBeenCalledWith('d1', 'i1', { text: '识别后的文本' })
+      expect(mockUpdateItem).toHaveBeenCalledWith('d1', 'i1', {
+        audioUri: 'b/live/101/recordings/a.flv',
+        text: '识别后的文本',
+        startMs: 0,
+        endMs: 60000,
+      })
     })
     // 保存成功后关闭对话框并退出该行内联编辑，旧草稿不再可回写
     await waitFor(() => {
@@ -632,6 +638,40 @@ describe('DatasetItemList', () => {
     expect(screen.queryByLabelText('文本')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
     expect(screen.getByText('识别后的文本')).toBeInTheDocument()
+  })
+
+  it('should submit modified audio uri and time range from the inline draft on re-recognize save', async () => {
+    const { loader } = createLoader()
+    mockRecognize.mockResolvedValue({ text: '识别后的文本' })
+    mockUpdateItem.mockResolvedValue({ ...items[0], text: '识别后的文本' })
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '音频信息' }))
+    editRow('transcript:t1:0')
+    fireEvent.change(screen.getByLabelText('音频地址'), {
+      target: { value: 'b/live/101/recordings/z.flv' },
+    })
+    fireEvent.change(screen.getByLabelText('开始时间'), { target: { value: '2:00' } })
+    fireEvent.change(screen.getByLabelText('结束时间'), { target: { value: '3:00' } })
+    fireEvent.click(screen.getByRole('button', { name: '重新识别' }))
+
+    const dialog = await screen.findByRole('dialog', { name: '重新识别' })
+    fireEvent.change(within(dialog).getByLabelText('识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '识别' }))
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText('文本')).toHaveValue('识别后的文本')
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(mockUpdateItem).toHaveBeenCalledWith('d1', 'i1', {
+        audioUri: 'b/live/101/recordings/z.flv',
+        text: '识别后的文本',
+        startMs: 120000,
+        endMs: 180000,
+      })
+    })
   })
 
   it('should disable 情绪识别 until something is selected and open the submit dialog', async () => {

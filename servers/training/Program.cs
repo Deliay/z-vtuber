@@ -46,8 +46,10 @@ builder.Services.AddHttpClient<ITranscriptApiClient, TranscriptApiClient>(
                 ?? TrainingOptions.DefaultBaseUrl);
     });
 
-// AI 模型调用 named client（无 BaseAddress，逐请求拼绝对 endpoint；超时经 AiOptions 控制）
-builder.Services.AddHttpClient(ChatModelClientFactory.ClientName);
+// AI 模型调用 named client（无 BaseAddress，逐请求拼绝对 endpoint；超时经 AiOptions 控制）。
+// 禁用自动重定向：endpoint 为用户可配的任意 http(s) 地址，避免携带存储的 API key 跟随 3xx 跳到其他主机（SSRF/凭据泄漏）。
+builder.Services.AddHttpClient(ChatModelClientFactory.ClientName)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
 // recording 音频片段取数（typed client，BaseAddress 为 recording 服务地址）
 builder.Services.AddHttpClient<IRecordingAudioClient, RecordingAudioClient>(client =>
