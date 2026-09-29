@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { DatasetItemList } from './DatasetItemList'
 import type { WaveformLoader, WaveformLoadOptions } from './waveformLoader'
 import type { components } from '../../api/schema-training'
 import * as client from '../../api/client'
 
 type TrainingDatasetItem = components['schemas']['TrainingDatasetItem']
+type TrainingModel = components['schemas']['TrainingModel']
 
 vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>()
@@ -14,17 +15,24 @@ vi.mock('../../api/client', async (importOriginal) => {
     listTrainingDatasetItems: vi.fn(),
     updateTrainingDatasetItem: vi.fn(),
     batchDeleteTrainingDatasetItems: vi.fn(),
+    listTrainingModels: vi.fn(),
+    recognizeTrainingDatasetItem: vi.fn(),
+    createEmotionTasks: vi.fn(),
   }
 })
 
 const mockListItems = vi.mocked(client.listTrainingDatasetItems)
 const mockUpdateItem = vi.mocked(client.updateTrainingDatasetItem)
 const mockBatchDelete = vi.mocked(client.batchDeleteTrainingDatasetItems)
+const mockListModels = vi.mocked(client.listTrainingModels)
+const mockRecognize = vi.mocked(client.recognizeTrainingDatasetItem)
+const mockCreateEmotionTasks = vi.mocked(client.createEmotionTasks)
 
 const baseItem = {
   audioType: 'transcript',
   audioUri: 'b/live/101/recordings/a.flv',
   extensions: null,
+  emotion: null,
   createdAt: '2026-09-27T00:00:00Z',
   updatedAt: '2026-09-27T00:00:00Z',
   datasetId: 'd1',
@@ -62,6 +70,17 @@ const items: TrainingDatasetItem[] = [
   },
 ]
 
+const model: TrainingModel = {
+  id: 'm1',
+  providerId: 'p1',
+  providerName: 'openai-prod',
+  model: 'gpt-4o',
+  slug: 'openai-prod/gpt-4o',
+  enabled: true,
+  createdAt: '2026-09-27T00:00:00Z',
+  updatedAt: '2026-09-27T00:00:00Z',
+}
+
 function createLoader() {
   const play = vi.fn()
   const stop = vi.fn()
@@ -96,6 +115,11 @@ function saveRow(): void {
   fireEvent.click(screen.getByRole('button', { name: '保存' }))
 }
 
+/** 默认隐藏「音频信息」六列；需要操作音频列时显式打开。 */
+function enableAudioInfo(): void {
+  fireEvent.click(screen.getByLabelText('音频信息'))
+}
+
 describe('DatasetItemList', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -106,6 +130,8 @@ describe('DatasetItemList', () => {
       endMs: params.endMs === undefined ? items[0].endMs : params.endMs,
     }))
     mockBatchDelete.mockResolvedValue({ deleted: 2 })
+    mockListModels.mockResolvedValue([model])
+    mockCreateEmotionTasks.mockResolvedValue({ created: 1, skipped: 0 })
   })
 
   it('should show the seven fields and keep the audio key read-only', async () => {
@@ -113,6 +139,7 @@ describe('DatasetItemList', () => {
     renderList({ waveformLoader: loader })
 
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     for (const column of COLUMNS) {
       expect(screen.getByRole('columnheader', { name: column })).toBeInTheDocument()
@@ -122,7 +149,8 @@ describe('DatasetItemList', () => {
     expect(screen.getAllByText('t1')).toHaveLength(2)
     expect(screen.getByText('0:00')).toBeInTheDocument()
     expect(screen.getByText('1:00')).toBeInTheDocument()
-    expect(screen.getByText('-')).toBeInTheDocument()
+    // 空结束时间、空情绪字段均展示 '-'
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0)
 
     const cell = screen.getByText('transcript:t1:0').closest('td')
     expect(cell).not.toBeNull()
@@ -134,6 +162,7 @@ describe('DatasetItemList', () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     const table = screen.getByRole('table')
     expect(table.style.width).toBe('100%')
@@ -163,9 +192,9 @@ describe('DatasetItemList', () => {
     expect(textHeader.style.maxWidth).toBe('')
     expect(textHeader.style.whiteSpace).not.toBe('nowrap')
 
-    // 仅「文本」列对应的 col 不设宽度 → 占满剩余宽度
+    // 仅「文本」列对应的 col 不设宽度 → 占满剩余宽度（1 勾选 + 6 音频 + 1 文本 + 10 情绪 + 1 操作）
     const cols = table.querySelectorAll('colgroup col')
-    expect(cols).toHaveLength(9)
+    expect(cols).toHaveLength(19)
     expect((cols[7] as HTMLElement).style.width).toBe('')
     expect((cols[3] as HTMLElement).style.width).not.toBe('')
   })
@@ -174,6 +203,7 @@ describe('DatasetItemList', () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     editRow('transcript:t1:0')
 
@@ -194,6 +224,7 @@ describe('DatasetItemList', () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     editRow('transcript:t1:0')
     expect(screen.getAllByRole('textbox')).toHaveLength(4)
@@ -221,6 +252,7 @@ describe('DatasetItemList', () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     editRow('transcript:t1:0')
     fireEvent.change(screen.getByLabelText('结束时间'), { target: { value: '' } })
@@ -240,6 +272,7 @@ describe('DatasetItemList', () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     editRow('transcript:t1:0')
     fireEvent.change(screen.getByLabelText('开始时间'), { target: { value: '-0:05' } })
@@ -253,6 +286,7 @@ describe('DatasetItemList', () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     editRow('transcript:t1:0')
     fireEvent.change(screen.getByLabelText('开始时间'), { target: { value: '0:10' } })
@@ -325,6 +359,7 @@ describe('DatasetItemList', () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     fireEvent.click(screen.getByText('transcript:t1:0'))
 
@@ -335,14 +370,26 @@ describe('DatasetItemList', () => {
     // 紧贴被点击条目行正下方，且位于表格内（而非表格后的兄弟节点）
     expect(expandRow?.previousElementSibling).toBe(dataRow)
     expect(screen.getByRole('table').contains(expandRow)).toBe(true)
-    // 展开行以 colSpan 覆盖全列，不破坏 colgroup/table-layout:fixed 对齐
-    expect(expandRow?.querySelector('td')).toHaveAttribute('colspan', '9')
+    // 展开行以 colSpan 覆盖当前可见列（1 + 6 + 1 + 10 + 1 = 19）
+    expect(expandRow?.querySelector('td')).toHaveAttribute('colspan', '19')
+  })
+
+  it('should compute the expanded row colSpan from the visible column count', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    // 默认「音频信息」隐藏：1 勾选 + 0 音频 + 1 文本 + 10 情绪 + 1 操作 = 13
+    fireEvent.click(screen.getByText('第一句').closest('tr') as HTMLElement)
+    const container = await screen.findByTestId('waveform-container')
+    expect(container.closest('tr')?.querySelector('td')).toHaveAttribute('colspan', '13')
   })
 
   it('should keep only one waveform expanded at a time when switching items', async () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     fireEvent.click(screen.getByText('transcript:t1:0'))
     await screen.findByTestId('waveform-container')
@@ -362,6 +409,7 @@ describe('DatasetItemList', () => {
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     fireEvent.change(screen.getByLabelText('分组方式'), { target: { value: 'source' } })
     await screen.findByText('来源: t1（2 条）')
@@ -406,6 +454,7 @@ describe('DatasetItemList', () => {
     const { loader, load } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
+    enableAudioInfo()
 
     fireEvent.click(screen.getByText('transcript:t2:5000'))
 
@@ -430,5 +479,256 @@ describe('DatasetItemList', () => {
       await screen.findByText('暂无音频数据，可从 Transcript 导入'),
     ).toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+
+  it('should render the 展示类型 toggles before the grouping select with the required defaults', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    const audioToggle = screen.getByLabelText('音频信息')
+    const emotionToggle = screen.getByLabelText('情绪信息')
+    const groupSelect = screen.getByLabelText('分组方式')
+
+    // 默认：音频信息不勾选、情绪信息勾选
+    expect(audioToggle).not.toBeChecked()
+    expect(emotionToggle).toBeChecked()
+    // 「展示类型」勾选组位于分组切换控件之前
+    expect(
+      audioToggle.compareDocumentPosition(groupSelect) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('should toggle the six audio columns and keep 文本/操作 always visible', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    // 默认音频信息隐藏
+    expect(screen.queryByRole('columnheader', { name: '音频类型' })).not.toBeInTheDocument()
+    // 文本与操作恒展示
+    expect(screen.getByRole('columnheader', { name: '文本' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '操作' })).toBeInTheDocument()
+
+    enableAudioInfo()
+    expect(screen.getByRole('columnheader', { name: '音频类型' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '结束时间' })).toBeInTheDocument()
+
+    enableAudioInfo()
+    expect(screen.queryByRole('columnheader', { name: '音频类型' })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '文本' })).toBeInTheDocument()
+  })
+
+  it('should toggle the ten emotion columns', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    for (const column of ['情绪控制权重', '情绪描述', '开心', '平静']) {
+      expect(screen.getByRole('columnheader', { name: column })).toBeInTheDocument()
+    }
+
+    fireEvent.click(screen.getByLabelText('情绪信息'))
+
+    for (const column of ['情绪控制权重', '情绪描述', '开心', '平静']) {
+      expect(screen.queryByRole('columnheader', { name: column })).not.toBeInTheDocument()
+    }
+  })
+
+  it('should show 文本 and 操作 even when both display groups are hidden', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    fireEvent.click(screen.getByLabelText('情绪信息'))
+    enableAudioInfo()
+
+    expect(screen.getByRole('columnheader', { name: '文本' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '操作' })).toBeInTheDocument()
+  })
+
+  it('should render a dash for the ten emotion columns when a row has no emotion data', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    const row = screen.getByText('第一句').closest('tr') as HTMLElement
+    expect(within(row).getAllByText('-')).toHaveLength(10)
+  })
+
+  it('should render emotion values with a truncated description carrying the full title', async () => {
+    const emotionItem: TrainingDatasetItem = {
+      ...items[0],
+      id: 'ie',
+      audioKey: 'transcript:te:0',
+      text: '情绪句',
+      emotion: {
+        emotionControlWeight: 0.6,
+        emotionDescription: '克制的失落，语调低缓',
+        happy: 0.05,
+        angry: 0,
+        sad: 0.7,
+        afraid: 0.05,
+        disgusted: 0,
+        melancholic: 0.8,
+        surprised: 0.1,
+        calm: 0.4,
+      },
+    }
+    mockListItems.mockResolvedValue([emotionItem])
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+
+    await screen.findByText('情绪句')
+
+    const description = screen.getByText('克制的失落，语调低缓')
+    expect(description).toHaveAttribute('title', '克制的失落，语调低缓')
+    expect(description.style.textOverflow).toBe('ellipsis')
+    expect(screen.getByText('0.6')).toBeInTheDocument()
+    expect(screen.getByText('0.7')).toBeInTheDocument()
+  })
+
+  it('should open the re-recognize dialog from the edit state', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    editRow('transcript:t1:0')
+    fireEvent.click(screen.getByRole('button', { name: '重新识别' }))
+
+    expect(await screen.findByRole('dialog', { name: '重新识别' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockListModels).toHaveBeenCalledWith(true)
+    })
+  })
+
+  it('should submit the inline draft together with the re-recognized text so no edit is lost', async () => {
+    const { loader } = createLoader()
+    mockRecognize.mockResolvedValue({ text: '识别后的文本' })
+    mockUpdateItem.mockResolvedValue({ ...items[0], text: '识别后的文本' })
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    // 进入内联编辑并留下未保存的文本修改
+    editRow('transcript:t1:0')
+    fireEvent.change(screen.getByLabelText('文本'), { target: { value: '过期草稿' } })
+    fireEvent.click(screen.getByRole('button', { name: '重新识别' }))
+
+    const dialog = await screen.findByRole('dialog', { name: '重新识别' })
+    fireEvent.change(within(dialog).getByLabelText('识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '识别' }))
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText('文本')).toHaveValue('识别后的文本')
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    // 保存与内联保存同 payload：audioUri/startMs/endMs 一并与识别文本提交，不再静默丢弃
+    await waitFor(() => {
+      expect(mockUpdateItem).toHaveBeenCalledWith('d1', 'i1', {
+        audioUri: 'b/live/101/recordings/a.flv',
+        text: '识别后的文本',
+        startMs: 0,
+        endMs: 60000,
+      })
+    })
+    // 保存成功后关闭对话框并退出该行内联编辑，旧草稿不再可回写
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '重新识别' })).not.toBeInTheDocument()
+    })
+    expect(screen.queryByLabelText('文本')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
+    expect(screen.getByText('识别后的文本')).toBeInTheDocument()
+  })
+
+  it('should submit modified audio uri and time range from the inline draft on re-recognize save', async () => {
+    const { loader } = createLoader()
+    mockRecognize.mockResolvedValue({ text: '识别后的文本' })
+    mockUpdateItem.mockResolvedValue({ ...items[0], text: '识别后的文本' })
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '音频信息' }))
+    editRow('transcript:t1:0')
+    fireEvent.change(screen.getByLabelText('音频地址'), {
+      target: { value: 'b/live/101/recordings/z.flv' },
+    })
+    fireEvent.change(screen.getByLabelText('开始时间'), { target: { value: '2:00' } })
+    fireEvent.change(screen.getByLabelText('结束时间'), { target: { value: '3:00' } })
+    fireEvent.click(screen.getByRole('button', { name: '重新识别' }))
+
+    const dialog = await screen.findByRole('dialog', { name: '重新识别' })
+    fireEvent.change(within(dialog).getByLabelText('识别模型'), { target: { value: 'm1' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '识别' }))
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText('文本')).toHaveValue('识别后的文本')
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(mockUpdateItem).toHaveBeenCalledWith('d1', 'i1', {
+        audioUri: 'b/live/101/recordings/z.flv',
+        text: '识别后的文本',
+        startMs: 120000,
+        endMs: 180000,
+      })
+    })
+  })
+
+  it('should disable 情绪识别 until something is selected and open the submit dialog', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    const emotionButton = screen.getByRole('button', { name: '情绪识别' })
+    expect(emotionButton).toBeDisabled()
+    expect(emotionButton).toHaveAttribute('aria-disabled', 'true')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 transcript:t1:0' }))
+
+    expect(emotionButton).not.toBeDisabled()
+    expect(emotionButton).toHaveAttribute('aria-disabled', 'false')
+
+    fireEvent.click(emotionButton)
+    expect(await screen.findByRole('dialog', { name: '情绪识别' })).toBeInTheDocument()
+  })
+
+  it('should submit emotion tasks for the selected items and refresh the list', async () => {
+    const { loader } = createLoader()
+    renderList({ waveformLoader: loader })
+    await screen.findByText('第一句')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 transcript:t1:0' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 transcript:t1:61000' }))
+    fireEvent.click(screen.getByRole('button', { name: '情绪识别' }))
+
+    fireEvent.change(await screen.findByLabelText('情绪识别模型'), {
+      target: { value: 'm1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+
+    await waitFor(() => {
+      expect(mockCreateEmotionTasks).toHaveBeenCalledWith('d1', ['i1', 'i2'], 'm1')
+    })
+    await waitFor(() => {
+      expect(mockListItems).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it('should notify the parent when the list changes after an emotion submission', async () => {
+    const onChanged = vi.fn()
+    const { loader } = createLoader()
+    render(<DatasetItemList datasetId="d1" waveformLoader={loader} onChanged={onChanged} />)
+    await screen.findByText('第一句')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 transcript:t1:0' }))
+    fireEvent.click(screen.getByRole('button', { name: '情绪识别' }))
+    fireEvent.change(await screen.findByLabelText('情绪识别模型'), {
+      target: { value: 'm1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+
+    await waitFor(() => {
+      expect(onChanged).toHaveBeenCalled()
+    })
   })
 })

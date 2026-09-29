@@ -46,6 +46,63 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
     public Task<IActionResult> UpdateItem(string datasetId, string itemId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Put, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/items/{Uri.EscapeDataString(itemId)}", ct);
 
+    [HttpGet("training/providers")]
+    public Task<IActionResult> ListProviders(CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Get, "api/training/providers", ct);
+
+    [HttpPost("training/providers")]
+    public Task<IActionResult> CreateProvider(CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, "api/training/providers", ct);
+
+    [HttpPut("training/providers/{providerId}")]
+    public Task<IActionResult> UpdateProvider(string providerId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Put, $"api/training/providers/{Uri.EscapeDataString(providerId)}", ct);
+
+    [HttpDelete("training/providers/{providerId}")]
+    public Task<IActionResult> DeleteProvider(string providerId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Delete, $"api/training/providers/{Uri.EscapeDataString(providerId)}", ct);
+
+    [HttpGet("training/providers/{providerId}/models/discover")]
+    public Task<IActionResult> DiscoverProviderModels(string providerId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Get, $"api/training/providers/{Uri.EscapeDataString(providerId)}/models/discover", ct);
+
+    [HttpPost("training/providers/{providerId}/models/import")]
+    public Task<IActionResult> ImportProviderModels(string providerId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/providers/{Uri.EscapeDataString(providerId)}/models/import", ct);
+
+    [HttpGet("training/models")]
+    public Task<IActionResult> ListModels([FromQuery] bool? enabled, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Get, "api/training/models", ct);
+
+    [HttpPost("training/models")]
+    public Task<IActionResult> CreateModel(CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, "api/training/models", ct);
+
+    [HttpPut("training/models/{modelId}")]
+    public Task<IActionResult> UpdateModel(string modelId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Put, $"api/training/models/{Uri.EscapeDataString(modelId)}", ct);
+
+    [HttpDelete("training/models/{modelId}")]
+    public Task<IActionResult> DeleteModel(string modelId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Delete, $"api/training/models/{Uri.EscapeDataString(modelId)}", ct);
+
+    [HttpPost("training/datasets/{datasetId}/items/{itemId}/recognize")]
+    public Task<IActionResult> RecognizeItem(string datasetId, string itemId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/items/{Uri.EscapeDataString(itemId)}/recognize", ct);
+
+    [HttpPost("training/datasets/{datasetId}/items/emotion-tasks")]
+    public Task<IActionResult> CreateEmotionTasks(string datasetId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/items/emotion-tasks", ct);
+
+    [HttpGet("training/emotion-tasks")]
+    public Task<IActionResult> ListEmotionTasks(
+        [FromQuery] string? datasetId, [FromQuery] string? status, [FromQuery] int? limit, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Get, "api/training/emotion-tasks", ct);
+
+    [HttpPost("training/emotion-tasks/{taskId}/retry")]
+    public Task<IActionResult> RetryEmotionTask(string taskId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/emotion-tasks/{Uri.EscapeDataString(taskId)}/retry", ct);
+
     private async Task<IActionResult> ForwardAsync(HttpMethod method, string upstreamPath, CancellationToken ct)
     {
         var client = httpClientFactory.CreateClient(TrainingClientName);

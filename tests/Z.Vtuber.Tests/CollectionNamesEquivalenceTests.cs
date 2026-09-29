@@ -3,7 +3,7 @@ using Z.Vtuber.Common.Persistence;
 namespace Z.Vtuber.Tests;
 
 /// <summary>
-/// 常量等价测试：25 个集合名常量值逐一等于拆分前 MongoCollectionNames 的值（防「连错库」）。
+/// 常量等价测试：各域集合名常量值逐一等于拆分前 MongoCollectionNames 的值（防「连错库」）。
 /// </summary>
 public class CollectionNamesEquivalenceTests
 {
@@ -64,6 +64,9 @@ public class CollectionNamesEquivalenceTests
     {
         Assert.Equal("training_datasets", TrainingCollectionNames.TrainingDatasets);
         Assert.Equal("training_dataset_items", TrainingCollectionNames.TrainingDatasetItems);
+        Assert.Equal("training_providers", TrainingCollectionNames.TrainingProviders);
+        Assert.Equal("training_models", TrainingCollectionNames.TrainingModels);
+        Assert.Equal("training_emotion_tasks", TrainingCollectionNames.TrainingEmotionTasks);
     }
 
     [Fact]

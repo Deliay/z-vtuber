@@ -55,6 +55,9 @@ public sealed class MongoDbFixture : IAsyncLifetime
             TranscriptCollectionNames.TranscriptAutoEnqueue,
             TrainingCollectionNames.TrainingDatasets,
             TrainingCollectionNames.TrainingDatasetItems,
+            TrainingCollectionNames.TrainingProviders,
+            TrainingCollectionNames.TrainingModels,
+            TrainingCollectionNames.TrainingEmotionTasks,
         };
 
         foreach (var name in names)

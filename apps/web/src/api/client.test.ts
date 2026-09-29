@@ -60,6 +60,20 @@ import {
   updateTrainingDatasetItem,
   batchDeleteTrainingDatasetItems,
   trainingAudioClipUrl,
+  listTrainingProviders,
+  createTrainingProvider,
+  updateTrainingProvider,
+  deleteTrainingProvider,
+  discoverTrainingModels,
+  importTrainingModels,
+  listTrainingModels,
+  createTrainingModel,
+  updateTrainingModel,
+  deleteTrainingModel,
+  recognizeTrainingDatasetItem,
+  createEmotionTasks,
+  listEmotionTasks,
+  retryEmotionTask,
 } from './client'
 
 const mockFetch = vi.fn()
@@ -1498,6 +1512,258 @@ describe('API Client', () => {
     })
   })
 
+  describe('Training Providers & Models', () => {
+    const provider = {
+      id: 'p1',
+      name: 'openai-prod',
+      type: 'openai',
+      endpoint: 'https://api.openai.com/v1',
+      apiKeySet: true,
+      createdAt: '2026-09-27T00:00:00Z',
+      updatedAt: '2026-09-27T00:00:00Z',
+    }
+
+    const model = {
+      id: 'm1',
+      providerId: 'p1',
+      providerName: 'openai-prod',
+      model: 'gpt-4o',
+      slug: 'openai-prod/gpt-4o',
+      enabled: true,
+      createdAt: '2026-09-27T00:00:00Z',
+      updatedAt: '2026-09-27T00:00:00Z',
+    }
+
+    it('listTrainingProviders should GET /training/providers', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ items: [provider] }) })
+
+      const result = await listTrainingProviders()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/providers',
+        expect.anything(),
+      )
+      expect(result).toEqual([provider])
+    })
+
+    it('createTrainingProvider should POST /training/providers with the body', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 201, json: () => Promise.resolve(provider) })
+
+      const result = await createTrainingProvider({
+        name: 'openai-prod',
+        type: 'openai',
+        endpoint: 'https://api.openai.com/v1',
+        apiKey: 'sk-secret',
+      })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/providers',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            name: 'openai-prod',
+            type: 'openai',
+            endpoint: 'https://api.openai.com/v1',
+            apiKey: 'sk-secret',
+          }),
+        }),
+      )
+      expect(result).toEqual(provider)
+    })
+
+    it('updateTrainingProvider should PUT /training/providers/{id} with the partial body', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(provider) })
+
+      await updateTrainingProvider('p1', { name: 'renamed' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/providers/p1',
+        expect.objectContaining({ method: 'PUT', body: JSON.stringify({ name: 'renamed' }) }),
+      )
+    })
+
+    it('deleteTrainingProvider should DELETE /training/providers/{id}', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+      await deleteTrainingProvider('p1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/providers/p1',
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+    })
+
+    it('discoverTrainingModels should GET .../models/discover and return the model list', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ models: [{ model: 'gpt-4o' }, { model: 'gpt-4o-mini' }] }),
+      })
+
+      const result = await discoverTrainingModels('p1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/providers/p1/models/discover',
+        expect.anything(),
+      )
+      expect(result).toEqual([{ model: 'gpt-4o' }, { model: 'gpt-4o-mini' }])
+    })
+
+    it('importTrainingModels should POST .../models/import with the models body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ imported: 1, skipped: 1 }),
+      })
+
+      const result = await importTrainingModels('p1', ['gpt-4o', 'gpt-4o-mini'])
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/providers/p1/models/import',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ models: ['gpt-4o', 'gpt-4o-mini'] }),
+        }),
+      )
+      expect(result).toEqual({ imported: 1, skipped: 1 })
+    })
+
+    it('listTrainingModels should append enabled only when defined', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ items: [model] }) })
+
+      const result = await listTrainingModels(true)
+
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        '/api/training/models?enabled=true',
+        expect.anything(),
+      )
+      expect(result).toEqual([model])
+
+      await listTrainingModels()
+      expect(mockFetch).toHaveBeenLastCalledWith('/api/training/models', expect.anything())
+
+      await listTrainingModels(false)
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        '/api/training/models?enabled=false',
+        expect.anything(),
+      )
+    })
+
+    it('createTrainingModel should POST /training/models with providerId and model', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 201, json: () => Promise.resolve(model) })
+
+      await createTrainingModel({ providerId: 'p1', model: 'gpt-4o' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/models',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ providerId: 'p1', model: 'gpt-4o' }),
+        }),
+      )
+    })
+
+    it('updateTrainingModel should PUT /training/models/{id}', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(model) })
+
+      await updateTrainingModel('m1', { enabled: false })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/models/m1',
+        expect.objectContaining({ method: 'PUT', body: JSON.stringify({ enabled: false }) }),
+      )
+    })
+
+    it('deleteTrainingModel should DELETE /training/models/{id}', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+      await deleteTrainingModel('m1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/models/m1',
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+    })
+
+    it('recognizeTrainingDatasetItem should POST .../recognize with modelId and return text', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ text: '识别文本' }) })
+
+      const result = await recognizeTrainingDatasetItem('d1', 'i1', 'm1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets/d1/items/i1/recognize',
+        expect.objectContaining({ method: 'POST', body: JSON.stringify({ modelId: 'm1' }) }),
+      )
+      expect(result).toEqual({ text: '识别文本' })
+    })
+
+    it('createEmotionTasks should POST .../items/emotion-tasks with itemIds and modelId', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ created: 2, skipped: 1 }),
+      })
+
+      const result = await createEmotionTasks('d1', ['i1', 'i2', 'i3'], 'm1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/datasets/d1/items/emotion-tasks',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ itemIds: ['i1', 'i2', 'i3'], modelId: 'm1' }),
+        }),
+      )
+      expect(result).toEqual({ created: 2, skipped: 1 })
+    })
+
+    it('listEmotionTasks should build the query string and omit empty params', async () => {
+      const counts = { pending: 1, running: 0, done: 2, failed: 3 }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ items: [], counts }),
+      })
+
+      const result = await listEmotionTasks({ datasetId: 'd1', status: 'failed', limit: 50 })
+
+      const url = mockFetch.mock.calls[0][0] as string
+      expect(url).toContain('/api/training/emotion-tasks?')
+      expect(url).toContain('datasetId=d1')
+      expect(url).toContain('status=failed')
+      expect(url).toContain('limit=50')
+      expect(result).toEqual({ items: [], counts })
+
+      await listEmotionTasks()
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        '/api/training/emotion-tasks',
+        expect.anything(),
+      )
+    })
+
+    it('retryEmotionTask should POST /training/emotion-tasks/{id}/retry', async () => {
+      const task = {
+        id: 't1',
+        datasetId: 'd1',
+        itemId: 'i1',
+        audioKey: 'transcript:t1:0',
+        modelId: 'm1',
+        modelSlug: 'openai-prod/gpt-4o',
+        status: 'pending',
+        attempts: 2,
+        error: null,
+        emotion: null,
+        createdAt: '2026-09-27T00:00:00Z',
+        startedAt: null,
+        finishedAt: null,
+      }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(task) })
+
+      const result = await retryEmotionTask('t1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/emotion-tasks/t1/retry',
+        expect.objectContaining({ method: 'POST' }),
+      )
+      expect(result).toEqual(task)
+    })
+  })
+
   describe('apiErrorMessage', () => {
     it('should extract the error field from a JSON error body and map it to a readable message', () => {
       expect(apiErrorMessage({ serverMessage: '{"error":"task not done"}' })).toBe(
@@ -1512,6 +1778,35 @@ describe('API Client', () => {
       expect(
         apiErrorMessage({ serverMessage: '{"error":"transcript service unavailable"}' }),
       ).toBe('识别服务暂不可用，请稍后重试')
+    })
+
+    it('should map the new training provider/model/task error codes', () => {
+      const cases: [string, string][] = [
+        ['provider name exists', 'Provider 名称已存在'],
+        ['provider not found', 'Provider 不存在'],
+        ['unsupported provider type', '不支持的模型类型'],
+        ['invalid endpoint', '服务地址非法'],
+        ['api key is required', 'API key 必填'],
+        ['model exists', '模型已存在'],
+        ['model not found', '模型不存在'],
+        ['model is required', '模型名必填'],
+        ['model too long', '模型名过长'],
+        ['model disabled', '模型已停用'],
+        ['model does not support audio input', '该模型不支持音频输入'],
+        ['audio uri is empty', '音频地址为空'],
+        ['audio too large', '音频过大'],
+        ['audio unavailable', '音频暂不可用'],
+        ['model service unavailable', '模型服务不可用'],
+        ['invalid model output', '模型输出无法解析'],
+        ['itemIds is required', '请选择要识别的条目'],
+        ['provider service unavailable', '模型服务不可用'],
+        ['invalid provider response', '模型服务响应非法'],
+        ['task not failed', '任务未处于失败状态'],
+        ['task not found', '任务不存在'],
+      ]
+      for (const [code, message] of cases) {
+        expect(apiErrorMessage({ serverMessage: JSON.stringify({ error: code }) })).toBe(message)
+      }
     })
 
     it('should keep an unmapped error code or a non-JSON body as-is', () => {
