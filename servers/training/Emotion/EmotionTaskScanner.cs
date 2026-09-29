@@ -108,6 +108,7 @@ public sealed class EmotionTaskScanner(
                 continue;
             }
 
+            TrainingEmotionTaskRecord claimed;
             try
             {
                 var update = Builders<TrainingEmotionTaskRecord>.Update
@@ -121,6 +122,10 @@ public sealed class EmotionTaskScanner(
                     await SafeReleaseLockAsync(handle, task.Id);
                     continue;
                 }
+
+                // 交给 Runner 的是「领取后」的记录（Attempts 已累加），使 Runner 的 fencing 条件
+                // （Id + Status==RUNNING + Attempts）能与库中当前领取者精确匹配。
+                claimed = updated;
             }
             catch (Exception ex)
             {
@@ -132,7 +137,7 @@ public sealed class EmotionTaskScanner(
             }
 
             // 锁由 Runner 持有并在 finally 释放；额度在运行结束时释放，从而全局限流
-            _ = RunDetachedAsync(task, handle, ct);
+            _ = RunDetachedAsync(claimed, handle, ct);
         }
     }
 

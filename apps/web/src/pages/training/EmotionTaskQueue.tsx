@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { apiErrorMessage, listEmotionTasks, retryEmotionTask } from '../../api/client'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { apiErrorCodeText, apiErrorMessage, listEmotionTasks, retryEmotionTask } from '../../api/client'
 import { formatDateTime } from '../../utils/format'
 import type { components } from '../../api/schema-training'
 
@@ -36,14 +36,19 @@ export function EmotionTaskQueue({ datasetId, reloadToken = 0 }: EmotionTaskQueu
   const [error, setError] = useState('')
   /** 正在重试的任务 id（按任务禁用「重试」防重复提交）。 */
   const [retryingIds, setRetryingIds] = useState<string[]>([])
+  /** 请求序号：仅接受最新一次 `load` 的响应，避免慢响应后到覆盖新数据（如重试后显示旧状态）。 */
+  const loadSeq = useRef(0)
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current
     try {
       const data = await listEmotionTasks({ datasetId })
+      if (seq !== loadSeq.current) return
       setTasks(data.items ?? [])
       setCounts(data.counts ?? EMPTY_COUNTS)
       setError('')
     } catch (err) {
+      if (seq !== loadSeq.current) return
       setError(apiErrorMessage(err, '加载任务队列失败'))
     }
   }, [datasetId])
@@ -107,7 +112,7 @@ export function EmotionTaskQueue({ datasetId, reloadToken = 0 }: EmotionTaskQueu
                 <td style={cellStyle}>{task.modelSlug}</td>
                 <td style={cellStyle}>{STATUS_LABELS[task.status] ?? task.status}</td>
                 <td style={cellStyle}>{task.attempts}</td>
-                <td style={cellStyle}>{task.error ?? '-'}</td>
+                <td style={cellStyle}>{task.error ? apiErrorCodeText(task.error) : '-'}</td>
                 <td style={cellStyle}>{formatDateTime(task.createdAt)}</td>
                 <td style={cellStyle}>
                   {task.status === 'failed' && (

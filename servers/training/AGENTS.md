@@ -32,10 +32,10 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
   - `TrainingDatasetItemsController`（`[Route("api/training/datasets/{datasetId}/items")]`，接口 5-8）：列表（`audioType?`/`source?` 过滤，`CreatedAt`、`AudioKey` 升序）、导入、更新、批量删除；错误体统一 `{"error": "..."}`，非法 ObjectId 一律按「不存在」→ 404；存在性判定与前值回读走仓储 `GetByIdAsync` 单读
   - `TrainingProvidersController`（`[Route("api/training/providers")]`，接口 9-14，新增）：Provider 列表/新建/更新/删除（删除**级联删其下 Models**）、`GET {id}/models/discover`（按 `type` 选协议并去重排序；不可达 502 `provider service unavailable`、响应非法 502 `invalid provider response`）、`POST {id}/models/import`（`{imported, skipped}`；模型名 trim 后 > 128 → 400 `model too long`，与手动添加同口径）；name 全局唯一（409 `provider name exists`）、type 白名单 `openai|claude`、endpoint 仅 http/https 且去尾 `/`；**响应永不含 apiKey，仅 `apiKeySet`**
   - `TrainingModelsController`（`[Route("api/training/models")]`，接口 15-18，新增）：列表（`enabled?` 过滤，每项含服务端拼好的 `slug = {providerName}/{model}`）、手动添加（Provider 下拉口径，provider 404/重复 409 `model exists`）、更新（启停/改名 409）、删除
-  - `TrainingItemToolsController`（`[Route("api/training/datasets/{datasetId}/items")]`，接口 19-20，新增）：`POST {itemId}/recognize`（单条重新识别：dataset/item/model 校验 → 取音频转 base64 → 识别 prompt → JSON 解析 → 200 `{text}`，**不写库**；400 `model disabled`/`audio uri is empty`/`audio too large`/`model does not support audio input`/`unsupported provider type`；404；502 `audio unavailable`/`model service unavailable`/`invalid model output`）、`POST emotion-tasks`（批量提交 `{itemIds, modelId}` → `{created, skipped}`；skipped = 条目已有 PENDING/RUNNING 任务、条目 `text` 为空或 id 非法）
-  - `TrainingEmotionTasksController`（`[Route("api/training/emotion-tasks")]`，接口 21-22，新增）：队列查询（`datasetId?`/`status?`/`limit?`（默认 100 最大 500，`CreatedAt` 降序）+ `counts` 分组计数）、`POST {taskId}/retry`（仅 FAILED → PENDING，`attempts` 保留、`error` 清空；非 FAILED 400 `task not failed`）
+  - `TrainingItemToolsController`（`[Route("api/training/datasets/{datasetId}/items")]`，接口 19-20，新增）：`POST {itemId}/recognize`（单条重新识别：dataset/item/model（含 `Enabled`）校验 → 取音频转 base64 → 识别 prompt → JSON 解析 → 200 `{text}`，**不写库**；400 `model disabled`/`audio uri is empty`/`audio too large`/`model does not support audio input`/`unsupported provider type`；404；502 `audio unavailable`/`model service unavailable`/`invalid model output`）、`POST emotion-tasks`（批量提交 `{itemIds, modelId}` → `{created, skipped}`；model 停用 400 `model disabled`；skipped = 条目已有 PENDING/RUNNING 任务、条目 `text` 为空或 id 非法；**并发重复提交由 `ItemId_1_Active` 唯一索引兜底**，`HasActive` 预检 + `TryInsertActiveAsync` 捕获唯一键冲突计 skipped）
+  - `TrainingEmotionTasksController`（`[Route("api/training/emotion-tasks")]`，接口 21-22，新增）：队列查询（`datasetId?`/`status?`/`limit?`（默认 100 最大 500，`CreatedAt` 降序）+ `counts` 分组计数）、`POST {taskId}/retry`（**原子 CAS**：`RetryFailedAsync` filter 含 `Id + Status==FAILED`，仅 FAILED → PENDING，`attempts` 保留、`error` 清空；非 FAILED 400 `task not failed`；同条目已有其他活跃任务 409 `active task exists`；404）
 - `Ai/`（新增）：
-  - `IChatModelClient`/`IChatModelClientFactory`（`ChatAudio`/`ChatPrompt`；按 `provider.Type` 派发，未知类型抛 `ProviderTypeException`）、`ChatModelClientFactory`（named client `AiModel`）
+  - `IChatModelClient`/`IChatModelClientFactory`（`ChatAudio`/`ChatPrompt`；按 `provider.Type` 派发，未知类型抛 `ProviderTypeException`）、`ChatModelClientFactory`（named client `AiModel`；`SocketsHttpHandler.AllowAutoRedirect=false`，避免携带 API key 跟随重定向到其他主机）
   - `OpenAiLikeChatClient`（`POST {endpoint}/chat/completions`、Bearer、`text` + 可选 `input_audio`、`response_format: json_object` 且 400 降级重试一次）
   - `ClaudeLikeChatClient`（`POST {endpoint}/v1/messages`、`x-api-key` + `anthropic-version: 2023-06-01`、仅 `text`；音频直接抛 `ModelAudioNotSupportedException`）
   - `ModelJsonParser`（剥 ```json 围栏 → 首个平衡 `{...}` → 大小写不敏感反序列化 → 数值钳制；`ParseRecognizeText`/`ParseEmotion`；失败抛 `ModelOutputException`）
@@ -43,9 +43,9 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
   - `Prompts/RecognizePromptBuilder`、`Prompts/EmotionPromptBuilder`（硬约束 prompt）
   - `ModelExceptions`（`ProviderTypeException`/`ModelAudioNotSupportedException`/`ModelOutputException`/`InvalidProviderResponseException`/`AudioUnavailableException`/`AudioTooLargeException`）；日志不打 apiKey 与音频内容
 - `Emotion/`（新增，语义逐条仿 `recording-transcript-consumer/Tasks/TranscriptTaskLock`）：
-  - `EmotionTaskLock`（`IEmotionTaskLockProvider`/`RedisEmotionTaskLockProvider`，key `training:emotion-task-lock:{taskId}`，SET NX PX + 周期续期 + Lua token 比对释放 + `CheckOwnershipAsync` fencing；Redis 抖动 `IsHeldAsync` 保守按持有）
-  - `EmotionTaskScanner`（HostedService：`ScanIntervalSeconds` 周期 + 启动抖动、`ListClaimableAsync(ScanBatchSize)`、`MaxConcurrentTasks` 门控、僵尸 RUNNING 无锁接管、**僵尸 RUNNING** `MaxAttempts` 超限置 FAILED（PENDING 含人工 retry 保留 attempts 的任务放行执行）、异常不中断循环）
-  - `EmotionTaskRunner`（单任务编排：置 RUNNING → 读条目 → 空文本 FAILED → 拼情绪 prompt → 调模型 → 解析 → `SetEmotionAsync` 写 `Extensions.emotion` → DONE + `Emotion` 快照 + `FinishedAt`；逐阶段 fencing，失锁放弃写入；`finally` 释放锁）
+  - `EmotionTaskLock`（`IEmotionTaskLockProvider`/`RedisEmotionTaskLockProvider`，key `training:emotion-task-lock:{taskId}`，SET NX PX + 周期续期 + Lua token 比对释放 + `CheckOwnershipAsync` fencing；Redis 抖动 `IsHeldAsync` 保守按持有、`RenewAsync` 捕获异常置 `Lost` 返回 false（不抛出冲垮续期循环），续期循环单轮异常记日志后继续下一轮）
+  - `EmotionTaskScanner`（HostedService：`ScanIntervalSeconds` 周期 + 启动抖动、`ListClaimableAsync(ScanBatchSize)`、`MaxConcurrentTasks` 门控、僵尸 RUNNING 无锁接管、**僵尸 RUNNING** `MaxAttempts` 超限置 FAILED（PENDING 含人工 retry 保留 attempts 的任务放行执行）、异常不中断循环；置 RUNNING（Attempts 累加）后把**领取后的记录**交 Runner，使 Runner fencing 的 `Attempts` 与库一致）
+  - `EmotionTaskRunner`（单任务编排：置 RUNNING → 读模型（含 `Enabled`，停用 FAILED `model disabled`）/Provider/条目 → 空文本 FAILED → 拼情绪 prompt → 调模型 → 解析 → **CAS 到 DONE**（`UpdateRunningAsync` filter `Id + Status==RUNNING + Attempts`，闭合 TOCTOU，非持有者放弃）→ `SetEmotionAsync` 写 `Extensions.emotion`（条目被删除时改标 FAILED `item not found`）；逐阶段 fencing、失败原因白名单映射不透传 `ex.Message`；`finally` 释放锁）
   - 状态机 `PENDING → RUNNING → DONE | FAILED`，retry 仅 `FAILED → PENDING`
 - `Clients/`：`ITranscriptApiClient`/`TranscriptApiClient`（named client `TranscriptService`，`GET api/transcripts/task/{taskId}`；404 → null 表示任务不存在，其余非 20xx 抛 `HttpRequestException` 供控制器映 502）；`IRecordingAudioClient`/`RecordingAudioClient`（取音频片段；`endMs` 空按 `Ai:AudioClipDefaultDurationMs`（默认 300000）补齐——recording 片段端点要求 `endMs` 必填）
 - `Contracts/`：`Dtos.cs`（请求/响应 record，JSON 名小驼峰；含 `TrainingProvider`/`TrainingModel`/`EmotionResult`/`TrainingEmotionTask` 等新增）、`TrainingMapping.cs`（`GenerateAudioKey`/`BuildAudioUri`/`IsValidTimeRange`/`ToImportItem` + 新增 `ParseAudioUri`/`BuildModelSlug`/`ToEmotionDocument`/`FromEmotionDocument` 与 `To*Dto` 映射）
@@ -82,9 +82,9 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
 | PUT | `/api/training/models/{modelId}` | 更新模型（启停/改名；200/400/404/409） |
 | DELETE | `/api/training/models/{modelId}` | 删除模型（204/404） |
 | POST | `/api/training/datasets/{datasetId}/items/{itemId}/recognize` | 单条重新识别（200 `{text}` **不写库**；400/404/502） |
-| POST | `/api/training/datasets/{datasetId}/items/emotion-tasks` | 提交情绪识别任务（200 `{created, skipped}`；400/404） |
+| POST | `/api/training/datasets/{datasetId}/items/emotion-tasks` | 提交情绪识别任务（200 `{created, skipped}`；400/404 `model disabled`） |
 | GET | `/api/training/emotion-tasks` | 情绪任务队列（query `datasetId?`/`status?`/`limit?` → `{items, counts}`） |
-| POST | `/api/training/emotion-tasks/{taskId}/retry` | 重试失败任务（200；400 `task not failed`；404） |
+| POST | `/api/training/emotion-tasks/{taskId}/retry` | 重试失败任务（200；400 `task not failed`；404；409 `active task exists`） |
 
 对外统一经 `servers/api` 代理（`/api/training/**`，named client `TrainingService`），web 不直连本服务。
 
@@ -96,7 +96,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
   索引 `(DatasetId, AudioKey)` **唯一**、`(DatasetId, AudioType)`、`(DatasetId, Source)`。
 - `training_providers`：`Name`(唯一)/`Type`/`Endpoint`/`ApiKey`(明文入库、永不回传)/时间戳；索引 `Name` **唯一**。
 - `training_models`：`ProviderId`/`Model`/`Enabled`(默认 true)/时间戳；索引 `(ProviderId, Model)` **唯一**、`ProviderId`；`slug` 为派生字段不落库。
-- `training_emotion_tasks`：`DatasetId`/`ItemId`/`AudioKey`/`ModelId`/`ModelSlug`(快照)/`Status`/`Attempts`/`Error`/`Emotion`(BsonDocument?)/时间戳；索引 `(Status, CreatedAt)`、`(DatasetId, CreatedAt)`、`ItemId`。
+- `training_emotion_tasks`：`DatasetId`/`ItemId`/`AudioKey`/`ModelId`/`ModelSlug`(快照)/`Status`/`Attempts`/`Error`/`Emotion`(BsonDocument?)/时间戳；索引 `(Status, CreatedAt)`、`(DatasetId, CreatedAt)`、`ItemId`、**`ItemId_1_Active`（部分唯一：仅 PENDING/RUNNING，重复提交并发幂等兜底）**；状态迁移带 `Id + Status + Attempts` 条件（fencing 落到写操作），retry 为 `Id + Status==FAILED` 原子 CAS。
 - 情绪结果写入条目 `Extensions.emotion`（`SetEmotionAsync` 仅 `$set` 该键、同步刷新条目 `UpdatedAt`；重复识别以最新覆盖），零表结构变更；读取映射到 DTO `emotion`，缺失/格式不符 → null。情绪口径：八维强度 `0~1`、`emotionControlWeight` `0~10`、描述截断 ≤ 200 字，越界/超长均钳制/截断并记 Warn（`ModelJsonParser.ParseEmotion` 与 `TrainingMapping.To/FromEmotionDocument`）。
 - 实体与仓储位于 `servers/common/training`（`Z.Vtuber.Common.Training`），索引由 `TrainingMongoSetup.EnsureIndexesAsync` 幂等建立。
 

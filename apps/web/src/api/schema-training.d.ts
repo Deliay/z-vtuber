@@ -307,7 +307,7 @@ export interface paths {
         put?: never;
         /**
          * 提交情绪识别任务
-         * @description skipped 口径——条目已有 PENDING/RUNNING 任务（重复提交幂等）、条目 text 为空、itemIds 非法或条目不存在。
+         * @description skipped 口径——条目已有 PENDING/RUNNING 任务（重复提交幂等，并发由唯一索引兜底）、条目 text 为空、itemIds 非法或条目不存在。
          */
         post: operations["createTrainingEmotionTasks"];
         delete?: never;
@@ -347,7 +347,7 @@ export interface paths {
         put?: never;
         /**
          * 重试失败任务
-         * @description 仅 FAILED → PENDING；attempts 保留、error 清空。
+         * @description 仅 FAILED → PENDING（原子 CAS：Id + Status==FAILED）；attempts 保留、error 清空。同条目已有其他活跃任务时 409。
          */
         post: operations["retryTrainingEmotionTask"];
         delete?: never;
@@ -1462,7 +1462,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingEmotionTaskCreateResult"];
                 };
             };
-            /** @description {"error": "itemIds is required"} */
+            /** @description {"error": "itemIds is required"/"model disabled"} */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1541,6 +1541,15 @@ export interface operations {
             };
             /** @description {"error": "task not found"} */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description {"error": "active task exists"} */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

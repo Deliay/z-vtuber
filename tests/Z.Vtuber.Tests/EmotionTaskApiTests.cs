@@ -84,7 +84,8 @@ public class EmotionTaskApiTests(MongoDbFixture fixture) : IClassFixture<MongoDb
         return record.Id;
     }
 
-    private async Task<(TrainingProviderRecord Provider, TrainingModelRecord Model)> SeedModelAsync()
+    private async Task<(TrainingProviderRecord Provider, TrainingModelRecord Model)> SeedModelAsync(
+        bool enabled = true)
     {
         var now = DateTime.UtcNow;
         var provider = await Providers.InsertAsync(new TrainingProviderRecord
@@ -94,7 +95,7 @@ public class EmotionTaskApiTests(MongoDbFixture fixture) : IClassFixture<MongoDb
         });
         var model = await Models.InsertAsync(new TrainingModelRecord
         {
-            ProviderId = provider.Id, Model = "gpt-test", Enabled = true,
+            ProviderId = provider.Id, Model = "gpt-test", Enabled = enabled,
             CreatedAt = now, UpdatedAt = now,
         });
         return (provider, model);
@@ -191,6 +192,40 @@ public class EmotionTaskApiTests(MongoDbFixture fixture) : IClassFixture<MongoDb
         var second = PayloadOf(await controller.CreateEmotionTasks(datasetId.ToString(), request));
         Assert.Equal(0, second.Created);
         Assert.Equal(1, second.Skipped);
+        Assert.Single(await Tasks.ListAsync(datasetId, null, 100));
+    }
+
+    [Fact]
+    public async Task CreateEmotionTasks_DisabledModel_Returns400ModelDisabled()
+    {
+        var datasetId = await SeedDatasetAsync();
+        var (_, model) = await SeedModelAsync(enabled: false);
+        var item = await SeedItemAsync(datasetId);
+
+        var result = await CreateToolsController().CreateEmotionTasks(
+            datasetId.ToString(),
+            new TrainingEmotionTaskCreateRequest([item.Id.ToString()], model.Id.ToString()));
+
+        Assert.Equal("model disabled", ErrorOf(result, StatusCodes.Status400BadRequest));
+        Assert.Empty(await Tasks.ListAsync(datasetId, null, 100));
+    }
+
+    [Fact]
+    public async Task CreateEmotionTasks_ConcurrentRepeatSubmit_OnlyOneCreated()
+    {
+        var datasetId = await SeedDatasetAsync();
+        var (_, model) = await SeedModelAsync();
+        var item = await SeedItemAsync(datasetId);
+        var request = new TrainingEmotionTaskCreateRequest(
+            [item.Id.ToString()], model.Id.ToString());
+
+        // 并发（双击/双副本）绕过 HasActive 预检：唯一索引兜底，只允许建一条活跃任务
+        var results = await Task.WhenAll(
+            CreateToolsController().CreateEmotionTasks(datasetId.ToString(), request),
+            CreateToolsController().CreateEmotionTasks(datasetId.ToString(), request));
+
+        var created = results.Sum(r => PayloadOf(r).Created);
+        Assert.Equal(1, created);
         Assert.Single(await Tasks.ListAsync(datasetId, null, 100));
     }
 
@@ -353,5 +388,20 @@ public class EmotionTaskApiTests(MongoDbFixture fixture) : IClassFixture<MongoDb
         var result = await CreateQueueController().Retry(taskId);
 
         Assert.Equal("task not found", ErrorOf(result, StatusCodes.Status404NotFound));
+    }
+
+    [Fact]
+    public async Task Retry_WhenAnotherActiveTaskExists_Returns409()
+    {
+        var datasetId = await SeedDatasetAsync();
+        var itemId = ObjectId.GenerateNewId();
+        var failed = await SeedTaskAsync(datasetId, itemId, TrainingEmotionTaskStatus.Failed);
+        // 同条目已有活跃（PENDING）任务：原子重试命中唯一索引冲突，不得同时置回 PENDING
+        await SeedTaskAsync(datasetId, itemId, TrainingEmotionTaskStatus.Pending);
+
+        var result = await CreateQueueController().Retry(failed.Id.ToString());
+
+        Assert.Equal("active task exists", ErrorOf(result, StatusCodes.Status409Conflict));
+        Assert.Equal(TrainingEmotionTaskStatus.Failed, (await Tasks.GetByIdAsync(failed.Id))!.Status);
     }
 }

@@ -66,15 +66,29 @@ public sealed class TrainingEmotionTasksController(
             return BadRequest(new ErrorResponse("task not failed"));
         }
 
+        // 原子迁移（filter 含 Status==FAILED）：并发双击/与扫描器交错时只有一个命中，避免把
+        // 已被领取（RUNNING）或已完成（DONE）的任务重置为 PENDING 造成重复执行。
         var update = Builders<TrainingEmotionTaskRecord>.Update
             .Set(t => t.Status, TrainingEmotionTaskStatus.Pending)
             .Set(t => t.Error, (string?)null)
             .Set(t => t.StartedAt, (DateTime?)null)
             .Set(t => t.FinishedAt, (DateTime?)null);
-        var updated = await tasks.UpdateAsync(id, update, ct);
+
+        TrainingEmotionTaskRecord? updated;
+        try
+        {
+            updated = await tasks.RetryFailedAsync(id, update, ct);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 同条目已有其他活跃（PENDING/RUNNING）任务，不能同时把本任务也置回 PENDING
+            return Conflict(new ErrorResponse("active task exists"));
+        }
+
         if (updated is null)
         {
-            return NotFound(new ErrorResponse("task not found"));
+            // 竞态：状态在读取后被改变（已被领取/完成），不再满足 FAILED
+            return BadRequest(new ErrorResponse("task not failed"));
         }
 
         _logger.LogInformation("training emotion task retried: taskId={TaskId}", id);

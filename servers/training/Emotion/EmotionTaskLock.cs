@@ -118,7 +118,20 @@ public sealed class RedisEmotionTaskLockProvider(
         public async Task<bool> RenewAsync(CancellationToken ct = default)
         {
             var ttlMs = (long)TimeSpan.FromSeconds(options.LockTtlSeconds).TotalMilliseconds;
-            var result = (long)await db.ScriptEvaluateAsync(RenewScript, [key], [Token, ttlMs]);
+            long result;
+            try
+            {
+                result = (long)await db.ScriptEvaluateAsync(RenewScript, [key], [Token, ttlMs]);
+            }
+            catch (Exception ex)
+            {
+                // Redis 抖动：无法确认续期结果，保守置 Lost（调用方随即放弃写库，fencing 兜底），
+                // 避免异常冲垮续期任务后本节点在锁已过期时继续运行造成双跑。
+                Volatile.Write(ref _lost, 1);
+                logger.LogWarning(ex, "Emotion task lock {Key} renewal failed; treating as lost", key);
+                return false;
+            }
+
             var renewed = result == 1;
             if (!renewed)
             {
@@ -147,9 +160,23 @@ public sealed class RedisEmotionTaskLockProvider(
                 {
                     while (await timer.WaitForNextTickAsync(linked.Token))
                     {
-                        if (!await RenewAsync(linked.Token))
+                        try
+                        {
+                            if (!await RenewAsync(linked.Token))
+                            {
+                                // 已确认（或保守判定）失锁，停止续期
+                                return;
+                            }
+                        }
+                        catch (OperationCanceledException)
                         {
                             return;
+                        }
+                        catch (Exception ex)
+                        {
+                            // RenewAsync 已兜底 Redis 异常；此处仅防御性兜底单轮失败，继续下一轮而非终止续期
+                            logger.LogWarning(
+                                ex, "Emotion task lock renewal iteration failed for {Key}; continuing", key);
                         }
                     }
                 }

@@ -75,6 +75,8 @@ export function ModelSettingsTab() {
   const [manualProviderId, setManualProviderId] = useState('')
   const [manualModel, setManualModel] = useState('')
   const [manualError, setManualError] = useState('')
+  /** 手动添加模型进行中（防双击重复提交；请求途中忽略遮罩关闭）。 */
+  const [manualSubmitting, setManualSubmitting] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -174,10 +176,12 @@ export function ModelSettingsTab() {
   }
 
   const handleCreateModel = async () => {
+    if (manualSubmitting) return
     if (!manualProviderId) {
       setManualError('请选择 Provider')
       return
     }
+    setManualSubmitting(true)
     try {
       await createTrainingModel({ providerId: manualProviderId, model: manualModel.trim() })
       setManualOpen(false)
@@ -187,6 +191,8 @@ export function ModelSettingsTab() {
       await refresh()
     } catch (err) {
       setManualError(apiErrorMessage(err, '添加模型失败'))
+    } finally {
+      setManualSubmitting(false)
     }
   }
 
@@ -369,7 +375,12 @@ export function ModelSettingsTab() {
       )}
 
       {manualOpen && (
-        <div style={overlayStyle} onClick={() => setManualOpen(false)}>
+        <div
+          style={overlayStyle}
+          onClick={() => {
+            if (!manualSubmitting) setManualOpen(false)
+          }}
+        >
           <div
             role="dialog"
             aria-label="手动添加模型"
@@ -411,8 +422,12 @@ export function ModelSettingsTab() {
             {manualError && <div role="alert">{manualError}</div>}
 
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-              <button onClick={() => void handleCreateModel()}>确认添加</button>
-              <button onClick={() => setManualOpen(false)}>取消</button>
+              <button onClick={() => void handleCreateModel()} disabled={manualSubmitting}>
+                {manualSubmitting ? '添加中...' : '确认添加'}
+              </button>
+              <button onClick={() => setManualOpen(false)} disabled={manualSubmitting}>
+                取消
+              </button>
             </div>
           </div>
         </div>

@@ -86,7 +86,7 @@ public class EmotionTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<MongoD
             new EmotionTaskOptions(),
             NullLogger<EmotionTaskRunner>.Instance);
 
-    private async Task<ObjectId> InsertModelAsync()
+    private async Task<ObjectId> InsertModelAsync(bool enabled = true)
     {
         var now = DateTime.UtcNow;
         var provider = new TrainingProviderRecord
@@ -104,7 +104,7 @@ public class EmotionTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<MongoD
         {
             ProviderId = provider.Id,
             Model = "gpt-test",
-            Enabled = true,
+            Enabled = enabled,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -135,7 +135,7 @@ public class EmotionTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<MongoD
 
     private async Task<TrainingEmotionTaskRecord> InsertTaskAsync(
         ObjectId datasetId, ObjectId itemId, ObjectId modelId,
-        string status = TrainingEmotionTaskStatus.Pending)
+        string status = TrainingEmotionTaskStatus.Running)
     {
         var task = new TrainingEmotionTaskRecord
         {
@@ -214,6 +214,55 @@ public class EmotionTaskRunnerTests(MongoDbFixture mongo) : IClassFixture<MongoD
         Assert.Equal(TrainingEmotionTaskStatus.Failed, stored!.Status);
         Assert.Equal("model not found", stored.Error);
         Assert.True(handle.Released);
+    }
+
+    [Fact]
+    public async Task Run_ModelDisabled_MarksFailedWithoutCallingModel()
+    {
+        var modelId = await InsertModelAsync(enabled: false);
+        var (datasetId, itemId) = await InsertItemAsync("有文本");
+        var task = await InsertTaskAsync(datasetId, itemId, modelId);
+        var handle = new EmotionRunnerFakeLock { TaskId = task.Id };
+        var client = new EmotionRunnerStubChatClient();
+
+        await CreateRunner(client).RunAsync(task, handle);
+
+        var stored = await Tasks.GetByIdAsync(task.Id);
+        Assert.Equal(TrainingEmotionTaskStatus.Failed, stored!.Status);
+        Assert.Equal("model disabled", stored.Error);
+        Assert.Empty(client.Prompts);
+        Assert.Null((await Items.GetByIdAsync(datasetId, itemId))!.Extensions);
+    }
+
+    [Fact]
+    public async Task Run_AttemptTakenOverBeforeWrite_DoesNotWriteAndKeepsRunning()
+    {
+        var modelId = await InsertModelAsync();
+        var (datasetId, itemId) = await InsertItemAsync("有文本");
+        var seeded = await InsertTaskAsync(datasetId, itemId, modelId);
+        // 模拟另一节点已接管并把 Attempts 推进到 1；本节点持陈旧 Attempts=0
+        await Tasks.UpdateAsync(seeded.Id,
+            MongoDB.Driver.Builders<TrainingEmotionTaskRecord>.Update.Set(t => t.Attempts, 1));
+        var stale = new TrainingEmotionTaskRecord
+        {
+            Id = seeded.Id,
+            DatasetId = datasetId,
+            ItemId = itemId,
+            ModelId = modelId,
+            Status = TrainingEmotionTaskStatus.Running,
+            Attempts = 0,
+            CreatedAt = seeded.CreatedAt,
+        };
+        var handle = new EmotionRunnerFakeLock { TaskId = seeded.Id };
+
+        await CreateRunner(new EmotionRunnerStubChatClient()).RunAsync(stale, handle);
+
+        // fencing 落到写操作：陈旧领取者不得写条目、不得改状态
+        var stored = await Tasks.GetByIdAsync(seeded.Id);
+        Assert.Equal(1, stored!.Attempts);
+        Assert.Equal(TrainingEmotionTaskStatus.Running, stored.Status);
+        Assert.Null(stored.Emotion);
+        Assert.Null((await Items.GetByIdAsync(datasetId, itemId))!.Extensions);
     }
 
     [Fact]

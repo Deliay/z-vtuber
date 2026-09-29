@@ -46,6 +46,13 @@ public class EmotionTaskRunner(
                 return;
             }
 
+            if (!model.Enabled)
+            {
+                // 与单条重新识别同口径：停用模型不得执行（入队校验被绕过时仍在此兜底）。
+                await FailAsync(handle, task, "model disabled", ct);
+                return;
+            }
+
             var provider = await providers.GetByIdAsync(model.ProviderId, ct);
             if (provider is null)
             {
@@ -88,14 +95,36 @@ public class EmotionTaskRunner(
             }
 
             var document = TrainingMapping.ToEmotionDocument(emotion, logger);
-            await items.SetEmotionAsync(task.DatasetId, task.ItemId, document, ct);
 
-            var update = Builders<TrainingEmotionTaskRecord>.Update
+            // fencing 落到写操作：仅当任务仍是「本节点领取的 RUNNING（同 Attempts）」时，CAS 到 DONE
+            // 才能成功；命中失败说明锁已易主/任务被接管，放弃写入（保留 RUNNING 交新持有者），杜绝双写 emotion。
+            var doneUpdate = Builders<TrainingEmotionTaskRecord>.Update
                 .Set(t => t.Status, TrainingEmotionTaskStatus.Done)
                 .Set(t => t.Emotion, document)
                 .Set(t => t.FinishedAt, DateTime.UtcNow)
                 .Set(t => t.Error, null);
-            await tasks.UpdateAsync(task.Id, update, ct);
+            var claimed = await tasks.UpdateRunningAsync(task.Id, task.Attempts, doneUpdate, ct);
+            if (claimed is null)
+            {
+                logger.LogWarning(
+                    "Emotion task {TaskId} no longer owned at write time; skipping emotion write", task.Id);
+                return;
+            }
+
+            var updatedItem = await items.SetEmotionAsync(task.DatasetId, task.ItemId, document, ct);
+            if (updatedItem is null)
+            {
+                // 条目执行期间被删除：不得留下「DONE 但无对应条目的情绪快照」，改标 FAILED。
+                logger.LogWarning(
+                    "Emotion task {TaskId} item {ItemId} missing at write time; marking failed",
+                    task.Id, task.ItemId);
+                var missingUpdate = Builders<TrainingEmotionTaskRecord>.Update
+                    .Set(t => t.Status, TrainingEmotionTaskStatus.Failed)
+                    .Set(t => t.Error, "item not found")
+                    .Set(t => t.FinishedAt, DateTime.UtcNow);
+                await tasks.UpdateAsync(task.Id, missingUpdate, ct);
+                return;
+            }
 
             logger.LogInformation("Emotion task {TaskId} completed", task.Id);
         }
@@ -149,6 +178,11 @@ public class EmotionTaskRunner(
     private async Task FailAsync(
         IEmotionTaskLock handle, TrainingEmotionTaskRecord task, string error, CancellationToken ct)
     {
+        if (handle.Lost)
+        {
+            return;
+        }
+
         if (!await OwnsLockAsync(handle, task, ct))
         {
             return;
@@ -158,16 +192,22 @@ public class EmotionTaskRunner(
             .Set(t => t.Status, TrainingEmotionTaskStatus.Failed)
             .Set(t => t.Error, error)
             .Set(t => t.FinishedAt, DateTime.UtcNow);
-        await tasks.UpdateAsync(task.Id, update, ct);
+        // 同样带 Id+Status(RUNNING)+Attempts 条件：被接管后不得覆盖新持有者的状态。
+        var updated = await tasks.UpdateRunningAsync(task.Id, task.Attempts, update, ct);
+        if (updated is null)
+        {
+            logger.LogWarning("Emotion task {TaskId} no longer owned at failure write time", task.Id);
+        }
     }
 
     private static string MapError(Exception ex) => ex switch
     {
         ModelAudioNotSupportedException => "model does not support audio input",
-        ProviderTypeException => "provider type not supported",
+        ProviderTypeException => "unsupported provider type",
         HttpRequestException => "model service unavailable",
         TaskCanceledException => "model service unavailable",
         TimeoutException => "model service unavailable",
-        _ => string.IsNullOrWhiteSpace(ex.Message) ? "emotion task failed" : ex.Message,
+        // 不落库透传 ex.Message，避免泄露内部细节（Mongo/网络原始报文）。
+        _ => "emotion task failed",
     };
 }

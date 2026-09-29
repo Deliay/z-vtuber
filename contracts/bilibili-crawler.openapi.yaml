@@ -1389,7 +1389,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrainingEmotionTaskCreateResult"
         "400":
-          description: itemIds 缺失
+          description: itemIds 缺失或模型已停用
           content:
             application/json:
               schema:
@@ -1442,6 +1442,12 @@ paths:
                 $ref: "#/components/schemas/TrainingErrorResponse"
         "404":
           description: 任务不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "409":
+          description: 同条目已有活跃任务
           content:
             application/json:
               schema:

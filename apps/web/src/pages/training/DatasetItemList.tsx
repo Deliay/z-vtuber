@@ -142,6 +142,9 @@ export function DatasetItemList({
   const [reRecognizeId, setReRecognizeId] = useState<string | null>(null)
   const [emotionDialogOpen, setEmotionDialogOpen] = useState(false)
   const [error, setError] = useState('')
+  /** 内联保存/批量删除进行中标志（防重复提交）。 */
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -225,6 +228,7 @@ export function DatasetItemList({
   }
 
   const saveEdit = async (item: TrainingDatasetItem) => {
+    if (savingEdit) return
     const startMs = parsePosition(draft.start)
     const hasEnd = draft.end.trim() !== ''
     const endMs = hasEnd ? parsePosition(draft.end) : null
@@ -234,6 +238,7 @@ export function DatasetItemList({
       return
     }
 
+    setSavingEdit(true)
     try {
       const updated = await updateTrainingDatasetItem(datasetId, item.id, {
         audioUri: draft.audioUri,
@@ -245,16 +250,19 @@ export function DatasetItemList({
       cancelEdit()
     } catch (err) {
       setEditError(errorMessage(err))
+    } finally {
+      setSavingEdit(false)
     }
   }
 
   const handleBatchDelete = async () => {
-    if (selected.length === 0) return
+    if (selected.length === 0 || deleting) return
     const confirmed = window.confirm(
       `确认删除选中的 ${selected.length} 条音频数据？删除后不可恢复。`,
     )
     if (!confirmed) return
 
+    setDeleting(true)
     try {
       await batchDeleteTrainingDatasetItems(datasetId, selected)
       if (previewId && selected.includes(previewId)) setPreviewId(null)
@@ -262,6 +270,8 @@ export function DatasetItemList({
       await refresh()
     } catch (err) {
       setError(errorMessage(err))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -363,7 +373,9 @@ export function DatasetItemList({
         <td onClick={stopPropagation}>
           {editing ? (
             <>
-              <button onClick={() => void saveEdit(item)}>保存</button>
+              <button onClick={() => void saveEdit(item)} disabled={savingEdit}>
+                保存
+              </button>
               <button onClick={cancelEdit}>取消</button>
               <button onClick={() => setReRecognizeId(item.id)}>重新识别</button>
             </>
@@ -433,7 +445,7 @@ export function DatasetItemList({
             >
               情绪识别
             </button>
-            <button onClick={() => void handleBatchDelete()} disabled={selected.length === 0}>
+            <button onClick={() => void handleBatchDelete()} disabled={selected.length === 0 || deleting}>
               批量删除
             </button>
             {editError && <div role="alert">{editError}</div>}
@@ -526,6 +538,9 @@ export function DatasetItemList({
             <ReRecognizeDialog
               datasetId={datasetId}
               item={reRecognizeItem}
+              // 该行处于内联编辑态时带上当前草稿：「保存」与内联保存同 payload，
+              // 避免未保存的 audioUri/起止时间修改被静默丢弃。
+              draft={editingId === reRecognizeItem.id ? draft : undefined}
               onClose={() => setReRecognizeId(null)}
               onSaved={(updated) => {
                 setItems((prev) =>
