@@ -38,6 +38,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
   - `IChatModelClient`/`IChatModelClientFactory`（`ChatAudio`/`ChatPrompt`；按 `provider.Type` 派发，未知类型抛 `ProviderTypeException`）、`ChatModelClientFactory`（named client `AiModel`；`SocketsHttpHandler.AllowAutoRedirect=false`，避免携带 API key 跟随重定向到其他主机）
   - `OpenAiLikeChatClient`（`POST {endpoint}/chat/completions`、Bearer、`text` + 可选 `input_audio`、`response_format: json_object` 且 400 降级重试一次）
   - `ClaudeLikeChatClient`（`POST {endpoint}/v1/messages`、`x-api-key` + `anthropic-version: 2023-06-01`、仅 `text`；音频直接抛 `ModelAudioNotSupportedException`）
+  - `ModelSessionHeaderHandler`（挂在 named client `AiModel` 上的 message handler：**所有**模型服务调用固定携带 `x-opencode-session` 两个同名值 = agent 标识 `z-vtuber-agent/1.0` + 每次请求新生成的随机 guid，与调用场景无关（情绪识别 / 重新识别 / 模型发现一致）；同名多值在线上折叠为 `x-opencode-session: z-vtuber-agent/1.0, <guid>`）
   - `ModelJsonParser`（剥 ```json 围栏 → 首个平衡 `{...}` → 大小写不敏感反序列化 → 数值钳制；`ParseRecognizeText`/`ParseEmotion`；失败抛 `ModelOutputException`）
   - `ModelDiscoveryClient`（`IModelDiscoveryClient`：OpenAI-like `GET {endpoint}/models`、Claude-like `GET {endpoint}/v1/models`）
   - `Prompts/RecognizePromptBuilder`、`Prompts/EmotionPromptBuilder`（硬约束 prompt）
@@ -50,7 +51,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
 - `Clients/`：`ITranscriptApiClient`/`TranscriptApiClient`（named client `TranscriptService`，`GET api/transcripts/task/{taskId}`；404 → null 表示任务不存在，其余非 20xx 抛 `HttpRequestException` 供控制器映 502）；`IRecordingAudioClient`/`RecordingAudioClient`（取音频片段；`endMs` 空按 `Ai:AudioClipDefaultDurationMs`（默认 300000）补齐——recording 片段端点要求 `endMs` 必填）
 - `Contracts/`：`Dtos.cs`（请求/响应 record，JSON 名小驼峰；含 `TrainingProvider`/`TrainingModel`/`EmotionResult`/`TrainingEmotionTask` 等新增）、`TrainingMapping.cs`（`GenerateAudioKey`/`BuildAudioUri`/`IsValidTimeRange`/`ToImportItem` + 新增 `ParseAudioUri`/`BuildModelSlug`/`ToEmotionDocument`/`FromEmotionDocument` 与 `To*Dto` 映射）
 - `Configuration/`：`TrainingOptions`（节 `TranscriptService`）、`AiOptions`（节 `Ai`）、`EmotionTaskOptions`（节 `EmotionTask`）、`RecordingServiceOptions`（节 `RecordingService`）
-- `Program.cs`：Mongo/Redis（`ConnectionStrings:messaging`）/Options（`ValidateOnStart`）/五仓储/`ITranscriptApiClient`/`IRecordingAudioClient`/`IChatModelClientFactory`/`IModelDiscoveryClient`/`IEmotionTaskLockProvider`/`EmotionTaskRunner`/`EmotionTaskScanner`(HostedService) 注册，启动 `EnsureIndexesAsync()`、`/health` + `MapControllers()`
+- `Program.cs`：Mongo/Redis（`ConnectionStrings:messaging`）/Options（`ValidateOnStart`）/五仓储/`ITranscriptApiClient`/`IRecordingAudioClient`/`IChatModelClientFactory`/`IModelDiscoveryClient`/`ModelSessionHeaderHandler`（`AiModel` client 的 message handler）/`IEmotionTaskLockProvider`/`EmotionTaskRunner`/`EmotionTaskScanner`(HostedService) 注册，启动 `EnsureIndexesAsync()`、`/health` + `MapControllers()`
 - `MongoDbHealthCheck.cs`：与 crawler 同模式
 - `Properties/launchSettings.json`：本地 8086
 - `Dockerfile`：两阶段构建（纯 aspnet 运行时，`EXPOSE 8080`）
