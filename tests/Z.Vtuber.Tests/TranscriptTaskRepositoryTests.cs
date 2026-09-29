@@ -234,6 +234,44 @@ public class TranscriptTaskRepositoryTests(MongoDbFixture fixture) : IClassFixtu
     }
 
     [Fact]
+    public async Task DocWithExtraUnmappedElement_DeserializesIgnoringIt()
+    {
+        // 异构/存量版本文档含当前实体未映射的元素（如 OffsetMs 上线前旧二进制读到新版本写出的文档）：
+        // BsonClassMapSerializer 默认对未映射元素抛 FormatException；[BsonIgnoreExtraElements] 使其跳过
+        // 该类元素（与 TranscriptModelRecord.IsDefault 同类故障修复同模式）。
+        var collection = fixture.Database
+            .GetCollection<MongoDB.Bson.BsonDocument>(TranscriptCollectionNames.TranscriptTasks);
+        var id = ObjectId.GenerateNewId();
+        var now = DateTime.UtcNow;
+        await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument
+        {
+            { "_id", id },
+            { "RecordingId", ObjectId.GenerateNewId() },
+            { "RoomId", 100L },
+            { "File", "a.flv" },
+            { "ModelId", ObjectId.GenerateNewId() },
+            { "Type", TranscriptTaskTypes.Recording },
+            { "Mode", TranscriptTaskModes.File },
+            { "Source", TranscriptTaskSources.Manual },
+            { "Position", 1234L },
+            { "OffsetMs", 2500L },
+            { "Status", TranscriptTaskStatus.Pending },
+            { "CreatedAt", now },
+            { "UpdatedAt", now },
+            // 当前实体未映射的残留/前向元素：必须被忽略而不能抛 FormatException
+            { "LegacyUnknownField", "leftover" },
+            { "SomeFutureField", 42L },
+        });
+
+        var scannable = await Tasks.ListScannableAsync(100);
+
+        var record = Assert.Single(scannable, t => t.Id == id);
+        Assert.Equal(2500, record!.OffsetMs);
+        Assert.Equal(1234, record.Position);
+        Assert.Equal(TranscriptTaskStatus.Pending, record.Status);
+    }
+
+    [Fact]
     public async Task CountByModelAndStatus_CountsOnlyMatching()
     {
         var repository = Tasks;
