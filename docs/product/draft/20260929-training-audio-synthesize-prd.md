@@ -167,7 +167,7 @@ flowchart TD
 
 - 内网音频生成接口 `https://tts.internal.fffdan.com/synthesize`（IndexTTS-2.5，`Deliay/index-tts-api`）；
 - 音频数据集（条目具备文本 + 音频地址，供音色/情绪参考取数）；
-- **本地向量服务**（新增）：本地 embedding 服务为文本生成向量（音色匹配）、本地模型为输入文本生成情感向量（情绪匹配），**均在本地、不依赖三方 LLM API**；
+- **本地 Ollama 向量服务**（新增，已搭建）：本地 Ollama「`https://ollama.internal.fffdan.com/`」为文本生成向量（音色匹配）、其本地模型为输入文本生成情感向量（情绪匹配），**均在本地、不依赖三方 LLM API**；
 - **Milvus 向量库**（新增）：承载向量索引与相似检索（音色/情绪 top-1）；
 - 条目情绪标注（既有情绪识别产出的 `Extensions.emotion`）：作为情绪匹配候选。
 
