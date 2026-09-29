@@ -1,16 +1,17 @@
 ---
-description: AI 训练模块「音频生成（数据集语音合成）」技术提案：training 新增 /api/training/datasets/{id}/synthesize 与 vectors/rebuild，向量由本地 Ollama（https://ollama.internal.fffdan.com/）生成（文本向量 + 情感向量，不依赖三方 LLM API），向量存储与相似检索用 Milvus（Aspire Milvus 集成，MongoDB 7 无 $vectorSearch），手写 multipart 调用 index-tts-api /synthesize 返回 audio/wav
+description: AI 训练模块「音频生成（数据集语音合成）」技术提案：training 新增 /api/training/datasets/{id}/synthesize 与 vectors/rebuild，文本向量由本地 Ollama（https://ollama.internal.fffdan.com/）embedding 生成（不依赖三方），情感向量用配置的可用模型 + EmotionPromptBuilder 生成（语音/台词与输入文本情感识别同口径），向量存储与相似检索用 Milvus（Aspire Milvus 集成，MongoDB 7 无 $vectorSearch），手写 multipart 调用 index-tts-api /synthesize 返回 audio/wav
 type: Permanent
 ---
 
 # AI 训练 - 音频生成（数据集语音合成） - 技术提案
 
-- 日期：2026-09-29（修订：2026-09-30，改用 Milvus + 本地向量服务）
+- 日期：2026-09-29（修订：2026-09-30，改用 Milvus + 本地向量服务；再修订：2026-09-30，情感向量改用配置的可用模型）
 - 状态：待评审（返工修订）
 - feat-branch：`feat/training-audio-synthesize`
 - 关联文档：[PRD](../../product/draft/20260929-training-audio-synthesize-prd.md)
 
 > **返工修订说明**：按下游评审意见调整——① 向量来源改用**本地服务**，不依赖三方 LLM API；② 放弃以 MongoDB 承载向量，改用 **Milvus**（调研结论：MongoDB 7 自建版无 `$vectorSearch`，见 §1.1④）。
+> **修订说明（2026-09-30，用户确认）**：情感向量来源改用**配置的可用模型**（既有 Models 管理配置的 OpenAI-like / Claude-like）+ `EmotionPromptBuilder`——需求原文「使用可用的模型，使用 prompt 生成情感向量」中的「可用的模型」即此，语音/台词与输入文本的情感向量识别均走该链路；本地 Ollama **仅**承担文本转向量（embedding，Milvus 相似匹配）。
 
 ## 1. 概述
 
@@ -31,27 +32,27 @@ type: Permanent
 - 条目实体 `servers/common/training/Entities/TrainingDatasetItemRecord.cs`（集合 `training_dataset_items`）：`AudioUri`/`StartMs`/`EndMs`/`Text`/`Extensions`（BsonDocument）；
 - 情绪标注落于 `Extensions.emotion`（八维 0~1 + `emotionControlWeight` 0~10 + 描述）；参考音频取数复用 `servers/training/Clients/IRecordingAudioClient.cs` `GetClipAsync` → `AudioClip(Bytes, ContentType)`。
 
-**③ 可用模型基建可复用生成情感向量，但模型须本地化。**
+**③ 可用模型基建可直接复用生成情感向量（需求「使用可用的模型」）。**
 
-- 模型管理（Providers/Models）与 `IChatModelClient`、情绪 prompt `EmotionPromptBuilder`（文本 → 十字段情绪 JSON）、`ModelJsonParser.ParseEmotion` 已上线；
-- **按「不依赖三方 LLM API」约束**：本需求的情感向量由**本地 Ollama**「`https://ollama.internal.fffdan.com/`」的本地模型生成（经 Models 注册其本地 endpoint `/v1`，或独立本地模型配置），不调用 api.openai.com / Anthropic 等三方接口。
+- 模型管理（Providers/Models）与 `IChatModelClient`、情绪 prompt `EmotionPromptBuilder`（文本 → 十字段情绪 JSON）、`ModelJsonParser.ParseEmotion` 已上线（OpenAI-like `/chat/completions`、Claude-like `/v1/messages`）；
+- **情感向量用配置的可用模型生成**（2026-09-30 修订确认）：需求原文「使用可用的模型，使用 prompt 生成文本的情感向量」——「可用的模型」= 既有 Models 管理所配置的模型（OpenAI-like / Claude-like），与既有情绪识别任务（`EmotionTaskRunner`）同链路同口径；语音/台词（条目情绪标注）与输入文本的情感向量识别均走此链路。
 
 **④ 向量须本地生成；MongoDB 7 自建版无向量检索能力，改用 Milvus（调研结论）。**
 
-- **向量来源 = 本地 Ollama（已搭建）**：上游已搭建本地 **Ollama**「`https://ollama.internal.fffdan.com/`」——文本向量由其 `/api/embeddings`（或 OpenAI 兼容 `/v1/embeddings`）生成，情感向量由其本地模型 + prompt 生成，**均不依赖三方 LLM API**；
+- **文本向量 = 本地 Ollama embedding（已搭建）**：上游已搭建本地 **Ollama**「`https://ollama.internal.fffdan.com/`」——文本向量（音色匹配用）由其 `/api/embeddings`（或 OpenAI 兼容 `/v1/embeddings`）生成，**不依赖三方**；情感向量**不走 Ollama**，按需求「使用可用的模型」用配置的可用模型生成（见 §1.1③）；
 - **MongoDB 向量检索能力调研**：`$vectorSearch`（官方文档 [vectorSearch](https://www.mongodb.com/docs/manual/reference/operator/aggregation/vectorSearch/)）仅在 **MongoDB Atlas（6.0.11+）**、**MongoDB Enterprise 8.2+（K8s Operator）**、**MongoDB Community 8.2+** 可用；本项目为**自建 MongoDB 7.0**（`MongoDB.Driver` 3.9.0 + `Aspire.MongoDB.Driver`，测试用 Testcontainers 自建），**不在 `$vectorSearch` 支持范围内**，无法在 Mongo 内建向量索引/检索；
 - **故向量存储与相似检索改用 Milvus**（开源向量库，专为向量相似度检索）：经 **Aspire Milvus 集成**接入（托管 `milvusdb/milvus` 容器 + `Aspire.Milvus.Client`，见 [aspire.dev Milvus](https://aspire.dev/integrations/databases/milvus/milvus-get-started/)）；MongoDB 继续承载条目/情绪文本等**元数据**，向量索引作为**可重建的派生数据**存于 Milvus（FLAT 索引，千级数据精确检索且结果确定）。
 
 ### 1.2 目标
 
 1. training 新增 `POST /api/training/datasets/{datasetId}/synthesize`：输入 `{ text }`（可选 `lang`/`modelId`），返回 `audio/wav`；`servers/api` `/api/training/**` 代理镜像暴露；
-2. **向量本地生成**：文本向量与情感向量均由本地 Ollama「`https://ollama.internal.fffdan.com/`」产出，**不依赖三方 LLM API**；
+2. **文本向量本地生成**：文本向量由本地 Ollama「`https://ollama.internal.fffdan.com/`」embedding 产出，**不依赖三方**；情感向量按需求「使用可用的模型」由**配置的可用模型**（Models 管理，OpenAI-like / Claude-like）+ `EmotionPromptBuilder` 产出；
 3. **向量存储/检索用 Milvus**：条目文本向量 + 八维情感向量入 Milvus（Aspire Milvus 集成），音色匹配 = 文本向量检索 top-1、情绪匹配 = 情感向量检索 top-1；配套 `POST .../vectors/rebuild` 从 MongoDB（条目文本/情绪）重建 Milvus 向量索引；
 4. 手写 multipart 客户端调用上游 `/synthesize`（`speaker_prompt` 必带、`emo_*` 按匹配），返回 WAV；契约先行 + codegen，TDD 补齐测试（Testcontainers Milvus）。
 
 ### 1.3 范围
 
-- **内**：`servers/training`（Synthesize 控制器、`Synthesis/` 匹配与编排、`Clients/IndexTtsClient`、`Vectors/`（本地 embedding 客户端 + Milvus 向量仓储 + 检索）、配置节）；`contracts/training.openapi.yaml`（+2 端点）+ `contracts/bilibili-crawler.openapi.yaml`（镜像）；`servers/api/Controllers/TrainingProxyController.cs`（+2 action）；`infra/apphost/AppHost.cs`（**+ Milvus 资源 + 本地 embedding/model 服务**）；`tests/Z.Vtuber.Tests`（Testcontainers Milvus）。
+- **内**：`servers/training`（Synthesize 控制器、`Synthesis/` 匹配与编排、`Clients/IndexTtsClient`、`Vectors/`（本地 embedding 客户端 + Milvus 向量仓储 + 检索）、配置节）；`contracts/training.openapi.yaml`（+2 端点）+ `contracts/bilibili-crawler.openapi.yaml`（镜像）；`servers/api/Controllers/TrainingProxyController.cs`（+2 action）；`infra/apphost/AppHost.cs`（**+ Milvus 资源 + `Embedding`/`Tts` BaseUrl 注入**）；`tests/Z.Vtuber.Tests`（Testcontainers Milvus）。
 - **外**：数据集/导入/编辑/情绪识别/波形试听**零改动语义**；recording 片段端点零改动；上游 index-tts-api 零改动；合成结果不入库/不缓存（本期）；Web 合成界面、批量合成、模型训练（本期不做）；Milvus 仅作向量索引（元数据仍在 MongoDB）。
 
 ## 2. 技术架构
@@ -66,12 +67,12 @@ graph TD
       SC[TrainingSynthesizeController] --> SS[SynthesizeService 编排]
       SS --> VE[VectorSearch / VectorStore<br/>Milvus 向量检索 top-1]
       SS --> EB[LocalEmbeddingClient<br/>文本向量]
-      SS --> CH[IChatModelClient 本地模型<br/>情感向量]
+      SS --> CH[IChatModelClient 配置的可用模型<br/>情感向量]
       SS --> RA[IRecordingAudioClient<br/>参考音频]
       SS --> TT[IndexTtsClient<br/>multipart /synthesize]
     end
     EB -->|"POST /api/embeddings"| LEMB["本地 Ollama<br/>https://ollama.internal.fffdan.com/"]
-    CH -->|"/v1/chat/completions"| LLM["本地 Ollama<br/>https://ollama.internal.fffdan.com/"]
+    CH -->|"chat/completions 或 /v1/messages"| LLM["大模型服务（OpenAI-like / Claude-like）<br/>Models 管理配置的可用模型"]
     VE -->|"向量索引 + ANN 检索<br/>Aspire.Milvus.Client"| MIL[(Milvus<br/>item_text_embeddings<br/>item_emotion_vectors)]
     RA -->|"GET api/{roomId}/recordings/{file}/audio"| REC[servers/recording]
     TT -->|"POST /synthesize<br/>multipart（speaker_prompt 必带 + emo_*）"| TTS["index-tts-api<br/>https://tts.internal.fffdan.com"]
@@ -84,9 +85,9 @@ graph TD
 |------|---------|------|
 | 后端 | C# (.NET 10) ASP.NET Core Controllers（training 服务内扩展） | 不新建服务；沿用控制器 + 编排 + DTO 映射模式 |
 | 文本向量 | **本地 Ollama**（`https://ollama.internal.fffdan.com/`，`/api/embeddings`，手写 `HttpClient`） | **上游已搭建 Ollama**，不依赖三方 LLM API |
-| 情感向量 | 复用 `EmotionPromptBuilder` + `IChatModelClient`（指向**本地 Ollama** `/v1/chat/completions`） | 本地 Ollama 模型 + prompt 生成八维情感向量 |
+| 情感向量 | 复用 `EmotionPromptBuilder` + `IChatModelClient`（Models 管理配置的**可用模型**） | 配置的可用模型（OpenAI-like / Claude-like）+ prompt 生成八维情感向量，与既有情绪识别同链路 |
 | 向量库 | **Milvus**（`Aspire.Milvus.Client` + `Milvus.Client`） | 向量索引 + ANN 检索（FLAT，千级精确）；替代 MongoDB 承载向量 |
-| 服务编排 | .NET Aspire（`infra/apphost`） | **托管 Milvus（`milvusdb/milvus`）** + 本地 embedding/model 服务 + training |
+| 服务编排 | .NET Aspire（`infra/apphost`） | **托管 Milvus（`milvusdb/milvus`）** + training；内网 Ollama/大模型服务仅配置接入（已上线，不托管） |
 | TTS 上游 | 手写 multipart `HttpClient`（`IndexTtsClient`） | 契约面窄，仓库零新增 NuGet；`AllowAutoRedirect=false` |
 | 数据库 | MongoDB（元数据：条目/情绪文本）+ Milvus（向量索引，派生） | Mongo 7 无 `$vectorSearch`（见 §1.1④），向量走 Milvus |
 | 测试 | xUnit + Testcontainers（Mongo + **Milvus**）+ 假 HTTP 服务 | 本地 embedding/TTS/recording 用假服务契约测试 |
@@ -101,7 +102,7 @@ graph TD
 | `servers/training/Controllers`（变更） | `TrainingSynthesizeController` | `POST .../synthesize`（返回 `audio/wav`）+ `POST .../vectors/rebuild` |
 | `servers/api`（变更） | `/api/training/**` +2 镜像 action | `audio/wav` 二进制透传 |
 | `contracts/`（变更） | training 契约 +2 端点 + api 镜像 | 契约先行，web codegen |
-| `infra/apphost`（变更） | **+ Milvus 资源** + 本地 embedding/model 服务 + `Tts:BaseUrl` | Aspire Milvus 托管 + 连接注入 |
+| `infra/apphost`（变更） | **+ Milvus 资源** + `Embedding:BaseUrl`/`Tts:BaseUrl` 配置注入 | Aspire Milvus 托管 + 连接注入；Ollama/大模型服务内网已上线仅配置接入 |
 
 ## 3. API 设计
 
@@ -119,7 +120,7 @@ graph TD
   |------|------|------|------|
   | `text` | string | 是 | 待合成文本（trim 后非空） |
   | `lang` | string | 否 | 语种 `ZH/EN/JA/ES/AR`，缺省 `Tts:DefaultLang`（默认 `ZH`） |
-  | `modelId` | string | 否 | 生成情感向量所用**本地**模型（缺省 `Synthesize:DefaultEmotionModelId`，再缺省首个启用模型） |
+  | `modelId` | string | 否 | 生成情感向量所用**可用模型**（Models 管理配置；缺省 `Synthesize:DefaultEmotionModelId`，再缺省首个启用模型） |
 
 - **响应**
   - `200 audio/wav`：合成音频（上游 WAV 透传）；
@@ -140,7 +141,7 @@ TrainingSynthesizeRequest:
   properties:
     text: { type: string, description: 待合成文本（必填） }
     lang: { type: string, nullable: true, description: "语种 ZH/EN/JA/ES/AR，缺省 Tts:DefaultLang（默认 ZH）" }
-    modelId: { type: string, nullable: true, description: 生成情感向量所用本地模型 id }
+    modelId: { type: string, nullable: true, description: 生成情感向量所用可用模型 id（Models 管理配置） }
 
 # 成功响应为 audio/wav 二进制，X-Speaker-Audio-Key / X-Emo-Audio-Key 标注命中参考
 ```
@@ -222,7 +223,7 @@ sequenceDiagram
     participant T as training(SynthesizeService)
     participant E as 本地 embedding 服务
     participant V as Milvus
-    participant L as 本地模型(情感)
+    participant L as 可用模型(情感)
     participant R as recording(参考音频)
     participant S as index-tts-api
 
@@ -237,7 +238,7 @@ sequenceDiagram
     else 命中 speaker
         T->>R: 取 speaker 条目音频片段（失败取次优，均失败 502 audio unavailable）
         R-->>T: speaker_prompt 字节
-        T->>L: 本地模型 + 情感 prompt(text) → 八维情感向量（失败降级中性）
+        T->>L: 可用模型（配置）+ 情感 prompt(text) → 八维情感向量（失败降级中性）
         T->>V: SearchEmotionAsync(datasetId, 情感向量)
         V-->>T: 情绪候选 top-1（可空）
         opt 命中情绪参考
@@ -251,7 +252,7 @@ sequenceDiagram
     end
 ```
 
-注：情绪生成/匹配为 best-effort（无候选/本地模型失败 → 省略 `emo_*` 中性合成）；`speaker_prompt` 上游必填，故音色匹配为硬前置。
+注：情绪生成/匹配为 best-effort（无候选/情感模型失败 → 省略 `emo_*` 中性合成）；`speaker_prompt` 上游必填，故音色匹配为硬前置。
 
 #### 流程 2: 向量索引同步（导入 / 编辑 / 情绪写入 / 重建）
 
@@ -282,9 +283,9 @@ flowchart LR
 - `RebuildAsync(datasetId)`：`ListByDatasetAsync` → 逐条（或批量）本地 embedding 算文本向量 + 取 `Extensions.emotion` 八维 → `UpsertItemVectorsAsync`，返回 `{updated}`；
 - 增量：导入/编辑 text 后、情绪识别写入 `SetEmotionAsync` 后**同步 Milvus**（失败仅 Warn，主流程不阻断，待 `vectors/rebuild` 兜底）。
 
-#### 实现点 4: 情感向量生成（复用，模型本地化）
+#### 实现点 4: 情感向量生成（复用可用模型链路）
 
-- `SynthesizeService` 调 `EmotionPromptBuilder`（输入文本 → 十字段 JSON）+ `IChatModelClient.CompleteJsonAsync`（`modelId`/默认模型，**指向本地 Ollama** `https://ollama.internal.fffdan.com/v1`，OpenAI 兼容 `/v1/chat/completions`）→ `ModelJsonParser.ParseEmotion` → 八维 `EmotionVector`；
+- `SynthesizeService` 调 `EmotionPromptBuilder`（输入文本 → 十字段 JSON）+ `IChatModelClientFactory.Create(provider.Type)` + `IChatModelClient.CompleteJsonAsync`（`modelId`/默认模型 = **Models 管理配置的可用模型**，OpenAI-like `/chat/completions` 或 Claude-like `/v1/messages`）→ `ModelJsonParser.ParseEmotion` → 八维 `EmotionVector`；与情绪识别任务（`EmotionTaskRunner`）同链路同口径（含 `x-opencode-session` 头）；
 - 生成失败/模型不可用/输出非法 → 降级中性（省略 `emo_*`），记 Warn，不 502。
 
 #### 实现点 5: 上游 TTS 客户端（`Clients/IndexTtsClient.cs`）
@@ -304,11 +305,11 @@ flowchart LR
 
 #### 实现点 8: 编排与配置（`infra/apphost` + `Configuration`）
 
-- `infra/apphost/AppHost.cs`：**新增 Milvus 资源**（Aspire Milvus 托管 `milvusdb/milvus` + 可选 Attu）+ **本地 embedding/model 服务**（Ollama/本地推理容器）+ `Tts__BaseUrl`；training `.WithReference(milvus)`；
+- `infra/apphost/AppHost.cs`：**新增 Milvus 资源**（Aspire Milvus 集成托管 `milvusdb/milvus` + 可选 Attu）+ `Embedding__BaseUrl`/`Tts__BaseUrl` 注入（内网 Ollama 与 index-tts-api 为已上线服务，仅配置接入、不托管）；training `.WithReference(milvus)`；
 - `EmbeddingOptions`（节 `Embedding`）：`BaseUrl`（本地 Ollama，默认 `https://ollama.internal.fffdan.com/`）、`Model`（如 `bge-m3`/`nomic-embed-text`）、`Dimensions?`、`RequestTimeoutSeconds`；
 - `MilvusOptions`（节 `Milvus`/连接串）：`Endpoint`/`Database`（Aspire 注入）；
 - `TtsOptions`（节 `Tts`）：`BaseUrl`（默认 `https://tts.internal.fffdan.com`）、`RequestTimeoutSeconds`、`DefaultLang`、`DefaultEmoAlpha`、`DurationFactor` 等；
-- `SynthesizeOptions`（节 `Synthesize`）：`DefaultEmotionModelId?`（指向本地 Ollama 的模型）、`MaxReferenceDurationMs?`。
+- `SynthesizeOptions`（节 `Synthesize`）：`DefaultEmotionModelId?`（Models 管理配置的可用模型 id）、`MaxReferenceDurationMs?`。
 
 ### 5.3 不在本期的事项
 
@@ -323,12 +324,13 @@ flowchart LR
 
 | 决策 | 选项 A | 选项 B | 最终选择 | 原因 |
 |------|--------|--------|---------|------|
-| 向量来源 | **本地 Ollama**（`https://ollama.internal.fffdan.com/`，文本向量 + 情感向量） | 三方 LLM API（OpenAI/Claude `/embeddings`/chat） | **A** | 评审明确「向量来源用本地服务、不依赖三方 LLM API」；上游已搭建 Ollama，本地可控、内网自足 |
+| 文本向量来源 | **本地 Ollama embedding**（`https://ollama.internal.fffdan.com/`） | 三方 LLM API `/embeddings` | **A** | 评审明确「向量来源用本地服务、不依赖三方 LLM API」；上游已搭建 Ollama，本地可控、内网自足 |
+| 情感向量来源 | **配置的可用模型**（Models 管理，OpenAI-like / Claude-like）+ prompt（复用 `EmotionPromptBuilder`） | 本地 Ollama 模型 / 规则词典 | **A** | 需求原文「使用可用的模型，使用 prompt 生成情感向量」——「可用的模型」即既有模型管理配置的模型；2026-09-30 修订确认沿用该口径（语音/台词与输入文本情感识别一致） |
 | 向量存储/检索 | **Milvus**（开源向量库） | MongoDB 承载向量 | **A** | MongoDB 7 自建版无 `$vectorSearch`（仅 Atlas / 8.2+，见 §1.1④）；Milvus 专为向量检索，Aspire 有成熟集成 |
 | Mongo 与向量关系 | Mongo 管元数据、Milvus 存向量（派生、可重建） | 向量塞 Mongo `Extensions` | **A** | Mongo 7 无向量索引；向量可由 `Text`/`Extensions.emotion` 重建，Milvus 作纯索引最清晰 |
 | Milvus 接入 | **Aspire Milvus 集成**（`Aspire.Milvus.Client` + 托管） | 手工 docker + 连接串 | **A** | 人工指定参考 aspire.dev Milvus；零配置本地开发 + 健康检查 + dashboard |
-| 向量检索索引 | FLAT（精确） | IVF/HNSW（近似） | **A** | 千级数据量，FLAT 精确且确定性（可复现）；规模增长再切 ANN |
-| 情感向量来源 | 本地 Ollama 模型 + prompt（复用 `EmotionPromptBuilder`） | 三方 LLM / 规则词典 | **A** | 需求「使用可用的模型，使用 prompt 生成情感向量」+ 评审「本地、不依赖三方」→ 用本地 Ollama 模型 |
+| 向量检索索引 | FLAT（精确）+ 稳定 tie-break（同分按 itemId 升序） | IVF/HNSW（近似） | **A** | 千级数据量，FLAT 精确且确定性（可复现）；规模增长再切 ANN |
+| 情感向量生成确定性 | 请求固定 `temperature=0`（两适配器 body） | 默认采样参数 | **A** | PRD 1.3「可预期、可复现」口径：匹配层 FLAT + 稳定 tie-break 已确定，生成层再固定温度最大化稳定（模型升级除外） |
 | emo_prompt/emo_vector 取值 | 用**匹配条目**的情绪向量+音频 | 用**生成**的情感向量当 emo_vector | **A** | 需求「匹配…的数据作为 emo_prompt 和 emo_vector」；与 emo_prompt 音频自洽 |
 | 情绪距离度量 | L2（八维 0~1 强度） | 余弦 | **A** | 八维是强度幅值非方向向量，L2 更贴合「最相近」 |
 | emo_alpha 映射 | `clamp(emotionControlWeight/10, 0, 1)` | 固定 1.0 | **A** | 把 0~10 控制权重归一到上游 0~1；缺省 `Tts:DefaultEmoAlpha`(1.0) |
@@ -344,12 +346,12 @@ flowchart LR
 | 类型 | 内容 | 说明 |
 |------|------|------|
 | 依赖 | 内网 index-tts-api `/synthesize`（`Tts:BaseUrl`） | 上游合成；`speaker_prompt` 必填 |
-| 依赖 | **本地 Ollama**（`https://ollama.internal.fffdan.com/`，`Embedding:BaseUrl`） | 文本向量（`/api/embeddings`）；**本地**，不依赖三方 LLM API |
-| 依赖 | **本地 Ollama**（`https://ollama.internal.fffdan.com/`） | 情感向量生成（`EmotionPromptBuilder` + `/v1/chat/completions`）；**本地** |
+| 依赖 | **本地 Ollama**（`https://ollama.internal.fffdan.com/`，`Embedding:BaseUrl`） | 文本向量（`/api/embeddings`）；**本地**，不依赖三方 |
+| 依赖 | **配置的可用模型**（Models 管理，OpenAI-like / Claude-like） | 情感向量生成（`EmotionPromptBuilder` + `IChatModelClient`）；需求「使用可用的模型」 |
 | 依赖 | **Milvus**（Aspire Milvus 集成，`Aspire.Milvus.Client`） | 向量索引 + 相似检索；替代 MongoDB 承载向量 |
 | 依赖 | recording 片段端点（`IRecordingAudioClient`） | 参考音频字节 |
 | 依赖 | MongoDB（条目/情绪文本元数据，唯一事实源） | 向量可由此重建 |
-| 约束 | **向量来源必须本地**（embedding + 情感模型），不依赖三方 LLM API | 评审明确 |
+| 约束 | **文本向量必须本地生成**（Ollama embedding），不依赖三方 LLM API；**情感向量按需求用配置的可用模型** | 2026-09-30 修订确认 |
 | 约束 | **向量检索用 Milvus**，MongoDB 仅存元数据 | Mongo 7 无 `$vectorSearch`（§1.1④） |
 | 约束 | 契约先行、不改既有语义、apiKey/日志不泄露、零新增重量级 NuGet、.NET 10 TDD 覆盖率≥80% | 项目既有规范 |
 
@@ -378,7 +380,7 @@ servers/training/（变更）
 └── Program.cs                                # + Milvus/本地 embedding/编排注册
 
 infra/apphost/（变更）
-└── AppHost.cs                                # + Milvus 资源 + 本地 embedding/model 服务 + Tts__BaseUrl
+└── AppHost.cs                                # + Milvus 资源 + Embedding__BaseUrl/Tts__BaseUrl
 
 servers/api/（变更）
 └── Controllers/TrainingProxyController.cs    # + 2 个镜像 action
@@ -412,7 +414,7 @@ tests/Z.Vtuber.Tests/（变更）
 
 - **匹配**：音色文本向量检索 top-1 命中预期条目；情绪情感向量检索 top-1；FLAT 确定性（同 dataset+text 同命中）；空候选 → 409；
 - **synthesize 成功**：200 `audio/wav`；TTS 收到 `text`/`lang`/`speaker_prompt`(file) 与（有情绪候选时）`emo_prompt`/`emo_vector`/`emo_text`/`emo_alpha`；`X-Speaker-Audio-Key`/`X-Emo-Audio-Key` 与命中一致；
-- **降级中性**：无情绪候选 / 本地情感模型失败 → TTS 无 `emo_*` 且仍 200；
+- **降级中性**：无情绪候选 / 情感模型失败 → TTS 无 `emo_*` 且仍 200；
 - **错误码**：text 空 400；数据集 404；无音色参考 409；本地 embedding 不可用 502；Milvus 不可用 502；speaker 音频取数失败→次优→均失败 502；TTS 不可用 502；
 - **向量同步**：`vectors/rebuild` 返回 `updated` 并重建 Milvus；导入/编辑/情绪写入增量同步（失败 Warn 不阻断）；
 - **代理**：synthesize `audio/wav` 二进制 + 状态码透传；
@@ -424,23 +426,23 @@ tests/Z.Vtuber.Tests/（变更）
 
 | 环境 | 用途 | 部署方式 |
 |------|------|---------|
-| AppHost（Aspire）本地编排 | 开发联调 | **托管 Milvus（`milvusdb/milvus`）** + 本地 embedding/model 服务 + training（`Tts__BaseUrl`） |
-| 生产 | 随常规版本发布 | 先发 Milvus + 本地向量服务，再 training，再 api 代理；向量索引可由 `vectors/rebuild` 重建 |
+| AppHost（Aspire）本地编排 | 开发联调 | **托管 Milvus（`milvusdb/milvus`）** + training（`Embedding__BaseUrl`/`Tts__BaseUrl` 配置内网 Ollama 与 TTS） |
+| 生产 | 随常规版本发布 | 先发 Milvus，再 training，再 api 代理；向量索引可由 `vectors/rebuild` 重建 |
 
 ### 9.2 配置管理
 
-- 新增配置：`Embedding` 节（`BaseUrl` 本地服务/`Model`/`Dimensions?`/`RequestTimeoutSeconds`）、`Milvus`（Aspire 注入 endpoint/db）、`Tts` 节、`Synthesize` 节（`DefaultEmotionModelId?` 须本地模型/`MaxReferenceDurationMs?`）；均 `ValidateOnStart`；
-- **前置**：Milvus 服务就绪、本地 Ollama（`https://ollama.internal.fffdan.com/`）可访；升级后对存量条目执行 `POST .../vectors/rebuild` 建向量索引（否则不参与匹配）；
-- 需可访：index-tts-api（`Tts:BaseUrl`）、本地 Ollama（`https://ollama.internal.fffdan.com/`）、recording（参考音频）、Milvus；
+- 新增配置：`Embedding` 节（`BaseUrl` 本地服务/`Model`/`Dimensions?`/`RequestTimeoutSeconds`）、`Milvus`（Aspire 注入 endpoint/db）、`Tts` 节、`Synthesize` 节（`DefaultEmotionModelId?` = Models 管理配置的可用模型/`MaxReferenceDurationMs?`）；均 `ValidateOnStart`；
+- **前置**：Milvus 服务就绪、本地 Ollama（`https://ollama.internal.fffdan.com/`）可访、可用模型（Models 管理）可访；升级后对存量条目执行 `POST .../vectors/rebuild` 建向量索引（否则不参与匹配）；
+- 需可访：index-tts-api（`Tts:BaseUrl`）、本地 Ollama（`Embedding:BaseUrl`，文本向量）、可用模型服务（情感向量）、recording（参考音频）、Milvus；
 - 数据初始化：MongoDB 无迁移（仅元数据）；Milvus 集合/索引启动幂等建立；
 - 回滚：training 旧版本不依赖 Milvus 可回退；Milvus 向量为派生索引，可随时 `vectors/rebuild` 重建，无一致性风险；
-- 镜像流水线 `build-training-image.yml` 触发范围已含 `servers/training/**`，无需调整（Milvus/本地向量服务为独立容器）。
+- 镜像流水线 `build-training-image.yml` 触发范围已含 `servers/training/**`，无需调整（Milvus 为独立容器，Ollama/大模型服务为内网已上线服务）。
 
 ## 10. 验收标准
 
 - [ ] 技术方案评审通过；契约评审通过（含 api 镜像）
 - [ ] `POST /api/training/datasets/{id}/synthesize` 传 `text` 返回 `audio/wav`；经 z-vtuber 代理同口径可访问
-- [ ] **向量由本地服务生成**（本地 embedding + 本地情感模型），**不依赖三方 LLM API**
+- [ ] **文本向量由本地 Ollama embedding 生成（不依赖三方）；情感向量由配置的可用模型 + prompt 生成**（需求「使用可用的模型」，语音/台词与输入文本同口径）
 - [ ] **向量存储/检索用 Milvus**（Aspire Milvus 集成）：音色=文本向量检索 top-1、情绪=情感向量检索 top-1（`X-*` 头可观测、FLAT 确定）
 - [ ] 情绪参考 `emo_vector` 八维与 `Extensions.emotion` 一致；无标注降级中性仍返回
 - [ ] 上游 multipart 字段符合 index-tts-api 契约（`speaker_prompt` 必带、`emo_*` 按匹配、`use_emo_text=false`）
@@ -452,7 +454,8 @@ tests/Z.Vtuber.Tests/（变更）
 ## 11. 相关文档
 
 - PRD：`docs/product/draft/20260929-training-audio-synthesize-prd.md`
-- 本地 Ollama（向量/情感模型，已搭建）：https://ollama.internal.fffdan.com/
+- 本地 Ollama（文本 embedding，已搭建）：https://ollama.internal.fffdan.com/
+- 情感向量生成：既有 Models 管理配置的可用模型（OpenAI-like / Claude-like，需求「使用可用的模型」）
 - Aspire Milvus 集成（人工指定参考）：https://aspire.dev/integrations/databases/milvus/milvus-get-started/
 - MongoDB `$vectorSearch` 兼容性（自建 7 不支持，仅 Atlas/8.2+）：https://www.mongodb.com/docs/manual/reference/operator/aggregation/vectorSearch/
 - Milvus 文档：https://milvus.io/docs

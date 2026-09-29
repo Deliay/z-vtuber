@@ -1,5 +1,5 @@
 ---
-description: AI 训练模块「音频生成（数据集语音合成）」产品需求文档：training 提供 /api/training/datasets/{id}/synthesize 音频生成接口，按文本向量相似匹配音色参考（speaker_prompt）、按情感向量匹配情绪参考（emo_prompt/emo_vector），调用内网 index-tts-api 上游合成并返回音频；向量由本地服务生成、以 Milvus 承载相似检索
+description: AI 训练模块「音频生成（数据集语音合成）」产品需求文档：training 提供 /api/training/datasets/{id}/synthesize 音频生成接口，按文本向量相似匹配音色参考（speaker_prompt）、按情感向量匹配情绪参考（emo_prompt/emo_vector），调用内网 index-tts-api 上游合成并返回音频；向量由本地服务生成、以 Milvus 承载相似检索；文本向量用本地 Ollama embedding、情感向量用配置的可用模型
 type: Permanent
 ---
 
@@ -167,13 +167,13 @@ flowchart TD
 
 - 内网音频生成接口 `https://tts.internal.fffdan.com/synthesize`（IndexTTS-2.5，`Deliay/index-tts-api`）；
 - 音频数据集（条目具备文本 + 音频地址，供音色/情绪参考取数）；
-- **本地 Ollama 向量服务**（新增，已搭建）：本地 Ollama「`https://ollama.internal.fffdan.com/`」为文本生成向量（音色匹配）、其本地模型为输入文本生成情感向量（情绪匹配），**均在本地、不依赖三方 LLM API**；
+- **本地 Ollama 向量服务**（新增，已搭建）：本地 Ollama「`https://ollama.internal.fffdan.com/`」为文本生成向量（音色匹配），**本地、不依赖三方**；情感向量（情绪匹配）由**可用模型**（既有模型管理配置的模型）+ prompt 生成；
 - **Milvus 向量库**（新增）：承载向量索引与相似检索（音色/情绪 top-1）；
 - 条目情绪标注（既有情绪识别产出的 `Extensions.emotion`）：作为情绪匹配候选。
 
 ### 5.2 约束
 
-- **向量来源必须为本地服务**（文本向量 + 情感向量），不依赖三方 LLM API；
+- **文本向量必须由本地服务生成**（Ollama embedding，不依赖三方）；**情感向量按需求「使用可用的模型」由配置的可用模型生成**（语音/台词与输入文本同口径）；
 - **向量相似检索以 Milvus 承载**（MongoDB 7 自建版无原生向量检索能力，向量不入 Mongo；Mongo 仅存条目/情绪文本等元数据）；
 - 上游 `speaker_prompt` 为**必填**，故数据集必须至少有一条可用音色参考，否则无法合成；
 - `lang` 需求输入仅为文本，缺省按中文（ZH）处理（可配置）；
