@@ -48,7 +48,11 @@ builder.Services.AddHttpClient<ITranscriptApiClient, TranscriptApiClient>(
 
 // AI 模型调用 named client（无 BaseAddress，逐请求拼绝对 endpoint；超时经 AiOptions 控制）。
 // 禁用自动重定向：endpoint 为用户可配的任意 http(s) 地址，避免携带存储的 API key 跟随 3xx 跳到其他主机（SSRF/凭据泄漏）。
+// 固定请求头 x-opencode-session（agent 标识 + 随机 guid）经 message handler 加到该 client 的每次调用上，
+// 覆盖情绪识别 / 重新识别 / 模型发现，与调用场景无关。
+builder.Services.AddTransient<ModelSessionHeaderHandler>();
 builder.Services.AddHttpClient(ChatModelClientFactory.ClientName)
+    .AddHttpMessageHandler<ModelSessionHeaderHandler>()
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
 // recording 音频片段取数（typed client，BaseAddress 为 recording 服务地址）
