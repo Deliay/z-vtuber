@@ -1,5 +1,5 @@
 ---
-description: AI 训练模块「音频生成（数据集语音合成）」产品需求文档：training 提供 /api/training/datasets/{id}/synthesize 音频生成接口，按文本向量相似匹配音色参考（speaker_prompt）、按情感向量匹配情绪参考（emo_prompt/emo_vector），调用内网 index-tts-api 上游合成并返回音频
+description: AI 训练模块「音频生成（数据集语音合成）」产品需求文档：training 提供 /api/training/datasets/{id}/synthesize 音频生成接口，按文本向量相似匹配音色参考（speaker_prompt）、按情感向量匹配情绪参考（emo_prompt/emo_vector），调用内网 index-tts-api 上游合成并返回音频；向量由本地服务生成、以 Milvus 承载相似检索
 type: Permanent
 ---
 
@@ -136,7 +136,8 @@ flowchart TD
 | 数据集不存在 | 404 `dataset not found` |
 | `text` 缺失或为空 | 400 `text is required` |
 | 数据集为空 / 无任何可用音色参考（无文本向量） | 409 `no speaker reference`（无法克隆音色，返回明确错误） |
-| 文本向量化（embedding）服务不可用 | 502 `embedding service unavailable` |
+| 文本向量化（本地 embedding 服务）不可用 | 502 `embedding service unavailable` |
+| 向量检索（Milvus）不可用 | 502 `vector store unavailable` |
 | 无已标注情绪的数据 / 情绪生成失败 | 降级为「无情绪参考」中性合成，仍返回音频（记日志） |
 | 参考音频取数失败（条目音频地址失效） | 该条跳过匹配候选；若导致无可用音色参考则 409 |
 | 上游 TTS 不可用 / 超时 / 报错 | 502 `tts service unavailable` |
@@ -166,16 +167,18 @@ flowchart TD
 
 - 内网音频生成接口 `https://tts.internal.fffdan.com/synthesize`（IndexTTS-2.5，`Deliay/index-tts-api`）；
 - 音频数据集（条目具备文本 + 音频地址，供音色/情绪参考取数）；
-- 文本向量（embedding）能力（**新增**）：为数据集条目文本生成向量，支撑音色参考匹配；
-- 可用模型（既有 Models 管理）：为输入文本生成情感向量，支撑情绪参考匹配；
+- **本地向量服务**（新增）：本地 embedding 服务为文本生成向量（音色匹配）、本地模型为输入文本生成情感向量（情绪匹配），**均在本地、不依赖三方 LLM API**；
+- **Milvus 向量库**（新增）：承载向量索引与相似检索（音色/情绪 top-1）；
 - 条目情绪标注（既有情绪识别产出的 `Extensions.emotion`）：作为情绪匹配候选。
 
 ### 5.2 约束
 
+- **向量来源必须为本地服务**（文本向量 + 情感向量），不依赖三方 LLM API；
+- **向量相似检索以 Milvus 承载**（MongoDB 7 自建版无原生向量检索能力，向量不入 Mongo；Mongo 仅存条目/情绪文本等元数据）；
 - 上游 `speaker_prompt` 为**必填**，故数据集必须至少有一条可用音色参考，否则无法合成；
 - `lang` 需求输入仅为文本，缺省按中文（ZH）处理（可配置）；
 - 情绪匹配依赖数据集已有情绪标注数据，无标注时降级中性合成（不阻断）；
-- 文本向量依赖 embedding 模型；升级后需对存量条目做一次向量回填（见技术提案）；
+- 升级后需对存量条目执行向量索引重建（`POST .../vectors/rebuild`）以参与匹配（见技术提案）；
 - 本期只做「合成并返回音频」，不含合成结果入库/缓存、批量合成、Web 合成界面与模型训练。
 
 ## 六、相关文档
