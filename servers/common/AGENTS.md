@@ -20,7 +20,7 @@
 | `Z.Vtuber.Common.Weibo` | `weibo/` | 微博域：`WeiboSubscriptionRecord`/`WeiboTimelineRecord`、2 仓储、`WeiboSubscriptionService`、`WeiboMongoSetup`、`WeiboCollectionNames` |
 | `Z.Vtuber.Common.Recording` | `recording/` | 录播域（含场次归档）：`RecordingStatusRecord`/`RecordingStatusRepository`、`RecordingRecord`/`RecordingRepository`、`RecordingMongoSetup`、`RecordingCollectionNames` |
 | `Z.Vtuber.Common.Transcript` | `transcript/` | 转写域：任务/片段/模型/自动入队实体与仓储、`TranscriptMongoSetup`（含 `CleanupAsync`）、`TranscriptCollectionNames` |
-| `Z.Vtuber.Common.Training` | `training/` | 训练域：数据集/条目实体与仓储、`TrainingMongoSetup`、`TrainingCollectionNames` |
+| `Z.Vtuber.Common.Training` | `training/` | 训练域：数据集/条目实体与仓储、Provider/Model/情绪任务实体与仓储（`TrainingProviderRecord`/`TrainingModelRecord`/`TrainingEmotionTaskRecord` + 三仓储）、条目仓储 `SetEmotionAsync`（写 `Extensions.emotion`）、`TrainingMongoSetup`、`TrainingCollectionNames`（`training_datasets`/`training_dataset_items`/`training_providers`/`training_models`/`training_emotion_tasks`） |
 | `Z.Vtuber.Common.Notification` | `notification/` | 通知域：`NotificationSubscriptionRecord`、`INotificationSubscriptionRepository`/实现、`NotificationMongoSetup`（含 `MigrateAsync`）、`NotificationCollectionNames` |
 
 ## 归属约定

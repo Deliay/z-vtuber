@@ -34,6 +34,15 @@ type RoomTranscriptView = transcriptComponents['schemas']['RoomTranscriptView']
 
 type TrainingDataset = trainingComponents['schemas']['TrainingDataset']
 type TrainingDatasetItem = trainingComponents['schemas']['TrainingDatasetItem']
+type TrainingProvider = trainingComponents['schemas']['TrainingProvider']
+type TrainingModel = trainingComponents['schemas']['TrainingModel']
+type TrainingProviderCreateRequest = trainingComponents['schemas']['TrainingProviderCreateRequest']
+type TrainingProviderUpdateRequest = trainingComponents['schemas']['TrainingProviderUpdateRequest']
+type TrainingModelCreateRequest = trainingComponents['schemas']['TrainingModelCreateRequest']
+type TrainingModelUpdateRequest = trainingComponents['schemas']['TrainingModelUpdateRequest']
+type TrainingDiscoveredModel = trainingComponents['schemas']['TrainingDiscoveredModel']
+type TrainingEmotionTask = trainingComponents['schemas']['TrainingEmotionTask']
+type TrainingEmotionTaskList = trainingComponents['schemas']['TrainingEmotionTaskList']
 
 interface ApiError extends Error {
   status?: number
@@ -47,13 +56,35 @@ const ERROR_MESSAGES: Record<string, string> = {
   'unsupported dataset type': '不支持的数据集类型',
   'dataset name exists': '数据集名字已存在',
   'dataset not found': '数据集不存在',
-  'task not found': '识别任务不存在',
+  'task not found': '任务不存在',
   'task not done': '该识别任务尚未完成，无法导入',
   'invalid time range': '时间区间非法（开始不小于 0，结束须晚于开始）',
   'field cannot be null': '该字段不能为空',
   'item not found': '条目不存在',
   'transcript service unavailable': '识别服务暂不可用，请稍后重试',
   'training service unavailable': '训练服务暂不可用，请稍后重试',
+  'provider name exists': 'Provider 名称已存在',
+  'provider not found': 'Provider 不存在',
+  'unsupported provider type': '不支持的模型类型',
+  'endpoint is required': '服务地址必填',
+  'invalid endpoint': '服务地址非法',
+  'api key is required': 'API key 必填',
+  'model exists': '模型已存在',
+  'model not found': '模型不存在',
+  'model is required': '模型名必填',
+  'model too long': '模型名过长',
+  'model disabled': '模型已停用',
+  'model does not support audio input': '该模型不支持音频输入',
+  'audio uri is empty': '音频地址为空',
+  'audio too large': '音频过大',
+  'audio unavailable': '音频暂不可用',
+  'model service unavailable': '模型服务不可用',
+  'invalid model output': '模型输出无法解析',
+  'provider service unavailable': '模型服务不可用',
+  'invalid provider response': '模型服务响应非法',
+  'models is required': '请选择要导入的模型',
+  'itemIds is required': '请选择要识别的条目',
+  'task not failed': '任务未处于失败状态',
 }
 
 /**
@@ -627,6 +658,146 @@ export async function batchDeleteTrainingDatasetItems(
       method: 'POST',
       body: JSON.stringify({ itemIds }),
     },
+  )
+}
+
+export async function listTrainingProviders(): Promise<TrainingProvider[]> {
+  const data = await request<trainingComponents['schemas']['TrainingProviderList']>(
+    '/training/providers',
+  )
+  return data.items ?? []
+}
+
+export async function createTrainingProvider(
+  body: TrainingProviderCreateRequest,
+): Promise<TrainingProvider> {
+  return request<TrainingProvider>('/training/providers', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateTrainingProvider(
+  providerId: string,
+  body: TrainingProviderUpdateRequest,
+): Promise<TrainingProvider> {
+  return request<TrainingProvider>(
+    `/training/providers/${encodeURIComponent(providerId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+export async function deleteTrainingProvider(providerId: string): Promise<void> {
+  await request<void>(`/training/providers/${encodeURIComponent(providerId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function discoverTrainingModels(
+  providerId: string,
+): Promise<TrainingDiscoveredModel[]> {
+  const data = await request<trainingComponents['schemas']['TrainingModelDiscoverResult']>(
+    `/training/providers/${encodeURIComponent(providerId)}/models/discover`,
+  )
+  return data.models ?? []
+}
+
+export async function importTrainingModels(
+  providerId: string,
+  models: string[],
+): Promise<{ imported: number; skipped: number }> {
+  return request<{ imported: number; skipped: number }>(
+    `/training/providers/${encodeURIComponent(providerId)}/models/import`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ models }),
+    },
+  )
+}
+
+export async function listTrainingModels(enabled?: boolean): Promise<TrainingModel[]> {
+  const query = new URLSearchParams()
+  if (enabled !== undefined) query.set('enabled', String(enabled))
+  const qs = query.toString()
+  const data = await request<trainingComponents['schemas']['TrainingModelList']>(
+    `/training/models${qs ? `?${qs}` : ''}`,
+  )
+  return data.items ?? []
+}
+
+export async function createTrainingModel(
+  params: TrainingModelCreateRequest,
+): Promise<TrainingModel> {
+  return request<TrainingModel>('/training/models', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function updateTrainingModel(
+  modelId: string,
+  body: TrainingModelUpdateRequest,
+): Promise<TrainingModel> {
+  return request<TrainingModel>(`/training/models/${encodeURIComponent(modelId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteTrainingModel(modelId: string): Promise<void> {
+  await request<void>(`/training/models/${encodeURIComponent(modelId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function recognizeTrainingDatasetItem(
+  datasetId: string,
+  itemId: string,
+  modelId: string,
+): Promise<trainingComponents['schemas']['TrainingRecognizeResult']> {
+  return request<trainingComponents['schemas']['TrainingRecognizeResult']>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items/${encodeURIComponent(itemId)}/recognize`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ modelId }),
+    },
+  )
+}
+
+export async function createEmotionTasks(
+  datasetId: string,
+  itemIds: string[],
+  modelId: string,
+): Promise<trainingComponents['schemas']['TrainingEmotionTaskCreateResult']> {
+  return request<trainingComponents['schemas']['TrainingEmotionTaskCreateResult']>(
+    `/training/datasets/${encodeURIComponent(datasetId)}/items/emotion-tasks`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ itemIds, modelId }),
+    },
+  )
+}
+
+export async function listEmotionTasks(
+  params: { datasetId?: string; status?: string; limit?: number } = {},
+): Promise<TrainingEmotionTaskList> {
+  const query = new URLSearchParams()
+  if (params.datasetId) query.set('datasetId', params.datasetId)
+  if (params.status) query.set('status', params.status)
+  if (params.limit !== undefined) query.set('limit', String(params.limit))
+  const qs = query.toString()
+  return request<TrainingEmotionTaskList>(
+    `/training/emotion-tasks${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export async function retryEmotionTask(taskId: string): Promise<TrainingEmotionTask> {
+  return request<TrainingEmotionTask>(
+    `/training/emotion-tasks/${encodeURIComponent(taskId)}/retry`,
+    { method: 'POST' },
   )
 }
 

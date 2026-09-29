@@ -31,6 +31,7 @@ public sealed record TrainingDatasetItemDto(
     [property: JsonPropertyName("endMs")] long? EndMs,
     [property: JsonPropertyName("text")] string Text,
     [property: JsonPropertyName("extensions")] JsonElement? Extensions,
+    [property: JsonPropertyName("emotion")] EmotionResult? Emotion,
     [property: JsonPropertyName("createdAt")] DateTime CreatedAt,
     [property: JsonPropertyName("updatedAt")] DateTime UpdatedAt);
 
@@ -65,3 +66,115 @@ public sealed class TrainingDatasetItemUpdateRequest
     [JsonPropertyName("endMs")]
     public JsonElement EndMs { get; set; }
 }
+
+public sealed record TrainingProviderDto(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("endpoint")] string Endpoint,
+    [property: JsonPropertyName("apiKeySet")] bool ApiKeySet,
+    [property: JsonPropertyName("createdAt")] DateTime CreatedAt,
+    [property: JsonPropertyName("updatedAt")] DateTime UpdatedAt);
+
+public sealed record TrainingProviderListDto(
+    [property: JsonPropertyName("items")] IReadOnlyList<TrainingProviderDto> Items);
+
+/// <summary>新建 Provider 请求；<c>apiKey</c> 写入后不回显。</summary>
+public sealed record TrainingProviderCreateRequest(
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("type")] string? Type,
+    [property: JsonPropertyName("endpoint")] string? Endpoint,
+    [property: JsonPropertyName("apiKey")] string? ApiKey);
+
+/// <summary>更新 Provider 请求：字段缺失不变；<c>apiKey</c> 传空串视为不改。</summary>
+public sealed record TrainingProviderUpdateRequest(
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("type")] string? Type,
+    [property: JsonPropertyName("endpoint")] string? Endpoint,
+    [property: JsonPropertyName("apiKey")] string? ApiKey);
+
+public sealed record TrainingModelDto(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("providerId")] string ProviderId,
+    [property: JsonPropertyName("providerName")] string ProviderName,
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("slug")] string Slug,
+    [property: JsonPropertyName("enabled")] bool Enabled,
+    [property: JsonPropertyName("createdAt")] DateTime CreatedAt,
+    [property: JsonPropertyName("updatedAt")] DateTime UpdatedAt);
+
+public sealed record TrainingModelListDto(
+    [property: JsonPropertyName("items")] IReadOnlyList<TrainingModelDto> Items);
+
+public sealed record TrainingModelCreateRequest(
+    [property: JsonPropertyName("providerId")] string? ProviderId,
+    [property: JsonPropertyName("model")] string? Model);
+
+public sealed record TrainingModelUpdateRequest(
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("enabled")] bool? Enabled);
+
+public sealed record TrainingDiscoveredModelDto(
+    [property: JsonPropertyName("model")] string Model);
+
+public sealed record TrainingModelDiscoverResultDto(
+    [property: JsonPropertyName("models")] IReadOnlyList<TrainingDiscoveredModelDto> Models);
+
+public sealed record TrainingModelImportRequest(
+    [property: JsonPropertyName("models")] IReadOnlyList<string>? Models);
+
+public sealed record TrainingModelImportResultDto(
+    [property: JsonPropertyName("imported")] long Imported,
+    [property: JsonPropertyName("skipped")] long Skipped);
+
+public sealed record TrainingRecognizeRequest(
+    [property: JsonPropertyName("modelId")] string? ModelId);
+
+public sealed record TrainingRecognizeResultDto(
+    [property: JsonPropertyName("text")] string Text);
+
+/// <summary>结构化情绪数据（十字段固定结构）。</summary>
+public sealed record EmotionResult(
+    [property: JsonPropertyName("emotionControlWeight")] double EmotionControlWeight,
+    [property: JsonPropertyName("emotionDescription")] string EmotionDescription,
+    [property: JsonPropertyName("happy")] double Happy,
+    [property: JsonPropertyName("angry")] double Angry,
+    [property: JsonPropertyName("sad")] double Sad,
+    [property: JsonPropertyName("afraid")] double Afraid,
+    [property: JsonPropertyName("disgusted")] double Disgusted,
+    [property: JsonPropertyName("melancholic")] double Melancholic,
+    [property: JsonPropertyName("surprised")] double Surprised,
+    [property: JsonPropertyName("calm")] double Calm);
+
+public sealed record TrainingEmotionTaskCreateRequest(
+    [property: JsonPropertyName("itemIds")] IReadOnlyList<string>? ItemIds,
+    [property: JsonPropertyName("modelId")] string? ModelId);
+
+public sealed record TrainingEmotionTaskCreateResultDto(
+    [property: JsonPropertyName("created")] long Created,
+    [property: JsonPropertyName("skipped")] long Skipped);
+
+public sealed record TrainingEmotionTaskDto(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("datasetId")] string DatasetId,
+    [property: JsonPropertyName("itemId")] string ItemId,
+    [property: JsonPropertyName("audioKey")] string AudioKey,
+    [property: JsonPropertyName("modelId")] string ModelId,
+    [property: JsonPropertyName("modelSlug")] string ModelSlug,
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("attempts")] int Attempts,
+    [property: JsonPropertyName("error")] string? Error,
+    [property: JsonPropertyName("emotion")] EmotionResult? Emotion,
+    [property: JsonPropertyName("createdAt")] DateTime CreatedAt,
+    [property: JsonPropertyName("startedAt")] DateTime? StartedAt,
+    [property: JsonPropertyName("finishedAt")] DateTime? FinishedAt);
+
+public sealed record TrainingEmotionTaskCountsDto(
+    [property: JsonPropertyName("pending")] long Pending,
+    [property: JsonPropertyName("running")] long Running,
+    [property: JsonPropertyName("done")] long Done,
+    [property: JsonPropertyName("failed")] long Failed);
+
+public sealed record TrainingEmotionTaskListDto(
+    [property: JsonPropertyName("items")] IReadOnlyList<TrainingEmotionTaskDto> Items,
+    [property: JsonPropertyName("counts")] TrainingEmotionTaskCountsDto Counts);

@@ -25,5 +25,43 @@ public class TrainingMongoSetupTests(MongoDbFixture fixture) : IClassFixture<Mon
         Assert.Contains("DatasetId_1_AudioKey_1", items);
         Assert.Contains("DatasetId_1_AudioType_1", items);
         Assert.Contains("DatasetId_1_Source_1", items);
+
+        // 返工 #9：Provider/Model/EmotionTask 三集合索引同步断言
+        var providers = await TestIndexHelpers.ListIndexNamesAsync(
+            fixture.Database.GetCollection<TrainingProviderRecord>(TrainingCollectionNames.TrainingProviders));
+        Assert.Contains("Name_1", providers);
+
+        var models = await TestIndexHelpers.ListIndexNamesAsync(
+            fixture.Database.GetCollection<TrainingModelRecord>(TrainingCollectionNames.TrainingModels));
+        Assert.Contains("ProviderId_1_Model_1", models);
+        Assert.Contains("ProviderId_1", models);
+
+        var emotionTasks = await TestIndexHelpers.ListIndexNamesAsync(
+            fixture.Database.GetCollection<TrainingEmotionTaskRecord>(TrainingCollectionNames.TrainingEmotionTasks));
+        Assert.Contains("Status_1_CreatedAt_1", emotionTasks);
+        Assert.Contains("DatasetId_1_CreatedAt_1", emotionTasks);
+        Assert.Contains("ItemId_1", emotionTasks);
+    }
+
+    [Fact]
+    public async Task EnsureIndexes_NameUniqueIndex_RejectsDuplicateProviderName()
+    {
+        var setup = new TrainingMongoSetup(fixture.Database, NullLogger<TrainingMongoSetup>.Instance);
+        await setup.EnsureIndexesAsync();
+        var repository = new TrainingProviderRepository(fixture.Database);
+        var now = DateTime.UtcNow;
+
+        await repository.InsertAsync(new TrainingProviderRecord
+        {
+            Name = "dup", Type = "openai", Endpoint = "https://x", ApiKey = "k",
+            CreatedAt = now, UpdatedAt = now,
+        });
+
+        await Assert.ThrowsAsync<MongoDB.Driver.MongoWriteException>(() => repository.InsertAsync(
+            new TrainingProviderRecord
+            {
+                Name = "dup", Type = "claude", Endpoint = "https://y", ApiKey = "k",
+                CreatedAt = now, UpdatedAt = now,
+            }));
     }
 }
