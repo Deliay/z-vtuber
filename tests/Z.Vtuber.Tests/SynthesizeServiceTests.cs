@@ -12,8 +12,8 @@ using Z.Vtuber.Training.Vectors;
 namespace Z.Vtuber.Tests;
 
 /// <summary>
-/// 合成编排契约：音色文本向量 top-1 → speaker 取数（次优兜底、全失败 502、无候选 409）、
-/// 情感向量 best-effort（降级中性）、emo_* 取自命中条目情绪、embedding/TTS 失败传播。
+/// 合成编排契约：音色参考按输入文本与条目 Text 的字符相似度（归一化编辑距离）匹配 → speaker 取数
+/// （次优兜底、全失败 502、无候选 409）、情感向量 best-effort（降级中性）、emo_* 取自命中条目情绪、TTS 失败传播。
 /// </summary>
 public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
@@ -89,7 +89,7 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     }
 
     private SynthesizeService Create(
-        InMemoryVectorStore store, FakeEmbeddingClient embedding, StubAudioClient audio,
+        InMemoryVectorStore store, StubAudioClient audio,
         StubTtsClient tts, IChatModelClientFactory factory) =>
         new(
             Items,
@@ -97,7 +97,6 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
             factory,
             audio,
             store,
-            embedding,
             tts,
             new SynthesizeOptions(),
             NullLogger<SynthesizeService>.Instance);
@@ -113,7 +112,6 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
             emotion: new EmotionResult(8, "生气", 0, 0.6, 0, 0, 0, 0, 0, 0));
 
         var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [0.1f, 0.2f, 0.3f]);
         store.SeedEmotion(datasetId, emoItem.Id, emoItem.AudioKey, [0f, 0.5f, 0f, 0f, 0f, 0f, 0f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([1, 1], "audio/mpeg");
@@ -121,7 +119,7 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         var tts = new StubTtsClient { Bytes = [9, 9, 9] };
         var (_, model) = await SeedProviderAsync();
 
-        var result = await Create(store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(new StubChatClient()))
+        var result = await Create(store, audio, tts, new StubChatFactory(new StubChatClient()))
             .SynthesizeAsync(datasetId, "你好", "ZH", model, EmotionMode.Llm);
 
         Assert.Equal([9, 9, 9], result.Audio);
@@ -136,13 +134,50 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     }
 
     [Fact]
+    public async Task SpeakerMatching_UsesCharacterSimilarity_ConsideringContentAndLength()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var similar = await SeedItemAsync(datasetId, "今天天气很好");
+        var different = await SeedItemAsync(datasetId, "完全无关的长文本内容");
+        var audio = new StubAudioClient();
+        audio.Clips[similar.AudioUri] = new AudioClip([1], "audio/mpeg");
+        audio.Clips[different.AudioUri] = new AudioClip([2], "audio/mpeg");
+        var (_, model) = await SeedProviderAsync();
+
+        var result = await Create(
+                new InMemoryVectorStore(), audio, new StubTtsClient(), new StubChatFactory(new StubChatClient()))
+            .SynthesizeAsync(datasetId, "今天天气真好", "ZH", model);
+
+        Assert.Equal(similar.AudioKey, result.SpeakerAudioKey);
+    }
+
+    [Fact]
+    public async Task SpeakerMatching_EmptyTextItems_AreSkipped()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var empty = await SeedItemAsync(datasetId, "   ");
+        var usable = await SeedItemAsync(datasetId, "可用文本");
+        var audio = new StubAudioClient();
+        audio.Clips[empty.AudioUri] = new AudioClip([1], "audio/mpeg");
+        audio.Clips[usable.AudioUri] = new AudioClip([2], "audio/mpeg");
+        var (_, model) = await SeedProviderAsync();
+
+        var result = await Create(
+                new InMemoryVectorStore(), audio, new StubTtsClient(), new StubChatFactory(new StubChatClient()))
+            .SynthesizeAsync(datasetId, "任何文本", "ZH", model);
+
+        Assert.Equal(usable.AudioKey, result.SpeakerAudioKey);
+        Assert.Equal([usable.AudioUri], audio.RequestedUris);
+    }
+
+    [Fact]
     public async Task NoSpeakerCandidates_ThrowsNoSpeakerReference()
     {
         var datasetId = ObjectId.GenerateNewId();
         var (_, model) = await SeedProviderAsync();
 
         await Assert.ThrowsAsync<NoSpeakerReferenceException>(() => Create(
-                new InMemoryVectorStore(), new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient(),
+                new InMemoryVectorStore(), new StubAudioClient(), new StubTtsClient(),
                 new StubChatFactory(new StubChatClient()))
             .SynthesizeAsync(datasetId, "你好", "ZH", model));
     }
@@ -153,16 +188,14 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         var datasetId = ObjectId.GenerateNewId();
         var first = await SeedItemAsync(datasetId, "first");
         var second = await SeedItemAsync(datasetId, "second");
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, first.Id, first.AudioKey, [1f, 0f]);
-        store.SeedText(datasetId, second.Id, second.AudioKey, [0.9f, 0f]);
         var audio = new StubAudioClient();
         audio.FailingUris.Add(first.AudioUri);
         audio.Clips[second.AudioUri] = new AudioClip([2], "audio/mpeg");
         var (_, model) = await SeedProviderAsync();
 
-        var result = await Create(store, new FakeEmbeddingClient(), audio, new StubTtsClient(), new StubChatFactory(new StubChatClient()))
-            .SynthesizeAsync(datasetId, "你好", "ZH", model);
+        var result = await Create(
+                new InMemoryVectorStore(), audio, new StubTtsClient(), new StubChatFactory(new StubChatClient()))
+            .SynthesizeAsync(datasetId, "first", "ZH", model);
 
         Assert.Equal(second.AudioKey, result.SpeakerAudioKey);
         Assert.Equal([first.AudioUri, second.AudioUri], audio.RequestedUris);
@@ -173,15 +206,13 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     {
         var datasetId = ObjectId.GenerateNewId();
         var item = await SeedItemAsync(datasetId, "only");
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, item.Id, item.AudioKey, [1f, 0f]);
         var audio = new StubAudioClient();
         audio.FailingUris.Add(item.AudioUri);
         var (_, model) = await SeedProviderAsync();
 
         await Assert.ThrowsAsync<AudioUnavailableException>(() => Create(
-                store, new FakeEmbeddingClient(), audio, new StubTtsClient(), new StubChatFactory(new StubChatClient()))
-            .SynthesizeAsync(datasetId, "你好", "ZH", model));
+                new InMemoryVectorStore(), audio, new StubTtsClient(), new StubChatFactory(new StubChatClient()))
+            .SynthesizeAsync(datasetId, "only", "ZH", model));
     }
 
     [Fact]
@@ -189,18 +220,35 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     {
         var datasetId = ObjectId.GenerateNewId();
         var speaker = await SeedItemAsync(datasetId, "你好");
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [1f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([1], "audio/mpeg");
         var tts = new StubTtsClient();
         var (_, model) = await SeedProviderAsync();
 
         var result = await Create(
-                store, new FakeEmbeddingClient(), audio, tts,
+                new InMemoryVectorStore(), audio, tts,
                 new StubChatFactory(new StubChatClient { Throw = new HttpRequestException("model down") }))
-            .SynthesizeAsync(datasetId, "你好", "ZH", model);
+            .SynthesizeAsync(datasetId, "你好", "ZH", model, EmotionMode.Llm);
 
+        Assert.Null(result.EmoAudioKey);
+        Assert.Null(Assert.Single(tts.Requests).Emotion);
+    }
+
+    [Fact]
+    public async Task EmotionVectorStoreFailure_DegradesToNeutral()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var speaker = await SeedItemAsync(datasetId, "你好");
+        var store = new InMemoryVectorStore { SearchEmotionThrow = new VectorStoreUnavailableException("down") };
+        var audio = new StubAudioClient();
+        audio.Clips[speaker.AudioUri] = new AudioClip([1], "audio/mpeg");
+        var tts = new StubTtsClient();
+        var (_, model) = await SeedProviderAsync();
+
+        var result = await Create(store, audio, tts, new StubChatFactory(new StubChatClient()))
+            .SynthesizeAsync(datasetId, "你好", "ZH", model, EmotionMode.Llm);
+
+        Assert.Equal(speaker.AudioKey, result.SpeakerAudioKey);
         Assert.Null(result.EmoAudioKey);
         Assert.Null(Assert.Single(tts.Requests).Emotion);
     }
@@ -210,15 +258,13 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     {
         var datasetId = ObjectId.GenerateNewId();
         var speaker = await SeedItemAsync(datasetId, "你好");
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [1f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([1], "audio/mpeg");
         var tts = new StubTtsClient();
         var chat = new StubChatClient();
 
-        var result = await Create(store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(chat))
-            .SynthesizeAsync(datasetId, "你好", "ZH", null);
+        var result = await Create(new InMemoryVectorStore(), audio, tts, new StubChatFactory(chat))
+            .SynthesizeAsync(datasetId, "你好", "ZH", null, EmotionMode.Llm);
 
         Assert.Null(result.EmoAudioKey);
         Assert.Equal(0, chat.Calls);
@@ -232,14 +278,12 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         var speaker = await SeedItemAsync(
             datasetId, "你好", emotion: new EmotionResult(4, "平静", 0, 0, 0, 0, 0, 0, 0, 0.7));
 
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [1f, 0f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([5, 5], "audio/mpeg");
         var tts = new StubTtsClient();
         var chat = new StubChatClient();
 
-        var result = await Create(store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(chat))
+        var result = await Create(new InMemoryVectorStore(), audio, tts, new StubChatFactory(chat))
             .SynthesizeAsync(datasetId, "你好", "ZH", null, EmotionMode.Dataset);
 
         Assert.Equal(speaker.AudioKey, result.SpeakerAudioKey);
@@ -259,18 +303,14 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         var second = await SeedItemAsync(
             datasetId, "second", emotion: new EmotionResult(2, "开心", 0.8, 0, 0, 0, 0, 0, 0, 0));
 
-        var store = new InMemoryVectorStore();
-        var embedding = new FakeEmbeddingClient { Provider = _ => [1f, 0f, 0f] };
-        store.SeedText(datasetId, top.Id, top.AudioKey, [1f, 0f, 0f]);
-        store.SeedText(datasetId, second.Id, second.AudioKey, [0f, 1f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[top.AudioUri] = new AudioClip([1], "audio/mpeg");
         audio.Clips[second.AudioUri] = new AudioClip([2], "audio/mpeg");
         var tts = new StubTtsClient();
         var chat = new StubChatClient();
 
-        var result = await Create(store, embedding, audio, tts, new StubChatFactory(chat))
-            .SynthesizeAsync(datasetId, "你好", "ZH", null, EmotionMode.Dataset);
+        var result = await Create(new InMemoryVectorStore(), audio, tts, new StubChatFactory(chat))
+            .SynthesizeAsync(datasetId, "top", "ZH", null, EmotionMode.Dataset);
 
         Assert.Equal(top.AudioKey, result.SpeakerAudioKey);
         Assert.Equal(second.AudioKey, result.EmoAudioKey);
@@ -286,17 +326,13 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         var second = await SeedItemAsync(
             datasetId, "second", emotion: new EmotionResult(2, "平静", 0, 0, 0, 0, 0, 0, 0, 0.6));
 
-        var store = new InMemoryVectorStore();
-        var embedding = new FakeEmbeddingClient { Provider = _ => [1f, 0f, 0f] };
-        store.SeedText(datasetId, top.Id, top.AudioKey, [1f, 0f, 0f]);
-        store.SeedText(datasetId, second.Id, second.AudioKey, [0f, 1f, 0f]);
         var audio = new StubAudioClient();
         audio.FailingUris.Add(top.AudioUri);
         audio.Clips[second.AudioUri] = new AudioClip([2], "audio/mpeg");
         var tts = new StubTtsClient();
 
-        var result = await Create(store, embedding, audio, tts, new StubChatFactory(new StubChatClient()))
-            .SynthesizeAsync(datasetId, "你好", "ZH", null, EmotionMode.Dataset);
+        var result = await Create(new InMemoryVectorStore(), audio, tts, new StubChatFactory(new StubChatClient()))
+            .SynthesizeAsync(datasetId, "top", "ZH", null, EmotionMode.Dataset);
 
         Assert.Equal(second.AudioKey, result.SpeakerAudioKey);
         Assert.Equal(second.AudioKey, result.EmoAudioKey);
@@ -307,15 +343,13 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     {
         var datasetId = ObjectId.GenerateNewId();
         var item = await SeedItemAsync(datasetId, "only");
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, item.Id, item.AudioKey, [1f, 0f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[item.AudioUri] = new AudioClip([1], "audio/mpeg");
         var tts = new StubTtsClient();
         var chat = new StubChatClient();
 
-        var result = await Create(store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(chat))
-            .SynthesizeAsync(datasetId, "你好", "ZH", null, EmotionMode.Dataset);
+        var result = await Create(new InMemoryVectorStore(), audio, tts, new StubChatFactory(chat))
+            .SynthesizeAsync(datasetId, "only", "ZH", null, EmotionMode.Dataset);
 
         Assert.Null(result.EmoAudioKey);
         Assert.Equal(0, chat.Calls);
@@ -331,7 +365,6 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
             datasetId, "生气", emotion: new EmotionResult(8, "生气", 0, 0.6, 0, 0, 0, 0, 0, 0));
 
         var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [1f, 0f, 0f]);
         store.SeedEmotion(datasetId, emoItem.Id, emoItem.AudioKey, [0f, 0.5f, 0f, 0f, 0f, 0f, 0f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([1], "audio/mpeg");
@@ -341,7 +374,7 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         var (_, model) = await SeedProviderAsync();
 
         // 未传 emotionMode → 默认 None：不调用大模型、不传任何情绪参考。
-        var result = await Create(store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(chat))
+        var result = await Create(store, audio, tts, new StubChatFactory(chat))
             .SynthesizeAsync(datasetId, "你好", "ZH", model);
 
         Assert.Equal(speaker.AudioKey, result.SpeakerAudioKey);
@@ -359,7 +392,6 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
             datasetId, "生气", emotion: new EmotionResult(8, "生气", 0, 0.6, 0, 0, 0, 0, 0, 0));
 
         var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [1f, 0f, 0f]);
         store.SeedEmotion(datasetId, emoItem.Id, emoItem.AudioKey, [0f, 0.5f, 0f, 0f, 0f, 0f, 0f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([1], "audio/mpeg");
@@ -368,7 +400,7 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         var chat = new StubChatClient();
         var (_, model) = await SeedProviderAsync();
 
-        var result = await Create(store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(chat))
+        var result = await Create(store, audio, tts, new StubChatFactory(chat))
             .SynthesizeAsync(datasetId, "你好", "ZH", model, EmotionMode.Llm);
 
         Assert.Equal(1, chat.Calls);
@@ -376,45 +408,17 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     }
 
     [Fact]
-    public async Task EmbeddingFailure_Propagates()
-    {
-        var datasetId = ObjectId.GenerateNewId();
-        var (_, model) = await SeedProviderAsync();
-
-        await Assert.ThrowsAsync<EmbeddingUnavailableException>(() => Create(
-                new InMemoryVectorStore(),
-                new FakeEmbeddingClient { Throw = new EmbeddingUnavailableException("down") },
-                new StubAudioClient(), new StubTtsClient(), new StubChatFactory(new StubChatClient()))
-            .SynthesizeAsync(datasetId, "你好", "ZH", model));
-    }
-
-    [Fact]
-    public async Task VectorStoreFailure_Propagates()
-    {
-        var datasetId = ObjectId.GenerateNewId();
-        var store = new InMemoryVectorStore { SearchTextThrow = new VectorStoreUnavailableException("down") };
-        var (_, model) = await SeedProviderAsync();
-
-        await Assert.ThrowsAsync<VectorStoreUnavailableException>(() => Create(
-                store, new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient(),
-                new StubChatFactory(new StubChatClient()))
-            .SynthesizeAsync(datasetId, "你好", "ZH", model));
-    }
-
-    [Fact]
     public async Task TtsFailure_Propagates()
     {
         var datasetId = ObjectId.GenerateNewId();
         var speaker = await SeedItemAsync(datasetId, "你好");
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [1f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([1], "audio/mpeg");
         var tts = new StubTtsClient { Throw = new TtsUnavailableException("down") };
         var (_, model) = await SeedProviderAsync();
 
         await Assert.ThrowsAsync<TtsUnavailableException>(() => Create(
-                store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(new StubChatClient()))
+                new InMemoryVectorStore(), audio, tts, new StubChatFactory(new StubChatClient()))
             .SynthesizeAsync(datasetId, "你好", "ZH", model));
     }
 }
