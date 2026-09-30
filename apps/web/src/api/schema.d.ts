@@ -2332,6 +2332,8 @@ export interface operations {
                 startMs: number;
                 /** @description 片段终点（毫秒，必须大于 startMs；区间长度上限见 recording 服务配置） */
                 endMs: number;
+                /** @description 输出格式；缺省 mp3，可选 wav。query 原样透传上游，实际输出格式以响应 Content-Type 为准 （请求 mp3 但上游无编码能力时降级 wav）。 */
+                format?: "mp3" | "wav";
             };
             header?: never;
             path: {
@@ -2353,7 +2355,7 @@ export interface operations {
                     "audio/wav": string;
                 };
             };
-            /** @description fileName 非法 / 区间参数非法 / 区间超上限 / 文件正在录制中（透传上游响应体） */
+            /** @description fileName 非法 / 区间参数非法 / 区间超上限 / format 非法（非 mp3/wav）/ 文件正在录制中（透传上游响应体） */
             400: {
                 headers: {
                     [name: string]: unknown;

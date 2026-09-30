@@ -445,6 +445,8 @@ export interface operations {
                 startMs: number;
                 /** @description 片段终点（毫秒，必须大于 startMs；区间长度上限 Recording:AudioClipMaxDurationMs，默认 300000） */
                 endMs: number;
+                /** @description 输出格式；缺省 mp3（单声道 44.1kHz 96kbps），可选 wav（无损）。 请求 mp3 但未探测到 libmp3lame 编码能力时降级 wav；实际输出格式以响应 Content-Type 为准。 */
+                format?: "mp3" | "wav";
             };
             header?: never;
             path: {
@@ -456,7 +458,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 片段音频（mp3，单声道 44.1kHz 96kbps；未探测到 mp3 编码能力时降级 wav，语义不变） */
+            /** @description 片段音频（默认 mp3，单声道 44.1kHz 96kbps；format=wav 或 mp3 无编码能力时输出 wav，实际格式以响应 Content-Type 为准） */
             200: {
                 headers: {
                     /** @description 固定 no-store，片段每次现算不缓存 */
@@ -468,7 +470,7 @@ export interface operations {
                     "audio/wav": string;
                 };
             };
-            /** @description fileName 非法 / 区间参数非法（endMs <= startMs、startMs < 0）/ 区间超上限 / 文件正在录制中 */
+            /** @description fileName 非法 / 区间参数非法（endMs <= startMs、startMs < 0）/ 区间超上限 / format 非法（非 mp3/wav）/ 文件正在录制中 */
             400: {
                 headers: {
                     [name: string]: unknown;

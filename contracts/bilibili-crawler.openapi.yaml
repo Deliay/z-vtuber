@@ -391,6 +391,16 @@ paths:
           schema:
             type: integer
             format: int64
+        - name: format
+          in: query
+          required: false
+          description: >-
+            输出格式；缺省 mp3，可选 wav。query 原样透传上游，实际输出格式以响应 Content-Type 为准
+            （请求 mp3 但上游无编码能力时降级 wav）。
+          schema:
+            type: string
+            enum: [mp3, wav]
+            default: mp3
       responses:
         "200":
           description: 片段音频（透传上游 Content-Type 与 Cache-Control）
@@ -409,7 +419,7 @@ paths:
                 type: string
                 format: binary
         "400":
-          description: fileName 非法 / 区间参数非法 / 区间超上限 / 文件正在录制中（透传上游响应体）
+          description: fileName 非法 / 区间参数非法 / 区间超上限 / format 非法（非 mp3/wav）/ 文件正在录制中（透传上游响应体）
           content:
             application/json:
               schema:
