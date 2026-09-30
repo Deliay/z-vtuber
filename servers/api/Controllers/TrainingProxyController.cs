@@ -103,6 +103,14 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
     public Task<IActionResult> RetryEmotionTask(string taskId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, $"api/training/emotion-tasks/{Uri.EscapeDataString(taskId)}/retry", ct);
 
+    [HttpPost("training/datasets/{datasetId}/synthesize")]
+    public Task<IActionResult> SynthesizeDataset(string datasetId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/synthesize", ct);
+
+    [HttpPost("training/datasets/{datasetId}/vectors/rebuild")]
+    public Task<IActionResult> RebuildDatasetVectors(string datasetId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/vectors/rebuild", ct);
+
     private async Task<IActionResult> ForwardAsync(HttpMethod method, string upstreamPath, CancellationToken ct)
     {
         var client = httpClientFactory.CreateClient(TrainingClientName);
@@ -148,6 +156,17 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
             if (!string.IsNullOrEmpty(contentDisposition))
             {
                 Response.Headers.ContentDisposition = contentDisposition;
+            }
+
+            // 音频生成命中参考头透传（可观测命中音色/情绪参考）。
+            if (response.Headers.TryGetValues("X-Speaker-Audio-Key", out var speakerKeys))
+            {
+                Response.Headers["X-Speaker-Audio-Key"] = speakerKeys.ToArray();
+            }
+
+            if (response.Headers.TryGetValues("X-Emo-Audio-Key", out var emoKeys))
+            {
+                Response.Headers["X-Emo-Audio-Key"] = emoKeys.ToArray();
             }
 
             await response.Content.CopyToAsync(Response.Body, ct);

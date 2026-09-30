@@ -68,6 +68,7 @@ public sealed class ClaudeLikeChatClient : IChatModelClient
         {
             writer.WriteStartObject();
             writer.WriteString("model", model);
+            writer.WriteNumber("temperature", 0);
             writer.WriteNumber("max_tokens", MaxTokens);
             writer.WriteString("system", prompt.System);
             writer.WritePropertyName("messages");

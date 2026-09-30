@@ -614,6 +614,91 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/synthesize:
+    post:
+      summary: 音频生成（数据集语音合成）
+      description: >-
+        以数据集为参考池：输入文本向量化后匹配音色参考（speaker_prompt），情感向量匹配情绪参考
+        （emo_prompt/emo_vector/emo_text/emo_alpha），调用内网 index-tts-api 合成并返回 audio/wav。
+        命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。
+      operationId: synthesizeTrainingDataset
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingSynthesizeRequest"
+      responses:
+        "200":
+          description: 合成音频（mono 16-bit PCM WAV @22.05kHz，上游透传）
+          headers:
+            X-Speaker-Audio-Key:
+              description: 命中的音色参考条目 audioKey
+              schema:
+                type: string
+            X-Emo-Audio-Key:
+              description: 命中的情绪参考条目 audioKey（无情绪命中时缺省）
+              schema:
+                type: string
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: '{"error": "text is required"/"invalid lang"/"model disabled"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '{"error": "dataset not found"/"model not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: '{"error": "no speaker reference"}（数据集内无任何可用音色参考）'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: '{"error": "embedding service unavailable"/"vector store unavailable"/"audio unavailable"/"tts service unavailable"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/vectors/rebuild:
+    post:
+      summary: 重建数据集向量索引
+      description: >-
+        从 MongoDB 条目（Text + Extensions.emotion）为 Milvus 重建文本向量与情感向量索引，返回重建条数（updated）。
+        用于升级后回填存量条目、向量模型变更后重建。
+      operationId: rebuildTrainingDatasetVectors
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      responses:
+        "200":
+          description: 重建结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingVectorsRebuildResult"
+        "404":
+          description: '{"error": "dataset not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: '{"error": "embedding service unavailable"/"vector store unavailable"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   parameters:
     DatasetId:
@@ -1116,6 +1201,28 @@ components:
         text:
           type: string
           description: 识别出的文本（未写库，保存由前端走更新条目端点）
+    TrainingSynthesizeRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: 待合成文本（trim 后非空）
+        lang:
+          type: string
+          nullable: true
+          description: 语种 ZH/EN/JA/ES/AR（大小写不敏感），缺省 Tts:DefaultLang（默认 ZH）
+        modelId:
+          type: string
+          nullable: true
+          description: 生成情感向量所用可用模型 id（Models 管理配置）；缺省 Synthesize:DefaultEmotionModelId，再缺省首个启用模型
+    TrainingVectorsRebuildResult:
+      type: object
+      required: [updated]
+      properties:
+        updated:
+          type: integer
+          description: 重建（写入 Milvus）的条目数
     TrainingEmotionTaskCreateRequest:
       type: object
       required: [itemIds, modelId]
