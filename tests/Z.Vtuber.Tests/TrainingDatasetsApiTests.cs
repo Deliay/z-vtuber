@@ -206,7 +206,7 @@ public class TrainingDatasetsApiTests(MongoDbFixture fixture) : IClassFixture<Mo
     public async Task Rename_Existing_Returns200WithUpdatedName()
     {
         var dataset = await SeedDatasetAsync("旧名字");
-        await TestWait.UntilAsync(() => DateTime.UtcNow > dataset.CreatedAt, TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(2));
+        await TestWait.UntilAsync(() => DateTime.UtcNow >= dataset.CreatedAt.AddMilliseconds(2), TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(2));
 
         var result = await CreateController()
             .Rename(dataset.Id.ToString(), new TrainingDatasetRenameRequest("  新名字  "));
