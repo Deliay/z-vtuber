@@ -123,27 +123,27 @@ public sealed class MilvusVectorStore(
     private async Task<IReadOnlyList<VectorMatch>> SearchAsync(
         string collection, ObjectId datasetId, float[] query, int limit, bool ascending, CancellationToken ct)
     {
-        var response = await client.PostAsync(
-            "/v2/vectordb/entities/search",
-            new
-            {
-                dbName = _options.Database,
-                collectionName = collection,
-                data = new[] { query },
-                filter = $"datasetId == \"{datasetId}\"",
-                limit = Math.Max(1, limit),
-                outputFields = new[] { "audioKey" },
-                searchParams = new Dictionary<string, object>
-                {
-                    ["metricType"] = ascending ? "L2" : "COSINE",
-                    ["params"] = new Dictionary<string, object>(),
-                },
-            },
-            ct);
+        var response = await SearchPostAsync(collection, datasetId, query, limit, ascending, ct);
         if (!response.IsSuccess)
         {
-            throw new VectorStoreUnavailableException(
-                $"milvus search '{collection}' failed: {response.Message}");
+            // 兜底：Milvus 重启后集合未 load / 启动时不可用时，懒触发一次 ensure（幂等建+load）后重试一次，
+            // 避免 synthesize 恒 502 直到手动 rebuild/重启 training。
+            try
+            {
+                await EnsureCollectionsAsync(ct);
+            }
+            catch (VectorStoreUnavailableException)
+            {
+                throw new VectorStoreUnavailableException(
+                    $"milvus search '{collection}' failed: {response.Message}");
+            }
+
+            response = await SearchPostAsync(collection, datasetId, query, limit, ascending, ct);
+            if (!response.IsSuccess)
+            {
+                throw new VectorStoreUnavailableException(
+                    $"milvus search '{collection}' failed: {response.Message}");
+            }
         }
 
         var matches = new List<VectorMatch>();
@@ -175,18 +175,50 @@ public sealed class MilvusVectorStore(
             : matches.OrderByDescending(m => m.Score).ThenBy(m => m.ItemId).ToList();
     }
 
+    private async Task<MilvusResponse> SearchPostAsync(
+        string collection, ObjectId datasetId, float[] query, int limit, bool ascending, CancellationToken ct) =>
+        await client.PostAsync(
+            "/v2/vectordb/entities/search",
+            new
+            {
+                dbName = _options.Database,
+                collectionName = collection,
+                data = new[] { query },
+                filter = $"datasetId == \"{datasetId}\"",
+                limit = Math.Max(1, limit),
+                outputFields = new[] { "audioKey" },
+                // Strong 一致性：读己之写——重建/增量同步后的向量立即可见、删除的残留行立即不可见，
+                // 否则 Bounded 快照会滞后导致检索不到刚写入/误命中已删除行。
+                consistencyLevel = "Strong",
+                searchParams = new Dictionary<string, object>
+                {
+                    ["metricType"] = ascending ? "L2" : "COSINE",
+                    ["params"] = new Dictionary<string, object>(),
+                },
+            },
+            ct);
+
     public async Task UpsertItemVectorsAsync(
         ObjectId datasetId, ObjectId itemId, string audioKey,
         float[]? textEmbedding, float[]? emotionVector, CancellationToken ct = default)
     {
+        // null 侧改为删除对应行：条目 text/情绪清空后旧行不得残留污染 top-k 候选。
         if (textEmbedding is not null)
         {
             await UpsertAsync(_options.TextCollection, datasetId, itemId, audioKey, textEmbedding, ct);
+        }
+        else
+        {
+            await DeleteItemAsync(_options.TextCollection, itemId, ct);
         }
 
         if (emotionVector is not null)
         {
             await UpsertAsync(_options.EmotionCollection, datasetId, itemId, audioKey, emotionVector, ct);
+        }
+        else
+        {
+            await DeleteItemAsync(_options.EmotionCollection, itemId, ct);
         }
     }
 
@@ -222,6 +254,30 @@ public sealed class MilvusVectorStore(
     {
         await DeleteAsync(_options.TextCollection, datasetId, ct);
         await DeleteAsync(_options.EmotionCollection, datasetId, ct);
+    }
+
+    public async Task DeleteItemVectorsAsync(ObjectId datasetId, ObjectId itemId, CancellationToken ct = default)
+    {
+        await DeleteItemAsync(_options.TextCollection, itemId, ct);
+        await DeleteItemAsync(_options.EmotionCollection, itemId, ct);
+    }
+
+    private async Task DeleteItemAsync(string collection, ObjectId itemId, CancellationToken ct)
+    {
+        var response = await client.PostAsync(
+            "/v2/vectordb/entities/delete",
+            new
+            {
+                dbName = _options.Database,
+                collectionName = collection,
+                filter = $"id == \"{itemId}\"",
+            },
+            ct);
+        if (!response.IsSuccess)
+        {
+            throw new VectorStoreUnavailableException(
+                $"milvus delete item '{collection}' failed: {response.Message}");
+        }
     }
 
     private async Task DeleteAsync(string collection, ObjectId datasetId, CancellationToken ct)

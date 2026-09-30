@@ -16,23 +16,26 @@ public sealed class LocalEmbeddingClient : IEmbeddingClient
     /// <summary>named client 名称（DI 注册键）。</summary>
     public const string ClientName = "EmbeddingService";
 
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly EmbeddingOptions _options;
     private readonly ILogger<LocalEmbeddingClient> _logger;
 
     public LocalEmbeddingClient(
-        HttpClient httpClient,
+        IHttpClientFactory httpClientFactory,
         IOptions<EmbeddingOptions> options,
         ILogger<LocalEmbeddingClient> logger)
     {
-        _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
         _options = options.Value;
         _logger = logger;
-        _httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(1, _options.RequestTimeoutSeconds));
     }
 
     public async Task<float[]> GetEmbeddingAsync(string text, CancellationToken ct = default)
     {
+        // 经 IHttpClientFactory 每次取用，保持 handler 轮换（长运行 DNS/连接漂移），避免单例捕获 HttpClient。
+        var httpClient = _httpClientFactory.CreateClient(ClientName);
+        httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(1, _options.RequestTimeoutSeconds));
+
         var openAiCompatible = _options.ApiPath.Contains("v1", StringComparison.OrdinalIgnoreCase);
         var payload = openAiCompatible
             ? new Dictionary<string, object?> { ["model"] = _options.Model, ["input"] = text }
@@ -41,7 +44,7 @@ public sealed class LocalEmbeddingClient : IEmbeddingClient
         HttpResponseMessage response;
         try
         {
-            response = await _httpClient.PostAsJsonAsync(_options.ApiPath, payload, ct);
+            response = await httpClient.PostAsJsonAsync(_options.ApiPath, payload, ct);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

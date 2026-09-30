@@ -232,6 +232,13 @@ public sealed class TrainingDatasetItemsController(
         var deleted = itemIds.Count == 0
             ? 0
             : await items.DeleteManyAsync(id, itemIds, ct);
+
+        // 条目删除后级联清理 Milvus 派生向量（best-effort）：残留行会占用 top-k 候选位，挤出合法候选。
+        if (itemIds.Count > 0 && vectors is not null)
+        {
+            await vectors.DeleteItemsAsync(id, itemIds, ct);
+        }
+
         return Ok(new TrainingDatasetBatchDeleteResultDto(deleted));
     }
 

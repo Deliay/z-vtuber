@@ -12,7 +12,7 @@ namespace Z.Vtuber.Tests;
 /// 检索按 datasetId 过滤 + 稳定 tie-break（同分 itemId 升序）、upsert/delete 落两个集合、
 /// 业务错误 → <see cref="VectorStoreUnavailableException"/>。
 /// </summary>
-public class MilvusVectorStoreTests
+public class MilvusVectorStoreTests(MilvusFixture milvus) : IClassFixture<MilvusFixture>
 {
     private const int TextDim = 1024;
 
@@ -181,5 +181,112 @@ public class MilvusVectorStoreTests
         {
             Assert.Equal($"datasetId == \"{datasetId}\"", delete.Payload.GetProperty("filter").GetString());
         }
+    }
+
+    [Fact]
+    public async Task Upsert_NullSide_DeletesThatRow_NotSkip()
+    {
+        var client = new StubMilvusRestClient { Responder = (_, _) => Ok() };
+        var itemId = ObjectId.GenerateNewId();
+
+        // text 有、emotion 为 null → 情绪侧应删除旧行（而非跳过）
+        await Create(client).UpsertItemVectorsAsync(ObjectId.GenerateNewId(), itemId, "key", [1f], null);
+
+        Assert.Equal(1, client.CountOf("/v2/vectordb/entities/upsert"));
+        var delete = Assert.Single(client.Requests.Where(r => r.Path == "/v2/vectordb/entities/delete"));
+        Assert.Equal("item_emotion_vectors", delete.Payload.GetProperty("collectionName").GetString());
+        Assert.Equal($"id == \"{itemId}\"", delete.Payload.GetProperty("filter").GetString());
+    }
+
+    [Fact]
+    public async Task DeleteItem_DeletesBothCollections()
+    {
+        var client = new StubMilvusRestClient { Responder = (_, _) => Ok() };
+        var itemId = ObjectId.GenerateNewId();
+
+        await Create(client).DeleteItemVectorsAsync(ObjectId.GenerateNewId(), itemId);
+
+        var deletes = client.Requests.Where(r => r.Path == "/v2/vectordb/entities/delete").ToList();
+        Assert.Equal(2, deletes.Count);
+        foreach (var delete in deletes)
+        {
+            Assert.Equal($"id == \"{itemId}\"", delete.Payload.GetProperty("filter").GetString());
+        }
+    }
+
+    // ===== 真 Milvus 链路（Testcontainers milvusdb/milvus，实证 FLAT/top-1/tie-break/upsert/delete）===== 
+
+    [Fact]
+    public async Task Real_UpsertAndSearchText_Top1()
+    {
+        var store = milvus.CreateStore(dimensions: 2);
+        await store.EnsureCollectionsAsync();
+        var ds = ObjectId.GenerateNewId();
+        var a = ObjectId.GenerateNewId();
+        var b = ObjectId.GenerateNewId();
+        await store.UpsertItemVectorsAsync(ds, a, "ka", [1f, 0f], new float[8]);
+        await store.UpsertItemVectorsAsync(ds, b, "kb", [0f, 1f], new float[8]);
+
+        var top = await store.SearchTextAsync(ds, [1f, 0f], 1);
+
+        Assert.Single(top);
+        Assert.Equal(a, top[0].ItemId);
+    }
+
+    [Fact]
+    public async Task Real_TieBreak_ById_WhenScoresEqual()
+    {
+        var store = milvus.CreateStore(dimensions: 2);
+        await store.EnsureCollectionsAsync();
+        var ds = ObjectId.GenerateNewId();
+        var low = ObjectId.Parse("000000000000000000000001");
+        var high = ObjectId.Parse("00000000000000000000000f");
+        await store.UpsertItemVectorsAsync(ds, high, "h", [1f, 0f], new float[8]);
+        await store.UpsertItemVectorsAsync(ds, low, "l", [1f, 0f], new float[8]);
+
+        var matches = await store.SearchTextAsync(ds, [1f, 0f], 2);
+
+        Assert.Equal(2, matches.Count);
+        Assert.Equal(low, matches[0].ItemId); // 同分按 itemId 升序
+        Assert.Equal(high, matches[1].ItemId);
+    }
+
+    [Fact]
+    public async Task Real_DeleteItem_RemovesFromBothCollections()
+    {
+        var store = milvus.CreateStore(dimensions: 2);
+        await store.EnsureCollectionsAsync();
+        var ds = ObjectId.GenerateNewId();
+        var a = ObjectId.GenerateNewId();
+        var b = ObjectId.GenerateNewId();
+        await store.UpsertItemVectorsAsync(ds, a, "ka", [1f, 0f], [1f, 0, 0, 0, 0, 0, 0, 0]);
+        await store.UpsertItemVectorsAsync(ds, b, "kb", [0f, 1f], [0f, 1, 0, 0, 0, 0, 0, 0]);
+
+        await store.DeleteItemVectorsAsync(ds, a);
+
+        var text = await store.SearchTextAsync(ds, [1f, 0f], 2);
+        Assert.Single(text);
+        Assert.Equal(b, text[0].ItemId);
+        var emo = await store.SearchEmotionAsync(ds, [1f, 0, 0, 0, 0, 0, 0, 0], 2);
+        Assert.Single(emo);
+        Assert.Equal(b, emo[0].ItemId);
+    }
+
+    [Fact]
+    public async Task Real_UpsertNull_DeletesStaleRow()
+    {
+        var store = milvus.CreateStore(dimensions: 2);
+        await store.EnsureCollectionsAsync();
+        var ds = ObjectId.GenerateNewId();
+        var a = ObjectId.GenerateNewId();
+        await store.UpsertItemVectorsAsync(ds, a, "ka", [1f, 0f], [1f, 0, 0, 0, 0, 0, 0, 0]);
+
+        // text 被清空（null）→ 文本行删除不再命中，情绪行保留
+        await store.UpsertItemVectorsAsync(ds, a, "ka", null, [1f, 0, 0, 0, 0, 0, 0, 0]);
+
+        var text = await store.SearchTextAsync(ds, [1f, 0f], 2);
+        Assert.Empty(text);
+        var emo = await store.SearchEmotionAsync(ds, [1f, 0, 0, 0, 0, 0, 0, 0], 2);
+        Assert.Single(emo);
     }
 }

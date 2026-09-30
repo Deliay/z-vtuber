@@ -37,7 +37,7 @@ public class IndexTtsClientTests
         var options = new TtsOptions();
         configure?.Invoke(options);
         var client = new HttpClient(handler) { BaseAddress = new Uri("http://tts.test") };
-        return new IndexTtsClient(client, Options.Create(options));
+        return new IndexTtsClient(new StubHttpClientFactory(client), Options.Create(options));
     }
 
     private static HttpResponseMessage Wav() =>

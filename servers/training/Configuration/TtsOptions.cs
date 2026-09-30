@@ -12,6 +12,9 @@ public sealed class TtsOptions
 
     public const string DefaultBaseUrl = "https://tts.internal.fffdan.com";
 
+    /// <summary>上游 index-tts-api 支持的语种白名单（大小写不敏感）。</summary>
+    public static readonly string[] SupportedLangs = ["ZH", "EN", "JA", "ES", "AR"];
+
     /// <summary>index-tts-api 内网地址。</summary>
     [Required]
     public string BaseUrl { get; set; } = DefaultBaseUrl;

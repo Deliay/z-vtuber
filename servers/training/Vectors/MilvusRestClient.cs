@@ -27,7 +27,7 @@ public interface IMilvusRestClient
 /// 任何 HTTP 状态码都尝试解析 JSON（Milvus 以 <c>code</c> 表达错误）；无法解析/传输异常视为不可用。
 /// </summary>
 public sealed class MilvusRestClient(
-    HttpClient httpClient,
+    IHttpClientFactory httpClientFactory,
     Microsoft.Extensions.Options.IOptions<Configuration.MilvusOptions> options) : IMilvusRestClient
 {
     /// <summary>named client 名称（DI 注册键）。</summary>
@@ -37,6 +37,8 @@ public sealed class MilvusRestClient(
 
     public async Task<MilvusResponse> PostAsync(string path, object payload, CancellationToken ct = default)
     {
+        // 经 IHttpClientFactory 每次取用，保持 handler 轮换（长运行 DNS/连接漂移），避免单例捕获 HttpClient。
+        var httpClient = httpClientFactory.CreateClient(ClientName);
         var opts = options.Value;
         var uri = $"{opts.Endpoint.TrimEnd('/')}{path}";
         using var request = new HttpRequestMessage(HttpMethod.Post, uri)

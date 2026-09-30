@@ -18,7 +18,8 @@ namespace Z.Vtuber.Tests;
 /// 音频生成端点（控制器直测 + 真 Mongo + 假 embedding/向量库/音频/TTS/模型）：
 /// 200 <c>audio/wav</c> + 命中头、400/404/409/502 错误矩阵、vectors/rebuild。
 /// </summary>
-public class TrainingSynthesizeApiTests(MongoDbFixture fixture) : IClassFixture<MongoDbFixture>, IAsyncLifetime
+public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture milvus)
+    : IClassFixture<MongoDbFixture>, IClassFixture<MilvusFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -48,7 +49,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture) : IClassFixture<
     }
 
     private TrainingSynthesizeController Create(
-        InMemoryVectorStore store, FakeEmbeddingClient embedding, StubAudioClient audio,
+        IVectorStore store, FakeEmbeddingClient embedding, StubAudioClient audio,
         StubTtsClient tts, TtsOptions? ttsOptions = null, SynthesizeOptions? synthesizeOptions = null)
     {
         var synthesize = new SynthesizeService(
@@ -314,5 +315,44 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture) : IClassFixture<
         var objectResult = Assert.IsAssignableFrom<ObjectResult>(result.Result);
         Assert.Equal(StatusCodes.Status502BadGateway, objectResult.StatusCode);
         Assert.Equal("embedding service unavailable", Assert.IsType<ErrorResponse>(objectResult.Value).Error);
+    }
+
+    // ===== 真 Milvus 链路（Testcontainers milvusdb/milvus）：rebuild 重建 + 检索 top-1 命中 speaker =====
+
+    [Fact]
+    public async Task Synthesize_RealMilvus_RebuildThenTop1Search_PicksSpeaker()
+    {
+        var datasetId = await SeedDatasetAsync();
+        var target = await SeedItemAsync(datasetId, "target");
+        var other = await SeedItemAsync(datasetId, "other");
+        var model = await SeedModelAsync();
+
+        var store = milvus.CreateStore(dimensions: 3);
+        await store.EnsureCollectionsAsync();
+
+        // 文本→向量：target/query → [1,0,0]，other → [0,1,0]（真检索须命中 target）
+        var embedding = new FakeEmbeddingClient
+        {
+            Provider = t => t.Contains("target") ? [1f, 0f, 0f] : [0f, 1f, 0f],
+        };
+
+        var audio = new StubAudioClient();
+        audio.Clips[target.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
+        audio.Clips[other.AudioUri] = new AudioClip([4, 5, 6], "audio/mpeg");
+        var tts = new StubTtsClient { Bytes = [7, 7] };
+
+        // Mongo → embedding → 真 Milvus 重建
+        var sync = new VectorSyncService(Items, store, embedding, NullLogger<VectorSyncService>.Instance);
+        await sync.RebuildAsync(datasetId);
+
+        // 同一真向量库跑合成：query 向量 [1,0,0] 检索 top-1 命中 target（而非 other）
+        var controller = Create(store, embedding, audio, tts);
+        var result = await controller.Synthesize(
+            datasetId.ToString(), new TrainingSynthesizeRequest("target query", null, model.Id.ToString()));
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("audio/wav", file.ContentType);
+        Assert.Equal([7, 7], file.FileContents);
+        Assert.Equal(target.AudioKey, Header(controller, "X-Speaker-Audio-Key"));
     }
 }

@@ -30,7 +30,7 @@ public sealed class TrainingSynthesizeController(
     ILogger<TrainingSynthesizeController>? logger = null) : ControllerBase
 {
     /// <summary>上游 index-tts-api 支持的语种白名单（大小写不敏感）。</summary>
-    internal static readonly string[] SupportedLangs = ["ZH", "EN", "JA", "ES", "AR"];
+    internal static readonly string[] SupportedLangs = TtsOptions.SupportedLangs;
 
     private readonly ILogger<TrainingSynthesizeController> _logger =
         logger ?? NullLogger<TrainingSynthesizeController>.Instance;
@@ -56,18 +56,12 @@ public sealed class TrainingSynthesizeController(
             return BadRequest(new ErrorResponse("text is required"));
         }
 
-        string lang;
-        if (string.IsNullOrWhiteSpace(request?.Lang))
+        // 缺省语种取 Tts:DefaultLang，与显式 lang 同样过白名单（脏配置不得直传上游）。
+        var lang = (string.IsNullOrWhiteSpace(request?.Lang) ? ttsOptions.DefaultLang : request.Lang)
+            .Trim().ToUpperInvariant();
+        if (!SupportedLangs.Contains(lang, StringComparer.Ordinal))
         {
-            lang = ttsOptions.DefaultLang.Trim().ToUpperInvariant();
-        }
-        else
-        {
-            lang = request.Lang.Trim().ToUpperInvariant();
-            if (!SupportedLangs.Contains(lang, StringComparer.Ordinal))
-            {
-                return BadRequest(new ErrorResponse("invalid lang"));
-            }
+            return BadRequest(new ErrorResponse("invalid lang"));
         }
 
         var model = await ResolveEmotionModelAsync(request?.ModelId, ct);

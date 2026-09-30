@@ -13,24 +13,30 @@ namespace Z.Vtuber.Training.Clients;
 /// </summary>
 public sealed class IndexTtsClient : ITtsClient
 {
-    private readonly HttpClient _httpClient;
+    /// <summary>named client 名称（DI 注册键）。</summary>
+    public const string ClientName = "TtsService";
+
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly TtsOptions _options;
 
-    public IndexTtsClient(HttpClient httpClient, IOptions<TtsOptions> options)
+    public IndexTtsClient(IHttpClientFactory httpClientFactory, IOptions<TtsOptions> options)
     {
-        _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
         _options = options.Value;
-        _httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(1, _options.RequestTimeoutSeconds));
     }
 
     public async Task<byte[]> SynthesizeAsync(TtsSynthesizeRequest request, CancellationToken ct = default)
     {
+        // 经 IHttpClientFactory 每次取用，保持 handler 轮换（长运行 DNS/连接漂移），避免单例捕获 HttpClient。
+        var httpClient = _httpClientFactory.CreateClient(ClientName);
+        httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(1, _options.RequestTimeoutSeconds));
+
         using var content = BuildForm(request);
 
         HttpResponseMessage response;
         try
         {
-            response = await _httpClient.PostAsync("/synthesize", content, ct);
+            response = await httpClient.PostAsync("/synthesize", content, ct);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

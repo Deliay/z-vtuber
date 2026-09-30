@@ -47,17 +47,15 @@ public sealed class VectorSyncService(
         return updated;
     }
 
-    /// <summary>单条增量同步（best-effort，失败仅 Warn 不阻断主流程）。</summary>
+    /// <summary>
+    /// 单条增量同步（best-effort，失败仅 Warn 不阻断主流程）。文本/情绪被清空时同步删除派生行
+    /// （<see cref="IVectorStore.UpsertItemVectorsAsync"/> 对 null 侧执行删除），避免残留污染检索。
+    /// </summary>
     public async Task SyncItemAsync(TrainingDatasetItemRecord record, CancellationToken ct = default)
     {
         try
         {
             var (text, emotion) = await BuildVectorsAsync(record, ct);
-            if (text is null && emotion is null)
-            {
-                return;
-            }
-
             await store.UpsertItemVectorsAsync(record.DatasetId, record.Id, record.AudioKey, text, emotion, ct);
         }
         catch (Exception ex)
@@ -65,6 +63,25 @@ public sealed class VectorSyncService(
             logger.LogWarning(
                 ex, "Vector sync failed for datasetId={DatasetId} itemId={ItemId}",
                 record.DatasetId, record.Id);
+        }
+    }
+
+    /// <summary>删除若干条目的向量（batch-delete 级联清理派生索引，best-effort）。</summary>
+    public async Task DeleteItemsAsync(
+        ObjectId datasetId, IReadOnlyCollection<ObjectId> itemIds, CancellationToken ct = default)
+    {
+        foreach (var itemId in itemIds)
+        {
+            try
+            {
+                await store.DeleteItemVectorsAsync(datasetId, itemId, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex, "Vector delete failed for datasetId={DatasetId} itemId={ItemId}",
+                    datasetId, itemId);
+            }
         }
     }
 

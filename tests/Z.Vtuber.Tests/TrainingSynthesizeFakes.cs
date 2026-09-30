@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Text.Json;
 using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence.Entities;
@@ -15,6 +16,12 @@ internal static class TrainingSynthesizeFakes
         using var document = JsonDocument.Parse(raw);
         return document.RootElement.Clone();
     }
+}
+
+/// <summary>固定返回同一 <see cref="HttpClient"/> 的 <see cref="IHttpClientFactory"/> 替身（契约测试用）。</summary>
+internal sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
+{
+    public HttpClient CreateClient(string name) => client;
 }
 
 /// <summary>记录请求并按 Responder 应答的 Milvus REST 替身。</summary>
@@ -71,6 +78,8 @@ internal sealed class InMemoryVectorStore : IVectorStore
     public Exception? SearchEmotionThrow { get; set; }
 
     public Exception? UpsertThrow { get; set; }
+
+    public Exception? DeleteThrow { get; set; }
 
     public int UpsertCalls { get; private set; }
 
@@ -133,9 +142,27 @@ internal sealed class InMemoryVectorStore : IVectorStore
 
     public Task DeleteDatasetVectorsAsync(ObjectId datasetId, CancellationToken ct = default)
     {
+        if (DeleteThrow is not null)
+        {
+            return Task.FromException(DeleteThrow);
+        }
+
         DeleteCalls++;
         _text.RemoveAll(e => e.DatasetId == datasetId.ToString());
         _emotion.RemoveAll(e => e.DatasetId == datasetId.ToString());
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteItemVectorsAsync(ObjectId datasetId, ObjectId itemId, CancellationToken ct = default)
+    {
+        if (DeleteThrow is not null)
+        {
+            return Task.FromException(DeleteThrow);
+        }
+
+        DeleteCalls++;
+        _text.RemoveAll(e => e.DatasetId == datasetId.ToString() && e.ItemId == itemId.ToString());
+        _emotion.RemoveAll(e => e.DatasetId == datasetId.ToString() && e.ItemId == itemId.ToString());
         return Task.CompletedTask;
     }
 

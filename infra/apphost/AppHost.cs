@@ -94,7 +94,10 @@ var training = builder.AddProject<Projects.Z_Vtuber_Training>("training")
     .WithEnvironment("RecordingService__BaseUrl", recording.GetEndpoint("http"))
     .WithEnvironment("Milvus__Endpoint", ReferenceExpression.Create(
         $"http://{milvus.Resource.PrimaryEndpoint.Property(EndpointProperty.Host)}:{milvus.Resource.PrimaryEndpoint.Property(EndpointProperty.Port)}"))
-    .WithEnvironment("Milvus__Token", milvusApiKey)
+    // Milvus 开启鉴权（COMMON_SECURITY_AUTHORIZATIONENABLED=true，root 密码=apiKey）；
+    // REST 认 Authorization: Bearer <username>:<password>，故 token 必须是 root:{apiKey}（即 milvus.Resource.Token），
+    // 传裸密码会被 ParseUsernamePassword 判为无效 API key → 401。
+    .WithEnvironment("Milvus__Token", milvus.Resource.Token)
     .WithEnvironment("Embedding__BaseUrl", "https://ollama.internal.fffdan.com/")
     .WithEnvironment("Tts__BaseUrl", "https://tts.internal.fffdan.com")
     .WithHttpHealthCheck("/health");

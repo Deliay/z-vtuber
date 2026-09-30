@@ -39,7 +39,7 @@ public class LocalEmbeddingClientTests
         var options = new EmbeddingOptions();
         configure?.Invoke(options);
         var client = new HttpClient(handler) { BaseAddress = new Uri("http://embed.test") };
-        return new LocalEmbeddingClient(client, Options.Create(options), NullLogger<LocalEmbeddingClient>.Instance);
+        return new LocalEmbeddingClient(new StubHttpClientFactory(client), Options.Create(options), NullLogger<LocalEmbeddingClient>.Instance);
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, string body) =>

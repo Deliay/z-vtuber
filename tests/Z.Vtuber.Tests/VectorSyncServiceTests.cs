@@ -93,17 +93,48 @@ public class VectorSyncServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     }
 
     [Fact]
-    public async Task SyncItem_EmptyTextNoEmotion_DoesNotCallStore()
+    public async Task SyncItem_EmptyTextNoEmotion_ClearsStaleItemVectors()
     {
         var datasetId = ObjectId.GenerateNewId();
         var embedding = new FakeEmbeddingClient();
         var store = new InMemoryVectorStore();
+        var record = Item(datasetId, "");
+        store.SeedText(datasetId, record.Id, record.AudioKey, [1f]); // 预置旧行
         var service = new VectorSyncService(Items, store, embedding, NullLogger<VectorSyncService>.Instance);
 
-        await service.SyncItemAsync(Item(datasetId, ""));
+        await service.SyncItemAsync(record); // text/情绪均被清空 → 删除派生行
 
-        Assert.Equal(0, store.UpsertCalls);
-        Assert.Equal(0, embedding.Calls);
+        Assert.Equal(0, embedding.Calls); // 空文本不调 embedding
+        var matches = await store.SearchTextAsync(datasetId, [1f], 4);
+        Assert.Empty(matches); // 旧行被清除，不再污染候选
+    }
+
+    [Fact]
+    public async Task DeleteItemsAsync_DeletesEachItem()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var store = new InMemoryVectorStore();
+        var a = ObjectId.GenerateNewId();
+        var b = ObjectId.GenerateNewId();
+        store.SeedText(datasetId, a, "ka", [1f]);
+        store.SeedText(datasetId, b, "kb", [1f]);
+        var service = new VectorSyncService(Items, store, new FakeEmbeddingClient(), NullLogger<VectorSyncService>.Instance);
+
+        await service.DeleteItemsAsync(datasetId, [a, b]);
+
+        Assert.Equal(2, store.DeleteCalls);
+        Assert.Empty(await store.SearchTextAsync(datasetId, [1f], 4));
+    }
+
+    [Fact]
+    public async Task DeleteItemsAsync_StoreFailure_IsSwallowed()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var store = new InMemoryVectorStore { DeleteThrow = new VectorStoreUnavailableException("down") };
+        var service = new VectorSyncService(Items, store, new FakeEmbeddingClient(), NullLogger<VectorSyncService>.Instance);
+
+        // 不抛异常（best-effort，待 rebuild 兜底）。
+        await service.DeleteItemsAsync(datasetId, [ObjectId.GenerateNewId()]);
     }
 
     [Fact]

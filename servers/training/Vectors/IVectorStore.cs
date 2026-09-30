@@ -26,11 +26,15 @@ public interface IVectorStore
 
     /// <summary>
     /// 按 <c>itemId</c> upsert 一条条目的向量：文本向量入文本集合、八维情感向量入情感集合；
-    /// <paramref name="textEmbedding"/>/<paramref name="emotionVector"/> 为 null 的集合跳过。
+    /// <paramref name="textEmbedding"/>/<paramref name="emotionVector"/> 为 null 的集合**删除该条目对应行**
+    /// （条目 text/情绪被清空后不得残留旧向量，否则会污染 top-k 候选）。
     /// </summary>
     Task UpsertItemVectorsAsync(
         ObjectId datasetId, ObjectId itemId, string audioKey,
         float[]? textEmbedding, float[]? emotionVector, CancellationToken ct = default);
+
+    /// <summary>删除某个条目在两个集合中的向量（条目删除后清理派生索引）。</summary>
+    Task DeleteItemVectorsAsync(ObjectId datasetId, ObjectId itemId, CancellationToken ct = default);
 
     /// <summary>删除某数据集的全部向量（级联删除数据集/重建前清理）。</summary>
     Task DeleteDatasetVectorsAsync(ObjectId datasetId, CancellationToken ct = default);

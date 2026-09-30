@@ -49,6 +49,10 @@ builder.Services.AddOptions<MilvusOptions>()
 builder.Services.AddOptions<TtsOptions>()
     .Bind(builder.Configuration.GetSection(TtsOptions.SectionName))
     .ValidateDataAnnotations()
+    .Validate(
+        o => TtsOptions.SupportedLangs.Contains(
+            o.DefaultLang?.Trim().ToUpperInvariant() ?? string.Empty, StringComparer.Ordinal),
+        "Tts:DefaultLang must be one of ZH/EN/JA/ES/AR")
     .ValidateOnStart();
 
 builder.Services.AddOptions<SynthesizeOptions>()
@@ -102,13 +106,14 @@ builder.Services.AddHttpClient(LocalEmbeddingClient.ClientName, client =>
 builder.Services.AddHttpClient(MilvusRestClient.ClientName)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
-// 上游 index-tts-api（typed client，BaseAddress = Tts:BaseUrl）
-builder.Services.AddHttpClient<ITtsClient, IndexTtsClient>(client =>
+// 上游 index-tts-api（named client TtsService，BaseAddress = Tts:BaseUrl；IndexTtsClient 每次经 factory 取用）
+builder.Services.AddHttpClient(IndexTtsClient.ClientName, client =>
 {
     client.BaseAddress = new Uri(
         builder.Configuration[$"{TtsOptions.SectionName}:BaseUrl"]
             ?? TtsOptions.DefaultBaseUrl);
 });
+builder.Services.AddSingleton<ITtsClient, IndexTtsClient>();
 
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
