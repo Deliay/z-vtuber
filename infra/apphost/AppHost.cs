@@ -1,3 +1,5 @@
+using Aspire.Hosting.ApplicationModel;
+
 var builder = DistributedApplication.CreateBuilder(args);
 
 var mongo = builder.AddMongoDB("mongo")
@@ -7,6 +9,11 @@ var mongo = builder.AddMongoDB("mongo")
 
 var messaging = builder.AddRedis("messaging")
     .WithDataVolume();
+
+// Milvus 向量库（Aspire Milvus 集成，托管 milvusdb/milvus；向量索引为派生数据，可由 vectors/rebuild 重建）
+var milvusApiKey = builder.AddParameter("milvus-api-key", "Milvus", secret: true);
+var milvus = builder.AddMilvus("milvus", milvusApiKey)
+    .WithLifetime(ContainerLifetime.Persistent);
 
 var api = builder.AddProject<Projects.Z_Vtuber>("api")
     .WithReference(mongo)
@@ -82,8 +89,14 @@ var training = builder.AddProject<Projects.Z_Vtuber_Training>("training")
     .WaitFor(messaging)
     .WithReference(recording)
     .WaitFor(recording)
+    .WaitFor(milvus)
     .WithEnvironment("TranscriptService__BaseUrl", transcriptApi.GetEndpoint("http"))
     .WithEnvironment("RecordingService__BaseUrl", recording.GetEndpoint("http"))
+    .WithEnvironment("Milvus__Endpoint", ReferenceExpression.Create(
+        $"http://{milvus.Resource.PrimaryEndpoint.Property(EndpointProperty.Host)}:{milvus.Resource.PrimaryEndpoint.Property(EndpointProperty.Port)}"))
+    .WithEnvironment("Milvus__Token", milvusApiKey)
+    .WithEnvironment("Embedding__BaseUrl", "https://ollama.internal.fffdan.com/")
+    .WithEnvironment("Tts__BaseUrl", "https://tts.internal.fffdan.com")
     .WithHttpHealthCheck("/health");
 
 api.WithReference(recording)
