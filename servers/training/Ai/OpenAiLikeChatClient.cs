@@ -89,6 +89,7 @@ public sealed class OpenAiLikeChatClient : IChatModelClient
         {
             writer.WriteStartObject();
             writer.WriteString("model", model);
+            writer.WriteNumber("temperature", 0);
             writer.WritePropertyName("messages");
             writer.WriteStartArray();
 
