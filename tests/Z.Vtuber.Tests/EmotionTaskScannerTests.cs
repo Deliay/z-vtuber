@@ -291,10 +291,10 @@ public class EmotionTaskScannerTests(MongoDbFixture mongo) : IClassFixture<Mongo
         await scanner.StartAsync(CancellationToken.None);
         try
         {
-            for (var i = 0; i < 100 && runner.RunTaskIds.Count == 0; i++)
-            {
-                await Task.Delay(50);
-            }
+            await TestWait.UntilAsync(
+                () => runner.RunTaskIds.Count > 0,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(50));
         }
         finally
         {

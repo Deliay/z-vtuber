@@ -106,18 +106,8 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
             fetcher);
     }
 
-    private static async Task WaitForAsync(Func<Task<bool>> condition)
-    {
-        for (var i = 0; i < 100; i++)
-        {
-            if (await condition())
-            {
-                return;
-            }
-            await Task.Delay(20);
-        }
-        Assert.Fail("condition not met within timeout");
-    }
+    private static Task WaitForAsync(Func<Task<bool>> condition)
+        => TestWait.UntilAsync(condition, TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(20));
 
     [Fact]
     public async Task Run_BeforeDailyHour_DoesNotCrawl()

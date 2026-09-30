@@ -43,8 +43,8 @@ public class CookieInvalidEventSubscriberTests(RedisFixture redis)
         };
         await pubSubscriber.PublishAsync(Channel, JsonSerializer.Serialize(evt));
 
-        // 等待消息处理
-        await Task.Delay(500);
+        // 轮询等待消息处理完成
+        await TestWait.UntilAsync(() => receivedEvent is not null, TimeSpan.FromSeconds(5));
 
         Assert.NotNull(receivedEvent);
         Assert.Equal(cookieId, receivedEvent!.CookieId);
@@ -85,7 +85,7 @@ public class CookieInvalidEventSubscriberTests(RedisFixture redis)
         };
         await pubSubscriber.PublishAsync(Channel, JsonSerializer.Serialize(evt));
 
-        await Task.Delay(500);
+        await TestWait.UntilAsync(() => dispatchCount >= 1, TimeSpan.FromSeconds(5));
 
         Assert.Equal(1, dispatchCount);
 
