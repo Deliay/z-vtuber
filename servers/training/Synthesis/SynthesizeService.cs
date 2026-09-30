@@ -20,7 +20,8 @@ public sealed class NoSpeakerReferenceException() : Exception("no speaker refere
 
 /// <summary>
 /// 音频生成编排：文本向量检索 top-1 取 <c>speaker_prompt</c>（逐候选兜底、全失败 502）、
-/// 情绪参考按 <see cref="EmotionMode"/> 取值——<see cref="EmotionMode.Llm"/> 用可用模型生成情感向量检索 top-1、
+/// 情绪参考按 <see cref="EmotionMode"/> 取值——<see cref="EmotionMode.None"/>（默认）不传情绪参考、
+/// <see cref="EmotionMode.Llm"/> 用可用模型生成情感向量检索 top-1、
 /// <see cref="EmotionMode.Dataset"/> 直接用命中条目自身的 <c>Extensions.emotion</c>（best-effort，失败降级中性）、
 /// 调上游 TTS 返回 WAV。日志不打文本/音频内容。
 /// </summary>
@@ -37,7 +38,7 @@ public sealed class SynthesizeService(
 {
     public async Task<SynthesizeResult> SynthesizeAsync(
         ObjectId datasetId, string text, string lang, TrainingModelRecord? emotionModel,
-        EmotionMode emotionMode = EmotionMode.Llm, CancellationToken ct = default)
+        EmotionMode emotionMode = EmotionMode.None, CancellationToken ct = default)
     {
         var stopwatch = Stopwatch.StartNew();
 
@@ -63,7 +64,7 @@ public sealed class SynthesizeService(
         }
 
         // 4) 情绪参考：llm 用大模型生成查询向量后检索；dataset 直接用命中条目自身 Extensions.emotion。
-        var emotion = useDatasetEmotion
+        var emotion = emotionMode == EmotionMode.None ? default : useDatasetEmotion
             ? BuildDatasetEmotionReference(datasetEmotion)
             : await TryBuildEmotionReferenceAsync(datasetId, text, emotionModel, ct);
 
