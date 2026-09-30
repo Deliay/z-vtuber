@@ -155,18 +155,22 @@ public class LiveEventSourceLockTimingTests
     [Fact]
     public async Task RunRoomAsync_LockReleasedDuringEventLoop_OtherAcquireCompletesQuickly()
     {
-        var gate = new CookieCallGate(new FakeDistributedLockProvider());
+        var provider = new FakeDistributedLockProvider();
+        var gate = new CookieCallGate(provider);
         var factory = new FakeDanmakuClientFactory(gate);
         var source = CreateSource(factory);
 
         // Pre-hold the lock so RunRoomAsync blocks on CreateWithLockAsync
         var lockHolder = await gate.AcquireAsync("test-cookie");
 
+        // 以「开始等待」信号替代固定等待：确认 RunRoomAsync 已进入锁等待。
+        var waitStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.LockWaitStarted = _ => waitStarted.TrySetResult();
+
         var cts = new CancellationTokenSource();
         var runTask = Task.Run(() => source.StartRoomAsync(12345, cts.Token));
 
-        // Give RunRoomAsync time to start and block on lock acquisition
-        await Task.Delay(100);
+        await waitStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Release the lock — RunRoomAsync proceeds through CreateWithLockAsync → ConnectAsync → lockRelease.Dispose()
         await lockHolder.DisposeAsync();
@@ -196,7 +200,6 @@ public class LiveEventSourceLockTimingTests
     public async Task RunRoomAsync_ConnectAsyncFails_LockReleased()
     {
         var gate = new CookieCallGate(new FakeDistributedLockProvider());
-        var factory = new FakeDanmakuClientFactory(gate);
 
         // Override factory to return a client that fails ConnectAsync
         var factoryWithFail = new FailConnectFactory(gate);
@@ -207,22 +210,29 @@ public class LiveEventSourceLockTimingTests
         var cts = new CancellationTokenSource();
         var runTask = Task.Run(() => source.StartRoomAsync(12345, cts.Token));
 
-        await Task.Delay(100);
-
-        // Release lock — RunRoomAsync proceeds, CreateWithLockAsync succeeds, ConnectAsync fails
+        // Release lock — RunRoomAsync proceeds, CreateWithLockAsync succeeds, ConnectAsync fails.
         await lockHolder.DisposeAsync();
 
-        // Wait briefly for the catch block to execute and dispose lockRelease
-        await Task.Delay(200);
-
-        // The lock MUST be available during the reconnect delay
+        // 等待 ConnectAsync 失败后 catch 释放锁：以有界取消令牌尝试获取，成功即证明已释放。
+        using var acquireCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        await using var secondLock = await gate.AcquireAsync("test-cookie");
+        IDistributedLockHandle? secondLock;
+        try
+        {
+            secondLock = await gate.AcquireAsync("test-cookie", acquireCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            Assert.Fail("lock was NOT released after ConnectAsync failure");
+            return;
+        }
+
         sw.Stop();
 
         Assert.True(sw.ElapsedMilliseconds < 500,
             $"Second AcquireAsync took {sw.ElapsedMilliseconds}ms — lock was NOT released after ConnectAsync failure");
 
+        await secondLock.DisposeAsync();
         cts.Cancel();
         await runTask;
     }

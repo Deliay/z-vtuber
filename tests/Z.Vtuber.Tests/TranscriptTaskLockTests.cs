@@ -51,10 +51,11 @@ public class TranscriptTaskLockTests(RedisFixture fixture)
 
         await using var handle = await provider.TryAcquireAsync(taskId);
 
-        await Task.Delay(700);
+        // 1s TTL 语义：在到期前续期，并等到原到期点之后仍持有（续期已顺延）。
+        await Task.Delay(400);
         Assert.True(await handle!.RenewAsync());
 
-        await Task.Delay(700);
+        await Task.Delay(650);
         Assert.True(await handle.CheckOwnershipAsync());
     }
 
@@ -68,7 +69,12 @@ public class TranscriptTaskLockTests(RedisFixture fixture)
         await using var handleA = await providerA.TryAcquireAsync(taskId);
         Assert.NotNull(handleA);
 
-        await Task.Delay(1500);
+        // 轮询直到 1s TTL 自然过期（不硬等固定时长，过期即可接管）。
+        await TestWait.UntilAsync(
+            async () => !await providerA.IsHeldAsync(taskId),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(50),
+            "lock TTL should expire");
 
         var handleB = await providerB.TryAcquireAsync(taskId);
         Assert.NotNull(handleB);
