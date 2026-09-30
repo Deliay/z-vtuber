@@ -16,16 +16,22 @@ public class RedisLiveEventBusTests(RedisFixture redis)
     private static async Task PublishAsync(RedisFixture redis, LiveEvent evt)
         => await redis.Connection.GetSubscriber().PublishAsync(Channel(evt.RoomId), JsonSerializer.Serialize(evt));
 
-    // Redis 订阅在后台异步建立，等待订阅生效后再发布，避免 fire-and-forget 竞态。
-    private static async Task WaitForSubscriptionAsync()
-        => await Task.Delay(300);
+    // Redis 订阅在后台异步建立，轮询到频道订阅计数可见后再发布，避免 fire-and-forget 竞态。
+    private async Task WaitForSubscriptionAsync(long roomId)
+    {
+        var server = redis.Connection.GetServer(redis.Connection.GetEndPoints().First());
+        await TestWait.UntilAsync(
+            () => SubscriberCount(server, Channel(roomId)) > 0,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(25));
+    }
 
     [Fact]
     public async Task Subscribe_FirstSubscriber_SubscribesToRedisAndDelivers()
     {
         var bus = new LiveEventBus(redis.Connection);
         var sub = bus.Subscribe(123456);
-        await WaitForSubscriptionAsync();
+        await WaitForSubscriptionAsync(123456);
 
         await PublishAsync(redis, Event(123456));
 
@@ -41,7 +47,7 @@ public class RedisLiveEventBusTests(RedisFixture redis)
         var bus = new LiveEventBus(redis.Connection);
         var s1 = bus.Subscribe(7);
         var s2 = bus.Subscribe(7);
-        await WaitForSubscriptionAsync();
+        await WaitForSubscriptionAsync(7);
 
         await PublishAsync(redis, Event(7));
 
@@ -59,7 +65,7 @@ public class RedisLiveEventBusTests(RedisFixture redis)
     {
         var bus = new LiveEventBus(redis.Connection);
         var sub = bus.Subscribe(55);
-        await WaitForSubscriptionAsync();
+        await WaitForSubscriptionAsync(55);
 
         // confirm active delivery first
         await PublishAsync(redis, Event(55));
@@ -79,7 +85,7 @@ public class RedisLiveEventBusTests(RedisFixture redis)
     {
         var bus = new LiveEventBus(redis.Connection);
         var sub = bus.Subscribe(4242);
-        await WaitForSubscriptionAsync();
+        await WaitForSubscriptionAsync(4242);
 
         var server = redis.Connection.GetServer(redis.Connection.GetEndPoints().First());
 
@@ -103,18 +109,15 @@ public class RedisLiveEventBusTests(RedisFixture redis)
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        while (sw.Elapsed < timeout)
+        try
         {
-            if (condition())
-            {
-                return true;
-            }
-
-            await Task.Delay(100);
+            await TestWait.UntilAsync(condition, timeout, TimeSpan.FromMilliseconds(25));
+            return true;
         }
-
-        return condition();
+        catch (Xunit.Sdk.TrueException)
+        {
+            return false;
+        }
     }
 
     [Fact]

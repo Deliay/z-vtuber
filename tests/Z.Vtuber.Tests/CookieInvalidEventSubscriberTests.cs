@@ -29,7 +29,7 @@ public class CookieInvalidEventSubscriberTests(RedisFixture redis)
         _ = subscriber.StartAsync(cts.Token);
 
         // 等待订阅建立
-        await Task.Delay(100);
+        await WaitForSubscriptionAsync();
 
         var pubSubscriber = redis.Connection.GetSubscriber();
         var cookieId = ObjectId.GenerateNewId().ToString();
@@ -69,7 +69,7 @@ public class CookieInvalidEventSubscriberTests(RedisFixture redis)
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         _ = subscriber.StartAsync(cts.Token);
 
-        await Task.Delay(100);
+        await WaitForSubscriptionAsync();
 
         var pubSubscriber = redis.Connection.GetSubscriber();
         // 发送无效消息
@@ -100,11 +100,17 @@ public class CookieInvalidEventSubscriberTests(RedisFixture redis)
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         _ = subscriber.StartAsync(cts.Token);
 
-        await Task.Delay(100);
+        await WaitForSubscriptionAsync();
 
         await subscriber.StopAsync(CancellationToken.None);
 
-        // 验证停止后不再接收消息
+        // 验证停止后不再接收消息：轮询到 Redis 频道订阅计数归零
+        var server = redis.Connection.GetServer(redis.Connection.GetEndPoints().First());
+        await TestWait.UntilAsync(
+            () => server.SubscriptionSubscriberCount(Channel) == 0,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(25));
+
         var pubSubscriber = redis.Connection.GetSubscriber();
         var cookieId = ObjectId.GenerateNewId().ToString();
         var evt = new CookieInvalidEvent
@@ -115,10 +121,17 @@ public class CookieInvalidEventSubscriberTests(RedisFixture redis)
         };
         await pubSubscriber.PublishAsync(Channel, JsonSerializer.Serialize(evt));
 
-        await Task.Delay(200);
-
         // 如果没有异常，说明已正确退订
         Assert.True(true);
+    }
+
+    private async Task WaitForSubscriptionAsync()
+    {
+        var server = redis.Connection.GetServer(redis.Connection.GetEndPoints().First());
+        await TestWait.UntilAsync(
+            () => server.SubscriptionSubscriberCount(Channel) > 0,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(25));
     }
 
     private sealed class FakeNotificationDispatchService : INotificationDispatchService
