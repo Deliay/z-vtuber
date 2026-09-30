@@ -367,7 +367,7 @@ export interface paths {
         put?: never;
         /**
          * 音频生成（数据集语音合成）
-         * @description 以数据集为参考池：输入文本向量化后匹配音色参考（speaker_prompt），情感向量匹配情绪参考 （emo_prompt/emo_vector/emo_text/emo_alpha），调用内网 index-tts-api 合成并返回 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。 emotionMode=none（默认）不传任何情绪参考直接合成；emotionMode=llm 用配置的可用模型生成情感向量后检索； emotionMode=dataset 跳过大模型，直接使用文本向量命中条目自身的 Extensions.emotion （无则沿音色候选向下找，全无则降级中性）。dataset/none 完全跳过 modelId/模型解析。
+         * @description 以数据集为参考池：按输入文本与条目文本的字符相似度（归一化编辑距离，兼顾内容与长度）匹配音色参考 （speaker_prompt），情感向量匹配情绪参考（emo_prompt/emo_vector/emo_text/emo_alpha）， 调用内网 index-tts-api 合成并返回 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。 emotionMode=none（默认）不传任何情绪参考直接合成；emotionMode=llm 用配置的可用模型生成情感向量后检索； emotionMode=dataset 跳过大模型，直接使用音色命中候选条目自身的 Extensions.emotion （无则沿音色候选向下找，全无则降级中性）。dataset/none 完全跳过 modelId/模型解析。
          */
         post: operations["synthesizeTrainingDataset"];
         delete?: never;
@@ -1672,7 +1672,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description {"error": "embedding service unavailable"/"vector store unavailable"/"audio unavailable"/"tts service unavailable"} */
+            /** @description {"error": "audio unavailable"/"tts service unavailable"} */
             502: {
                 headers: {
                     [name: string]: unknown;

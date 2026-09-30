@@ -4137,7 +4137,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingErrorResponse"];
                 };
             };
-            /** @description training 服务不可达（或上游 embedding/向量库/音频/TTS 不可用） */
+            /** @description training 服务不可达（或上游音频/TTS 不可用） */
             502: {
                 headers: {
                     [name: string]: unknown;
