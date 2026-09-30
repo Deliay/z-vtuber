@@ -7,6 +7,7 @@
 - 数据库：MongoDB（`Aspire.MongoDB.Driver` + `MongoDB.Driver`，读写 `training_datasets`/`training_dataset_items`/`training_providers`/`training_models`/`training_emotion_tasks`）
 - 分布式锁：Redis（`Aspire.StackExchange.Redis`，情绪识别任务锁 SET NX PX + 续期 + Lua 释放 + fencing）
 - 上游依赖：recording-transcript-api（导入数据源，named HttpClient `TranscriptService`）、recording 服务（音频片段，named HttpClient `RecordingAudioClient`，节 `RecordingService`）、外部大模型服务（named HttpClient `AiModel`，OpenAI-like `/chat/completions` 与 Claude-like `/v1/messages`）
+- 向量与音频生成：本地 Ollama（文本 embedding，named HttpClient `EmbeddingService`，节 `Embedding`）、**Milvus**（向量检索，named HttpClient `MilvusStore` 走 REST API v2，节 `Milvus`）、内网 index-tts-api（语音合成，typed HttpClient `ITtsClient`/`IndexTtsClient`，节 `Tts`）
 
 ## 项目模块示意图
 
@@ -34,6 +35,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
   - `TrainingModelsController`（`[Route("api/training/models")]`，接口 15-18，新增）：列表（`enabled?` 过滤，每项含服务端拼好的 `slug = {providerName}/{model}`）、手动添加（Provider 下拉口径，provider 404/重复 409 `model exists`）、更新（启停/改名 409）、删除
   - `TrainingItemToolsController`（`[Route("api/training/datasets/{datasetId}/items")]`，接口 19-20，新增）：`POST {itemId}/recognize`（单条重新识别：dataset/item/model（含 `Enabled`）校验 → 取音频转 base64 → 识别 prompt → JSON 解析 → 200 `{text}`，**不写库**；400 `model disabled`/`audio uri is empty`/`audio too large`/`model does not support audio input`/`unsupported provider type`；404；502 `audio unavailable`/`model service unavailable`/`invalid model output`）、`POST emotion-tasks`（批量提交 `{itemIds, modelId}` → `{created, skipped}`；model 停用 400 `model disabled`；skipped = 条目已有 PENDING/RUNNING 任务、条目 `text` 为空或 id 非法；**并发重复提交由 `ItemId_1_Active` 唯一索引兜底**，`HasActive` 预检 + `TryInsertActiveAsync` 捕获唯一键冲突计 skipped）
   - `TrainingEmotionTasksController`（`[Route("api/training/emotion-tasks")]`，接口 21-22，新增）：队列查询（`datasetId?`/`status?`/`limit?`（默认 100 最大 500，`CreatedAt` 降序）+ `counts` 分组计数）、`POST {taskId}/retry`（**原子 CAS**：`RetryFailedAsync` filter 含 `Id + Status==FAILED`，仅 FAILED → PENDING，`attempts` 保留、`error` 清空；非 FAILED 400 `task not failed`；同条目已有其他活跃任务 409 `active task exists`；404）
+  - `TrainingSynthesizeController`（`[Route("api/training/datasets/{datasetId}")]`，接口 23-24，新增）：`POST synthesize`（音频生成——dataset 404 → text 400 `text is required` → lang 白名单 `ZH/EN/JA/ES/AR` 400 `invalid lang`（缺省 `Tts:DefaultLang`）→ model（404 `model not found`/400 `model disabled`，缺省 `Synthesize:DefaultEmotionModelId` 再缺省首个启用模型）→ `SynthesizeService` → 200 `audio/wav` + `X-Speaker-Audio-Key`/`X-Emo-Audio-Key` 命中头；409 `no speaker reference`、502 `embedding service unavailable`/`vector store unavailable`/`audio unavailable`/`tts service unavailable`）、`POST vectors/rebuild`（200 `{updated}`；404 dataset、502 embedding/vector-store）
 - `Ai/`（新增）：
   - `IChatModelClient`/`IChatModelClientFactory`（`ChatAudio`/`ChatPrompt`；按 `provider.Type` 派发，未知类型抛 `ProviderTypeException`）、`ChatModelClientFactory`（named client `AiModel`；`SocketsHttpHandler.AllowAutoRedirect=false`，避免携带 API key 跟随重定向到其他主机）
   - `OpenAiLikeChatClient`（`POST {endpoint}/chat/completions`、Bearer、`text` + 可选 `input_audio`、`response_format: json_object` 且 400 降级重试一次）
@@ -48,10 +50,12 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
   - `EmotionTaskScanner`（HostedService：`ScanIntervalSeconds` 周期 + 启动抖动、`ListClaimableAsync(ScanBatchSize)`、`MaxConcurrentTasks` 门控、僵尸 RUNNING 无锁接管、**僵尸 RUNNING** `MaxAttempts` 超限置 FAILED（PENDING 含人工 retry 保留 attempts 的任务放行执行）、异常不中断循环；置 RUNNING（Attempts 累加）后把**领取后的记录**交 Runner，使 Runner fencing 的 `Attempts` 与库一致）
   - `EmotionTaskRunner`（单任务编排：置 RUNNING → 读模型（含 `Enabled`，停用 FAILED `model disabled`）/Provider/条目 → 空文本 FAILED → 拼情绪 prompt → 调模型 → 解析 → **CAS 到 DONE**（`UpdateRunningAsync` filter `Id + Status==RUNNING + Attempts`，闭合 TOCTOU，非持有者放弃）→ `SetEmotionAsync` 写 `Extensions.emotion`（条目被删除时改标 FAILED `item not found`）；逐阶段 fencing、失败原因白名单映射不透传 `ex.Message`；`finally` 释放锁）
   - 状态机 `PENDING → RUNNING → DONE | FAILED`，retry 仅 `FAILED → PENDING`
-- `Clients/`：`ITranscriptApiClient`/`TranscriptApiClient`（named client `TranscriptService`，`GET api/transcripts/task/{taskId}`；404 → null 表示任务不存在，其余非 20xx 抛 `HttpRequestException` 供控制器映 502）；`IRecordingAudioClient`/`RecordingAudioClient`（取音频片段；`endMs` 空按 `Ai:AudioClipDefaultDurationMs`（默认 300000）补齐——recording 片段端点要求 `endMs` 必填）
+- `Clients/`：`ITranscriptApiClient`/`TranscriptApiClient`（named client `TranscriptService`，`GET api/transcripts/task/{taskId}`；404 → null 表示任务不存在，其余非 20xx 抛 `HttpRequestException` 供控制器映 502）；`IRecordingAudioClient`/`RecordingAudioClient`（取音频片段；`endMs` 空按 `Ai:AudioClipDefaultDurationMs`（默认 300000）补齐——recording 片段端点要求 `endMs` 必填）；`ITtsClient`/`IndexTtsClient`（音频生成，typed client `Tts:BaseUrl`，手写 `multipart/form-data POST /synthesize`：`text`/`lang`/`speaker_prompt`(file 必带)/`emo_prompt`(file)/`emo_vector`/`emo_text`/`emo_alpha`/`duration_factor`/`text_normalization`/`max_text_tokens_per_segment`/`interval_silence`/`use_emo_text=false`/`use_random=false`；超时 `Tts:RequestTimeoutSeconds`（120s），非 2xx/超时/空响应 → `TtsUnavailableException`）
+- `Vectors/`（新增，音频生成 - 向量层）：`IEmbeddingClient`/`LocalEmbeddingClient`（named client `EmbeddingService`，`POST {Embedding:BaseUrl}{ApiPath}`——默认 Ollama `/api/embeddings`（body `model`+`prompt`），`ApiPath` 含 `v1` 时按 OpenAI 兼容（body `model`+`input`）；失败 `EmbeddingUnavailableException`）；`IMilvusRestClient`/`MilvusRestClient`（Milvus RESTful API v2，`Authorization: Bearer {Milvus:Token}` 可选）；`IVectorStore`/`MilvusVectorStore`（两集合 `item_text_embeddings`（dim=`Embedding:Dimensions`，COSINE）/`item_emotion_vectors`（dim=8，L2），字段 `id`(itemId 主键)/`datasetId`/`audioKey`/`vector`，FLAT 精确索引；检索 top-k=16 后按（相似度降序/距离升序，itemId 升序）稳定 tie-break；失败 `VectorStoreUnavailableException`）；`VectorSyncService`（Mongo→Milvus `RebuildAsync` 全量重建 + `SyncItemAsync`/`DeleteDatasetAsync` 增量 best-effort）
+- `Synthesis/`（新增，音频生成 - 匹配与编排）：`EmotionVector`（`EmotionResult` → 八维 `happy,angry,sad,afraid,disgusted,melancholic,surprised,calm` + `FormatEmoVector` 逗号分隔 + `NormalizeEmoAlpha` = `clamp(emotionControlWeight/10,0,1)`）；`SynthesizeService`（文本向量检索 top-1 → speaker 逐候选取数（失败取次优、全失败 `AudioUnavailableException`）→ 可用模型生成情感向量 → 八维检索 top-1 取 `emo_prompt`/`emo_vector`/`emo_text`/`emo_alpha`（best-effort，失败降级中性）→ `ITtsClient`；Info 日志 `training synthesize: datasetId=... speakerKey=... emoKey=... lang=... elapsedMs=...`，不打文本/音频）；`NoSpeakerReferenceException`（409 `no speaker reference`）
 - `Contracts/`：`Dtos.cs`（请求/响应 record，JSON 名小驼峰；含 `TrainingProvider`/`TrainingModel`/`EmotionResult`/`TrainingEmotionTask` 等新增）、`TrainingMapping.cs`（`GenerateAudioKey`/`BuildAudioUri`/`IsValidTimeRange`/`ToImportItem` + 新增 `ParseAudioUri`/`BuildModelSlug`/`ToEmotionDocument`/`FromEmotionDocument` 与 `To*Dto` 映射）
-- `Configuration/`：`TrainingOptions`（节 `TranscriptService`）、`AiOptions`（节 `Ai`）、`EmotionTaskOptions`（节 `EmotionTask`）、`RecordingServiceOptions`（节 `RecordingService`）
-- `Program.cs`：Mongo/Redis（`ConnectionStrings:messaging`）/Options（`ValidateOnStart`）/五仓储/`ITranscriptApiClient`/`IRecordingAudioClient`/`IChatModelClientFactory`/`IModelDiscoveryClient`/`ModelSessionHeaderHandler`（`AiModel` client 的 message handler）/`IEmotionTaskLockProvider`/`EmotionTaskRunner`/`EmotionTaskScanner`(HostedService) 注册，启动 `EnsureIndexesAsync()`、`/health` + `MapControllers()`
+- `Configuration/`：`TrainingOptions`（节 `TranscriptService`）、`AiOptions`（节 `Ai`）、`EmotionTaskOptions`（节 `EmotionTask`）、`RecordingServiceOptions`（节 `RecordingService`）、`EmbeddingOptions`（节 `Embedding`：`BaseUrl` 默认 `https://ollama.internal.fffdan.com/`、`Model`、`Dimensions`、`RequestTimeoutSeconds`、`ApiPath`）、`MilvusOptions`（节 `Milvus`：`Endpoint`/`Database`/`Token`/`TextCollection`/`EmotionCollection`/`SearchLimit`/`RequestTimeoutSeconds`）、`TtsOptions`（节 `Tts`：`BaseUrl` 默认 `https://tts.internal.fffdan.com`、`RequestTimeoutSeconds=120`、`DefaultLang=ZH`、`DefaultEmoAlpha`、`DurationFactor`、`TextNormalization`、`MaxTextTokensPerSegment`、`IntervalSilence`）、`SynthesizeOptions`（节 `Synthesize`：`DefaultEmotionModelId`、`ReferenceCandidateLimit`）
+- `Program.cs`：Mongo/Redis（`ConnectionStrings:messaging`）/Options（`ValidateOnStart`）/五仓储/`ITranscriptApiClient`/`IRecordingAudioClient`/`IChatModelClientFactory`/`IModelDiscoveryClient`/`ModelSessionHeaderHandler`（`AiModel` client 的 message handler）/`IEmotionTaskLockProvider`/`EmotionTaskRunner`/`EmotionTaskScanner`(HostedService)/`IEmbeddingClient`/`IMilvusRestClient`/`IVectorStore`/`VectorSyncService`/`SynthesizeService`/`ITtsClient` 注册，启动 `EnsureIndexesAsync()` + Milvus `EnsureCollectionsAsync()`（best-effort，失败 Warn 不阻断启动）、`/health` + `MapControllers()`
 - `MongoDbHealthCheck.cs`：与 crawler 同模式
 - `Properties/launchSettings.json`：本地 8086
 - `Dockerfile`：两阶段构建（纯 aspnet 运行时，`EXPOSE 8080`）
@@ -86,6 +90,8 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
 | POST | `/api/training/datasets/{datasetId}/items/emotion-tasks` | 提交情绪识别任务（200 `{created, skipped}`；400/404 `model disabled`） |
 | GET | `/api/training/emotion-tasks` | 情绪任务队列（query `datasetId?`/`status?`/`limit?` → `{items, counts}`） |
 | POST | `/api/training/emotion-tasks/{taskId}/retry` | 重试失败任务（200；400 `task not failed`；404；409 `active task exists`） |
+| POST | `/api/training/datasets/{datasetId}/synthesize` | 音频生成（200 `audio/wav` + `X-Speaker-Audio-Key`/`X-Emo-Audio-Key`；400 `text is required`/`invalid lang`/`model disabled`；404 dataset/model；409 `no speaker reference`；502 embedding/vector-store/audio/tts） |
+| POST | `/api/training/datasets/{datasetId}/vectors/rebuild` | 重建数据集向量索引（200 `{updated}`；404 dataset；502 embedding/vector-store） |
 
 对外统一经 `servers/api` 代理（`/api/training/**`，named client `TrainingService`），web 不直连本服务。
 
@@ -109,12 +115,18 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
 - `RecordingService:BaseUrl`（默认 `http://recording`）：recording 服务内网地址（取音频片段）
 - `Ai` 节（`ValidateOnStart`）：`RequestTimeoutSeconds`(120)、`MaxAudioBytes`(8388608)、`AudioClipDefaultDurationMs`(300000)
 - `EmotionTask` 节（`ValidateOnStart`）：`ScanIntervalSeconds`(10)、`ScanBatchSize`(10)、`LockTtlSeconds`(30)、`LockRenewIntervalSeconds`(10)、`MaxConcurrentTasks`(2)、`MaxAttempts`(3)
+- `Embedding` 节（`ValidateOnStart`）：`BaseUrl`(默认 `https://ollama.internal.fffdan.com/`)、`Model`、`Dimensions`(1024)、`RequestTimeoutSeconds`(120)、`ApiPath`(`/api/embeddings`)
+- `Milvus` 节（`ValidateOnStart`）：`Endpoint`(默认 `http://localhost:19530`)、`Database`(default)、`Token`、`TextCollection`(`item_text_embeddings`)、`EmotionCollection`(`item_emotion_vectors`)、`SearchLimit`(16)、`RequestTimeoutSeconds`(30)
+- `Tts` 节（`ValidateOnStart`）：`BaseUrl`(默认 `https://tts.internal.fffdan.com`)、`RequestTimeoutSeconds`(120)、`DefaultLang`(ZH)、`DefaultEmoAlpha`(1.0)、`DurationFactor`(1.0)、`TextNormalization`(true)、`MaxTextTokensPerSegment`(120)、`IntervalSilence`(200)
+- `Synthesize` 节（`ValidateOnStart`）：`DefaultEmotionModelId`、`ReferenceCandidateLimit`(16)
 - 健康检查端口：本地 launchSettings 8086
 
 ## 部署要点
 
 - 状态在 MongoDB，可多副本部署；情绪任务由 Redis 锁保证同一任务单节点执行，宕机后锁 TTL 过期由他节点接管
 - **新增 Redis 依赖**（`ConnectionStrings:messaging`）：裸部署缺连接串则 `ValidateOnStart` 启动校验失败
+- **新增 Milvus 依赖**（节 `Milvus`）：向量索引为**派生数据**（Mongo 仍是元数据唯一事实源），集合/索引启动幂等建立；**升级后需对存量数据集执行 `POST /api/training/datasets/{id}/vectors/rebuild` 回填向量**，否则该数据集 `synthesize` 恒 409 `no speaker reference`；导入/编辑 text/情绪写入后自动增量同步（失败 Warn 不阻断，rebuild 兜底）
+- **需可访本地 Ollama**（`Embedding:BaseUrl`，文本向量）、**内网 index-tts-api**（`Tts:BaseUrl`，语音合成）、**配置的可用模型**（情感向量，Models 管理）与 Milvus
 - 新增 3 个集合与 3 组索引，启动幂等建立，无迁移；回滚时残留集合无害、条目 `Extensions.emotion` 旧版本读取忽略
 - 需可访 recording（音频片段）、recording-transcript-api（导入）与外部大模型服务（OpenAI-like / Claude-like；重新识别另需音频输入）
 - 镜像：`zero-tools/z-vtuber-training`（`.github/workflows/build-training-image.yml`）

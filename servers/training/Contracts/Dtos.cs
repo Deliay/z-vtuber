@@ -133,6 +133,16 @@ public sealed record TrainingRecognizeRequest(
 public sealed record TrainingRecognizeResultDto(
     [property: JsonPropertyName("text")] string Text);
 
+/// <summary>音频生成请求：<c>text</c> 必填、<c>lang</c>/<c>modelId</c> 可选。</summary>
+public sealed record TrainingSynthesizeRequest(
+    [property: JsonPropertyName("text")] string? Text,
+    [property: JsonPropertyName("lang")] string? Lang,
+    [property: JsonPropertyName("modelId")] string? ModelId);
+
+/// <summary>向量索引重建结果：重建（写入 Milvus）的条目数。</summary>
+public sealed record TrainingVectorsRebuildResultDto(
+    [property: JsonPropertyName("updated")] long Updated);
+
 /// <summary>结构化情绪数据（十字段固定结构）。</summary>
 public sealed record EmotionResult(
     [property: JsonPropertyName("emotionControlWeight")] double EmotionControlWeight,

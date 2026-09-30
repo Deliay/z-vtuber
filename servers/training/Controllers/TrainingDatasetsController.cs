@@ -7,6 +7,7 @@ using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Training.Contracts;
+using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Training.Controllers;
 
@@ -19,7 +20,8 @@ namespace Z.Vtuber.Training.Controllers;
 public sealed class TrainingDatasetsController(
     TrainingDatasetRepository datasets,
     TrainingDatasetItemRepository items,
-    ILogger<TrainingDatasetsController>? logger = null) : ControllerBase
+    ILogger<TrainingDatasetsController>? logger = null,
+    VectorSyncService? vectors = null) : ControllerBase
 {
     /// <summary>本期唯一合法数据集类型（预留其他模态）。</summary>
     internal const string AudioType = "audio";
@@ -145,6 +147,12 @@ public sealed class TrainingDatasetsController(
         if (!await datasets.DeleteAsync(id, ct))
         {
             return NotFound(new ErrorResponse("dataset not found"));
+        }
+
+        // 级联清 Milvus 向量（best-effort）。
+        if (vectors is not null)
+        {
+            await vectors.DeleteDatasetAsync(id, ct);
         }
 
         _logger.LogInformation("training dataset deleted: datasetId={DatasetId}", id);

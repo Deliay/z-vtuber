@@ -9,6 +9,7 @@ using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Contracts;
+using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Training.Controllers;
 
@@ -22,7 +23,8 @@ public sealed class TrainingDatasetItemsController(
     TrainingDatasetRepository datasets,
     TrainingDatasetItemRepository items,
     ITranscriptApiClient transcript,
-    ILogger<TrainingDatasetItemsController>? logger = null) : ControllerBase
+    ILogger<TrainingDatasetItemsController>? logger = null,
+    VectorSyncService? vectors = null) : ControllerBase
 {
     private readonly ILogger<TrainingDatasetItemsController> _logger =
         logger ?? NullLogger<TrainingDatasetItemsController>.Instance;
@@ -98,6 +100,17 @@ public sealed class TrainingDatasetItemsController(
         _logger.LogInformation(
             "training dataset import: datasetId={DatasetId} taskId={TaskId} imported={Imported} skipped={Skipped}",
             datasetId, taskId, imported, skipped);
+
+        // 增量同步 Milvus（best-effort，失败 Warn 不阻断导入；vectors/rebuild 兜底）。
+        if (imported > 0 && vectors is not null)
+        {
+            var importedRecords = await items.ListAsync(id, source: taskId, ct: ct);
+            foreach (var record in importedRecords)
+            {
+                await vectors.SyncItemAsync(record, ct);
+            }
+        }
+
         return Ok(new TrainingDatasetImportResultDto(imported, skipped));
     }
 
@@ -185,6 +198,12 @@ public sealed class TrainingDatasetItemsController(
         if (updated is null)
         {
             return NotFound(new ErrorResponse("item not found"));
+        }
+
+        // text 变更 → 增量同步文本向量（best-effort）。
+        if (textKind == JsonValueKind.String && vectors is not null)
+        {
+            await vectors.SyncItemAsync(updated, ct);
         }
 
         return Ok(TrainingMapping.ToItemDto(updated));
