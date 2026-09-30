@@ -122,7 +122,7 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         var (_, model) = await SeedProviderAsync();
 
         var result = await Create(store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(new StubChatClient()))
-            .SynthesizeAsync(datasetId, "你好", "ZH", model);
+            .SynthesizeAsync(datasetId, "你好", "ZH", model, EmotionMode.Llm);
 
         Assert.Equal([9, 9, 9], result.Audio);
         Assert.Equal(speaker.AudioKey, result.SpeakerAudioKey);
@@ -323,7 +323,35 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     }
 
     [Fact]
-    public async Task DefaultMode_IsLlm_UsesChatModel()
+    public async Task DefaultMode_IsNone_NoChatCall_NoEmotion()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var speaker = await SeedItemAsync(datasetId, "你好");
+        var emoItem = await SeedItemAsync(
+            datasetId, "生气", emotion: new EmotionResult(8, "生气", 0, 0.6, 0, 0, 0, 0, 0, 0));
+
+        var store = new InMemoryVectorStore();
+        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [1f, 0f, 0f]);
+        store.SeedEmotion(datasetId, emoItem.Id, emoItem.AudioKey, [0f, 0.5f, 0f, 0f, 0f, 0f, 0f, 0f]);
+        var audio = new StubAudioClient();
+        audio.Clips[speaker.AudioUri] = new AudioClip([1], "audio/mpeg");
+        audio.Clips[emoItem.AudioUri] = new AudioClip([2], "audio/mpeg");
+        var tts = new StubTtsClient();
+        var chat = new StubChatClient();
+        var (_, model) = await SeedProviderAsync();
+
+        // 未传 emotionMode → 默认 None：不调用大模型、不传任何情绪参考。
+        var result = await Create(store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(chat))
+            .SynthesizeAsync(datasetId, "你好", "ZH", model);
+
+        Assert.Equal(speaker.AudioKey, result.SpeakerAudioKey);
+        Assert.Null(result.EmoAudioKey);
+        Assert.Equal(0, chat.Calls);
+        Assert.Null(Assert.Single(tts.Requests).Emotion);
+    }
+
+    [Fact]
+    public async Task LlmMode_UsesChatModel()
     {
         var datasetId = ObjectId.GenerateNewId();
         var speaker = await SeedItemAsync(datasetId, "你好");
@@ -341,7 +369,7 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         var (_, model) = await SeedProviderAsync();
 
         var result = await Create(store, new FakeEmbeddingClient(), audio, tts, new StubChatFactory(chat))
-            .SynthesizeAsync(datasetId, "你好", "ZH", model);
+            .SynthesizeAsync(datasetId, "你好", "ZH", model, EmotionMode.Llm);
 
         Assert.Equal(1, chat.Calls);
         Assert.Equal(emoItem.AudioKey, result.EmoAudioKey);

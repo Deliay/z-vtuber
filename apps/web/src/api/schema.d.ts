@@ -984,7 +984,7 @@ export interface paths {
         put?: never;
         /**
          * 音频生成（代理训练服务）
-         * @description 代理 training 服务，body 原样透传；成功返回 audio/wav 二进制（Content-Type 与响应体透传）， X-Speaker-Audio-Key / X-Emo-Audio-Key 命中头一并透传；错误码（400/404/409/502）与错误体透传。 query emotionMode（llm/dataset）原样透传。
+         * @description 代理 training 服务，body 原样透传；成功返回 audio/wav 二进制（Content-Type 与响应体透传）， X-Speaker-Audio-Key / X-Emo-Audio-Key 命中头一并透传；错误码（400/404/409/502）与错误体透传。 query emotionMode（llm/dataset/none）原样透传。
          */
         post: operations["synthesizeTrainingDataset"];
         delete?: never;
@@ -1697,8 +1697,8 @@ export interface components {
         TrainingEmotionStatusQuery: string;
         /** @description 返回条数上限，默认 100、最大 500 */
         TrainingEmotionLimitQuery: number;
-        /** @description 情绪参考生成模式（透传 training，大小写不敏感）：llm（默认）用配置的可用模型生成情感向量后向量匹配； dataset 跳过大模型，直接使用文本向量命中条目自身的 Extensions.emotion，且跳过 modelId/模型解析。 */
-        TrainingEmotionModeQuery: "llm" | "dataset";
+        /** @description 情绪参考生成模式（透传 training，大小写不敏感）：none（默认）不传任何情绪参考； llm 用配置的可用模型生成情感向量后向量匹配； dataset 跳过大模型，直接使用文本向量命中条目自身的 Extensions.emotion。 dataset/none 跳过 modelId/模型解析。 */
+        TrainingEmotionModeQuery: "llm" | "dataset" | "none";
         Mid: number;
         RoomId: number;
         /** @description 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整文件 */
@@ -4081,7 +4081,7 @@ export interface operations {
     synthesizeTrainingDataset: {
         parameters: {
             query?: {
-                /** @description 情绪参考生成模式（透传 training，大小写不敏感）：llm（默认）用配置的可用模型生成情感向量后向量匹配； dataset 跳过大模型，直接使用文本向量命中条目自身的 Extensions.emotion，且跳过 modelId/模型解析。 */
+                /** @description 情绪参考生成模式（透传 training，大小写不敏感）：none（默认）不传任何情绪参考； llm 用配置的可用模型生成情感向量后向量匹配； dataset 跳过大模型，直接使用文本向量命中条目自身的 Extensions.emotion。 dataset/none 跳过 modelId/模型解析。 */
                 emotionMode?: components["parameters"]["TrainingEmotionModeQuery"];
             };
             header?: never;
