@@ -167,7 +167,8 @@ public class TranscriptTaskRepositoryTests(MongoDbFixture fixture) : IClassFixtu
             TaskRecord(ObjectId.GenerateNewId(), ObjectId.GenerateNewId()));
         var before = (await repository.GetByIdAsync(id))!.UpdatedAt;
 
-        await Task.Delay(15);
+        // 等到时钟越过 before，确保后续 UpdatedAt 严格递增（不硬等固定时长）。
+        await TestWait.UntilAsync(() => DateTime.UtcNow > before, TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(2));
         var matched = await repository.UpdateOffsetAsync(id, 2500);
 
         Assert.True(matched);

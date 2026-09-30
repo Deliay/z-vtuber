@@ -202,7 +202,7 @@ public class TrainingDatasetItemsApiTests(MongoDbFixture fixture) : IClassFixtur
         var datasetId = await SeedDatasetAsync();
         var item = await SeedItemAsync(datasetId, "transcript:task-1:1000");
         var before = (await Items.ListAsync(datasetId)).Single().UpdatedAt;
-        await Task.Delay(15);
+        await TestWait.UntilAsync(() => DateTime.UtcNow > before, TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(2));
 
         var result = await CreateController().Update(
             datasetId.ToString(), item.Id.ToString(), UpdateFrom("""{"text":"改写后的句子"}"""));

@@ -88,13 +88,17 @@ public sealed class WeiboLoginCookieProviderTests
                 Cookie = "SUB=x",
             }),
         };
-        var provider = CreateProvider(client);
+        var lockProvider = new FakeDistributedLockProvider();
+        var provider = CreateProvider(client, lockProvider);
 
         var first = await provider.AcquireAsync();
         Assert.NotNull(first);
 
+        var waitStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lockProvider.LockWaitStarted = _ => waitStarted.TrySetResult();
+
         var secondTask = provider.AcquireAsync();
-        await Task.Delay(150);
+        await waitStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.False(secondTask.IsCompleted);
 
         await first!.DisposeAsync();

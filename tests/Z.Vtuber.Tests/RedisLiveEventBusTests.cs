@@ -162,7 +162,7 @@ public class RedisLiveEventBusTests(RedisFixture redis)
 
             // 立即对同一频道重订阅 → 新 RoomState + 新泵，与旧泵 teardown 交叠
             active = bus.Subscribe(room);
-            await Task.Delay(150);
+            await WaitUntilAsync(() => SubscriberCount(server, Channel(room)) > 0, TimeSpan.FromSeconds(2));
 
             // 新订阅者必须仍能收到事件（旧泵 teardown 不得误拆新泵订阅）
             await PublishAsync(redis, Event(room));

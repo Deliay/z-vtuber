@@ -145,14 +145,19 @@ public class EmotionTaskScannerTests(MongoDbFixture mongo) : IClassFixture<Mongo
         return task.Id;
     }
 
-    private static async Task ReleaseGatesAsync(EmotionScannerFakeRunner runner)
+    private static async Task ReleaseGatesAsync(EmotionScannerFakeRunner runner, EmotionScannerFakeLockProvider lockProvider)
     {
         foreach (var gate in runner.Gates)
         {
             gate.TrySetResult();
         }
 
-        await Task.Delay(50);
+        // 轮询直到所有领取的锁被释放（替代固定 Task.Delay）。
+        await TestWait.UntilAsync(
+            () => lockProvider.HeldIds.Count == 0,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(25),
+            "all emotion task locks should be released");
     }
 
     [Fact]
@@ -164,7 +169,7 @@ public class EmotionTaskScannerTests(MongoDbFixture mongo) : IClassFixture<Mongo
         var scanner = CreateScanner(lockProvider, runner);
 
         await scanner.ScanOnceAsync();
-        await ReleaseGatesAsync(runner);
+        await ReleaseGatesAsync(runner, lockProvider);
 
         Assert.Contains(taskId, runner.RunTaskIds);
         var stored = await Tasks.GetByIdAsync(taskId);
@@ -199,7 +204,7 @@ public class EmotionTaskScannerTests(MongoDbFixture mongo) : IClassFixture<Mongo
         var scanner = CreateScanner(lockProvider, runner);
 
         await scanner.ScanOnceAsync();
-        await ReleaseGatesAsync(runner);
+        await ReleaseGatesAsync(runner, lockProvider);
 
         Assert.Contains(taskId, runner.RunTaskIds);
         Assert.Equal(1, (await Tasks.GetByIdAsync(taskId))!.Attempts);
@@ -232,7 +237,7 @@ public class EmotionTaskScannerTests(MongoDbFixture mongo) : IClassFixture<Mongo
         var scanner = CreateScanner(lockProvider, runner, new EmotionTaskOptions { MaxAttempts = 3 });
 
         await scanner.ScanOnceAsync();
-        await ReleaseGatesAsync(runner);
+        await ReleaseGatesAsync(runner, lockProvider);
 
         Assert.Contains(taskId, runner.RunTaskIds);
         Assert.Equal(4, (await Tasks.GetByIdAsync(taskId))!.Attempts);
@@ -263,7 +268,7 @@ public class EmotionTaskScannerTests(MongoDbFixture mongo) : IClassFixture<Mongo
         }
         finally
         {
-            await ReleaseGatesAsync(runner);
+            await ReleaseGatesAsync(runner, lockProvider);
         }
 
         // 第一个完成后释放额度，第二个可被领取
@@ -273,7 +278,7 @@ public class EmotionTaskScannerTests(MongoDbFixture mongo) : IClassFixture<Mongo
                 .Set(t => t.Status, TrainingEmotionTaskStatus.Done));
 
         await scanner.ScanOnceAsync();
-        await ReleaseGatesAsync(runner);
+        await ReleaseGatesAsync(runner, lockProvider);
 
         Assert.Contains(second, runner.RunTaskIds);
     }
