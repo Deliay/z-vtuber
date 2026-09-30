@@ -235,7 +235,7 @@ public sealed class TestReportTests
         var outWriter = new StringWriter();
         var errWriter = new StringWriter();
 
-        var exitCode = Program.Run([trx, "--check", "--exceptions", exceptions], outWriter, errWriter);
+        var exitCode = TestReportCli.Run([trx, "--check", "--exceptions", exceptions], outWriter, errWriter);
 
         Assert.NotEqual(0, exitCode);
         Assert.Contains(SlowTest, outWriter.ToString() + errWriter.ToString());
@@ -253,7 +253,7 @@ public sealed class TestReportTests
         var outWriter = new StringWriter();
         var errWriter = new StringWriter();
 
-        var exitCode = Program.Run([trx, "--check", "--exceptions", exceptions], outWriter, errWriter);
+        var exitCode = TestReportCli.Run([trx, "--check", "--exceptions", exceptions], outWriter, errWriter);
 
         Assert.Equal(0, exitCode);
         Assert.Contains("exception", outWriter.ToString(), StringComparison.OrdinalIgnoreCase);
@@ -266,7 +266,7 @@ public sealed class TestReportTests
         var outWriter = new StringWriter();
         var errWriter = new StringWriter();
 
-        var exitCode = Program.Run([trx], outWriter, errWriter);
+        var exitCode = TestReportCli.Run([trx], outWriter, errWriter);
 
         Assert.Equal(0, exitCode);
         Assert.Contains(SlowTest, outWriter.ToString());
