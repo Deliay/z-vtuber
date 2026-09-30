@@ -36,13 +36,16 @@ public sealed class TrainingSynthesizeController(
         logger ?? NullLogger<TrainingSynthesizeController>.Instance;
 
     /// <summary>
-    /// 音频生成：dataset（404）→ text（400）→ lang（400）→ model（404/400）校验 →
-    /// <see cref="SynthesizeService"/>（embedding/向量检索/参考取数/TTS）→ 200 <c>audio/wav</c> +
-    /// <c>X-Speaker-Audio-Key</c>/<c>X-Emo-Audio-Key</c> 命中头。
+    /// 音频生成：dataset（404）→ text（400）→ lang（400）→ emotionMode（400）→（llm）model（404/400）校验 →
+    /// <see cref="SynthesizeService"/>（字符相似音色匹配/参考取数/TTS）→ 200 <c>audio/wav</c> +
+    /// <c>X-Speaker-Audio-Key</c>/<c>X-Emo-Audio-Key</c> 命中头。query <c>emotionMode</c> 缺省 <c>none</c>
+    /// （不传情绪参考）；<c>llm</c> 用大模型生成情绪参考；<c>dataset</c> 与 <c>none</c> 均跳过模型解析
+    /// （<c>dataset</c> 用音色命中条目自身情绪）。
     /// </summary>
     [HttpPost("synthesize")]
     public async Task<IActionResult> Synthesize(
-        string datasetId, [FromBody] TrainingSynthesizeRequest? request, CancellationToken ct = default)
+        string datasetId, [FromBody] TrainingSynthesizeRequest? request,
+        [FromQuery] string? emotionMode = null, CancellationToken ct = default)
     {
         if (!ObjectId.TryParse(datasetId, out var datasetObjectId)
             || await datasets.GetByIdAsync(datasetObjectId, ct) is null)
@@ -64,15 +67,27 @@ public sealed class TrainingSynthesizeController(
             return BadRequest(new ErrorResponse("invalid lang"));
         }
 
-        var model = await ResolveEmotionModelAsync(request?.ModelId, ct);
-        if (model.Error is not null)
+        // 情绪来源：缺省 none（不传情绪参考）；llm 用大模型；dataset 直接用向量命中条目情绪。
+        if (!TryParseEmotionMode(emotionMode, out var mode))
         {
-            return model.Error;
+            return BadRequest(new ErrorResponse("invalid emotion mode"));
+        }
+
+        TrainingModelRecord? model = null;
+        if (mode == EmotionMode.Llm)
+        {
+            var resolved = await ResolveEmotionModelAsync(request?.ModelId, ct);
+            if (resolved.Error is not null)
+            {
+                return resolved.Error;
+            }
+
+            model = resolved.Model;
         }
 
         try
         {
-            var result = await synthesize.SynthesizeAsync(datasetObjectId, text, lang, model.Model, ct);
+            var result = await synthesize.SynthesizeAsync(datasetObjectId, text, lang, model, mode, ct);
             if (!string.IsNullOrEmpty(result.SpeakerAudioKey))
             {
                 Response.Headers["X-Speaker-Audio-Key"] = result.SpeakerAudioKey;
@@ -171,5 +186,28 @@ public sealed class TrainingSynthesizeController(
 
         var fallback = (await models.ListAsync(enabled: true, ct)).FirstOrDefault();
         return (fallback, null);
+    }
+
+    /// <summary>
+    /// 解析 query <c>emotionMode</c>：缺省/空 → <see cref="EmotionMode.None"/>（不传情绪参考）；
+    /// 大小写不敏感匹配 <c>llm</c>/<c>dataset</c>/<c>none</c>；其他 → false（控制器映射 400 <c>invalid emotion mode</c>）。
+    /// </summary>
+    internal static bool TryParseEmotionMode(string? raw, out EmotionMode mode)
+    {
+        switch (raw?.Trim().ToLowerInvariant())
+        {
+            case null or "" or "none":
+                mode = EmotionMode.None;
+                return true;
+            case "llm":
+                mode = EmotionMode.Llm;
+                return true;
+            case "dataset":
+                mode = EmotionMode.Dataset;
+                return true;
+            default:
+                mode = EmotionMode.None;
+                return false;
+        }
     }
 }

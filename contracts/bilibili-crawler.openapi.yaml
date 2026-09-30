@@ -1460,9 +1460,11 @@ paths:
       description: >-
         代理 training 服务，body 原样透传；成功返回 audio/wav 二进制（Content-Type 与响应体透传），
         X-Speaker-Audio-Key / X-Emo-Audio-Key 命中头一并透传；错误码（400/404/409/502）与错误体透传。
+        query emotionMode（llm/dataset/none）原样透传。
       operationId: synthesizeTrainingDataset
       parameters:
         - $ref: "#/components/parameters/TrainingDatasetId"
+        - $ref: "#/components/parameters/TrainingEmotionModeQuery"
       requestBody:
         required: true
         content:
@@ -1505,7 +1507,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrainingErrorResponse"
         "502":
-          description: training 服务不可达（或上游 embedding/向量库/音频/TTS 不可用）
+          description: training 服务不可达（或上游音频/TTS 不可用）
           content:
             application/json:
               schema:
@@ -1621,6 +1623,19 @@ components:
         minimum: 1
         maximum: 500
         default: 100
+    TrainingEmotionModeQuery:
+      name: emotionMode
+      in: query
+      required: false
+      description: >-
+        情绪参考生成模式（透传 training，大小写不敏感）：none（默认）不传任何情绪参考；
+        llm 用配置的可用模型生成情感向量后向量匹配；
+        dataset 跳过大模型，直接使用文本向量命中条目自身的 Extensions.emotion。
+        dataset/none 跳过 modelId/模型解析。
+      schema:
+        type: string
+        enum: [llm, dataset, none]
+        default: none
     Mid:
       name: mid
       in: path

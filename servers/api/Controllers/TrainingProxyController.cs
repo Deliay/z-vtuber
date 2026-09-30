@@ -113,7 +113,8 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
         ForwardAsync(HttpMethod.Post, $"api/training/emotion-tasks/{Uri.EscapeDataString(taskId)}/retry", ct);
 
     [HttpPost("training/datasets/{datasetId}/synthesize")]
-    public Task<IActionResult> SynthesizeDataset(string datasetId, CancellationToken ct) =>
+    public Task<IActionResult> SynthesizeDataset(
+        string datasetId, [FromQuery] string? emotionMode, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/synthesize", ct);
 
     [HttpPost("training/datasets/{datasetId}/vectors/rebuild")]

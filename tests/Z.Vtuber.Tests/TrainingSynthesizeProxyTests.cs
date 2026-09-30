@@ -58,7 +58,7 @@ public class TrainingSynthesizeProxyTests
         var handler = new StubHandler { Handler = _ => Wav([1, 2, 3]) };
         var controller = CreateController(new HttpClient(handler));
 
-        var result = await controller.SynthesizeDataset("ds1", CancellationToken.None);
+        var result = await controller.SynthesizeDataset("ds1", null, CancellationToken.None);
 
         Assert.IsType<EmptyResult>(result);
         Assert.Equal("POST", handler.Methods[0]);
@@ -68,6 +68,19 @@ public class TrainingSynthesizeProxyTests
         Assert.Equal("speaker-key", controller.Response.Headers["X-Speaker-Audio-Key"].ToString());
         controller.HttpContext.Response.Body.Position = 0;
         Assert.Equal([1, 2, 3], ((MemoryStream)controller.HttpContext.Response.Body).ToArray());
+    }
+
+    [Fact]
+    public async Task Synthesize_ForwardsEmotionModeQuery()
+    {
+        var handler = new StubHandler { Handler = _ => Wav([1]) };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.QueryString = new QueryString("?emotionMode=dataset");
+
+        await controller.SynthesizeDataset("ds1", "dataset", CancellationToken.None);
+
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/datasets/ds1/synthesize?emotionMode=dataset", handler.Requests[0]);
     }
 
     [Fact]
@@ -82,7 +95,7 @@ public class TrainingSynthesizeProxyTests
         };
         var controller = CreateController(new HttpClient(handler));
 
-        var result = await controller.SynthesizeDataset("ds1", CancellationToken.None);
+        var result = await controller.SynthesizeDataset("ds1", null, CancellationToken.None);
 
         Assert.IsType<EmptyResult>(result);
         Assert.Equal(StatusCodes.Status502BadGateway, controller.Response.StatusCode);
@@ -94,7 +107,7 @@ public class TrainingSynthesizeProxyTests
         var handler = new StubHandler { Handler = _ => throw new HttpRequestException("boom") };
         var controller = CreateController(new HttpClient(handler));
 
-        var result = await controller.SynthesizeDataset("ds1", CancellationToken.None);
+        var result = await controller.SynthesizeDataset("ds1", null, CancellationToken.None);
 
         var status = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
