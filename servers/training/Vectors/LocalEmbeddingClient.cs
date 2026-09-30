@@ -8,7 +8,7 @@ namespace Z.Vtuber.Training.Vectors;
 /// <summary>
 /// 本地 embedding 客户端（named client <c>EmbeddingService</c>）：<c>POST {Embedding:BaseUrl}{ApiPath}</c>。
 /// 默认 Ollama <c>/api/embeddings</c>（body <c>{"model","prompt"}</c>，响应 <c>{"embedding":[...]}</c>）；
-/// 亦兼容较新的 Ollama <c>/api/embed</c>（响应 <c>{"embeddings":[[...]]}</c>，取首个向量）；
+/// 亦兼容较新的 Ollama <c>/api/embed</c>（body <c>{"model","input"}</c>，响应 <c>{"embeddings":[[...]]}</c>，取首个向量）；
 /// <c>ApiPath</c> 含 <c>v1</c> 时按 OpenAI 兼容（body <c>{"model","input"}</c>，响应 <c>data[0].embedding</c>）。
 /// 不可达/超时/非 2xx/响应非法 → <see cref="EmbeddingUnavailableException"/>；日志不打文本内容。
 /// </summary>
@@ -37,10 +37,14 @@ public sealed class LocalEmbeddingClient : IEmbeddingClient
         var httpClient = _httpClientFactory.CreateClient(ClientName);
         httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(1, _options.RequestTimeoutSeconds));
 
-        var openAiCompatible = _options.ApiPath.Contains("v1", StringComparison.OrdinalIgnoreCase);
-        var payload = openAiCompatible
-            ? new Dictionary<string, object?> { ["model"] = _options.Model, ["input"] = text }
-            : new Dictionary<string, object?> { ["model"] = _options.Model, ["prompt"] = text };
+        // 仅 Ollama 旧端点 /api/embeddings 用 prompt；OpenAI 兼容 /v1/embeddings 与较新的 Ollama /api/embed 都用 input
+        // （/api/embed 传 prompt 会被忽略并返回空 embeddings）。
+        var usesLegacyOllamaPrompt = _options.ApiPath
+            .TrimEnd('/')
+            .EndsWith("/api/embeddings", StringComparison.OrdinalIgnoreCase);
+        var payload = usesLegacyOllamaPrompt
+            ? new Dictionary<string, object?> { ["model"] = _options.Model, ["prompt"] = text }
+            : new Dictionary<string, object?> { ["model"] = _options.Model, ["input"] = text };
 
         HttpResponseMessage response;
         try
