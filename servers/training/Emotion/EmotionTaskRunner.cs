@@ -5,6 +5,7 @@ using Z.Vtuber.Training.Ai;
 using Z.Vtuber.Training.Ai.Prompts;
 using Z.Vtuber.Training.Configuration;
 using Z.Vtuber.Training.Contracts;
+using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Training.Emotion;
 
@@ -22,7 +23,8 @@ public class EmotionTaskRunner(
     TrainingProviderRepository providers,
     IChatModelClientFactory aiFactory,
     EmotionTaskOptions options,
-    ILogger<EmotionTaskRunner> logger)
+    ILogger<EmotionTaskRunner> logger,
+    VectorSyncService? vectors = null)
 {
     public virtual async Task RunAsync(
         TrainingEmotionTaskRecord task, IEmotionTaskLock handle, CancellationToken ct = default)
@@ -127,6 +129,12 @@ public class EmotionTaskRunner(
             }
 
             logger.LogInformation("Emotion task {TaskId} completed", task.Id);
+
+            // 情绪写入后增量同步情感向量（best-effort）。
+            if (vectors is not null)
+            {
+                await vectors.SyncItemAsync(updatedItem, ct);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

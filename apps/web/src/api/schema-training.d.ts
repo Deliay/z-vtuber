@@ -356,6 +356,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/datasets/{datasetId}/synthesize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 音频生成（数据集语音合成）
+         * @description 以数据集为参考池：输入文本向量化后匹配音色参考（speaker_prompt），情感向量匹配情绪参考 （emo_prompt/emo_vector/emo_text/emo_alpha），调用内网 index-tts-api 合成并返回 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。
+         */
+        post: operations["synthesizeTrainingDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}/vectors/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重建数据集向量索引
+         * @description 从 MongoDB 条目（Text + Extensions.emotion）为 Milvus 重建文本向量与情感向量索引，返回重建条数（updated）。 用于升级后回填存量条目、向量模型变更后重建。
+         */
+        post: operations["rebuildTrainingDatasetVectors"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -596,6 +636,18 @@ export interface components {
         TrainingRecognizeResult: {
             /** @description 识别出的文本（未写库，保存由前端走更新条目端点） */
             text: string;
+        };
+        TrainingSynthesizeRequest: {
+            /** @description 待合成文本（trim 后非空） */
+            text: string;
+            /** @description 语种 ZH/EN/JA/ES/AR（大小写不敏感），缺省 Tts:DefaultLang（默认 ZH） */
+            lang?: string | null;
+            /** @description 生成情感向量所用可用模型 id（Models 管理配置）；缺省 Synthesize:DefaultEmotionModelId，再缺省首个启用模型 */
+            modelId?: string | null;
+        };
+        TrainingVectorsRebuildResult: {
+            /** @description 重建（写入 Milvus）的条目数 */
+            updated: number;
         };
         TrainingEmotionTaskCreateRequest: {
             itemIds: string[];
@@ -1550,6 +1602,114 @@ export interface operations {
             };
             /** @description {"error": "active task exists"} */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    synthesizeTrainingDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["DatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingSynthesizeRequest"];
+            };
+        };
+        responses: {
+            /** @description 合成音频（mono 16-bit PCM WAV @22.05kHz，上游透传） */
+            200: {
+                headers: {
+                    /** @description 命中的音色参考条目 audioKey */
+                    "X-Speaker-Audio-Key"?: string;
+                    /** @description 命中的情绪参考条目 audioKey（无情绪命中时缺省） */
+                    "X-Emo-Audio-Key"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/wav": string;
+                };
+            };
+            /** @description {"error": "text is required"/"invalid lang"/"model disabled"} */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description {"error": "dataset not found"/"model not found"} */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description {"error": "no speaker reference"}（数据集内无任何可用音色参考） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description {"error": "embedding service unavailable"/"vector store unavailable"/"audio unavailable"/"tts service unavailable"} */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rebuildTrainingDatasetVectors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["DatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重建结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingVectorsRebuildResult"];
+                };
+            };
+            /** @description {"error": "dataset not found"} */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description {"error": "embedding service unavailable"/"vector store unavailable"} */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
