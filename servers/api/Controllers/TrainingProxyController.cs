@@ -14,6 +14,15 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
 {
     internal const string TrainingClientName = "TrainingService";
 
+    /// <summary>
+    /// 代理上游 training 的默认请求超时（秒）。必须**高于** training 各阶段的上游预算
+    /// （<c>Tts</c>/<c>Ai</c>/<c>Embedding</c> 的 <c>RequestTimeoutSeconds</c> 均为 120s），
+    /// 否则 `synthesize`（慢 TTS）/`vectors/rebuild`（逐条串行 embedding）等在 training 侧正常完成时，
+    /// 代理会先超时并把成功路径误报为 502 <c>training service unavailable</c>。
+    /// 可由配置 <c>TrainingService:RequestTimeoutSeconds</c> 覆盖；口径见 <c>servers/api/AGENTS.md</c>。
+    /// </summary>
+    public const int DefaultTimeoutSeconds = 180;
+
     [HttpGet("training/datasets")]
     public Task<IActionResult> ListDatasets([FromQuery] string? type, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Get, "api/training/datasets", ct);
@@ -103,6 +112,14 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
     public Task<IActionResult> RetryEmotionTask(string taskId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, $"api/training/emotion-tasks/{Uri.EscapeDataString(taskId)}/retry", ct);
 
+    [HttpPost("training/datasets/{datasetId}/synthesize")]
+    public Task<IActionResult> SynthesizeDataset(string datasetId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/synthesize", ct);
+
+    [HttpPost("training/datasets/{datasetId}/vectors/rebuild")]
+    public Task<IActionResult> RebuildDatasetVectors(string datasetId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/vectors/rebuild", ct);
+
     private async Task<IActionResult> ForwardAsync(HttpMethod method, string upstreamPath, CancellationToken ct)
     {
         var client = httpClientFactory.CreateClient(TrainingClientName);
@@ -148,6 +165,17 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
             if (!string.IsNullOrEmpty(contentDisposition))
             {
                 Response.Headers.ContentDisposition = contentDisposition;
+            }
+
+            // 音频生成命中参考头透传（可观测命中音色/情绪参考）。
+            if (response.Headers.TryGetValues("X-Speaker-Audio-Key", out var speakerKeys))
+            {
+                Response.Headers["X-Speaker-Audio-Key"] = speakerKeys.ToArray();
+            }
+
+            if (response.Headers.TryGetValues("X-Emo-Audio-Key", out var emoKeys))
+            {
+                Response.Headers["X-Emo-Audio-Key"] = emoKeys.ToArray();
             }
 
             await response.Content.CopyToAsync(Response.Body, ct);

@@ -601,7 +601,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
         var stream = new TranscriptSegmentStream(
             Segments, Tasks, redis.Connection, NullLogger<TranscriptSegmentStream>.Instance);
 
-        using var body = new MemoryStream();
+        using var body = new SynchronizedMemoryStream();
         var context = new DefaultHttpContext { Response = { Body = body } };
 
         var originalInterval = TranscriptSegmentStream.HeartbeatInterval;
@@ -611,23 +611,35 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             var streamTask = stream.StreamAsync(context.Response, task.Id, cts.Token);
 
-            await Task.Delay(300);
-
-            var publisher = redis.Connection.GetSubscriber();
+            var server = redis.Connection.GetServer(redis.Connection.GetEndPoints().First());
             var channel = new RedisChannel(
                 RecordingEventChannels.SegmentChannel(task.Id.ToString()),
                 RedisChannel.PatternMode.Literal);
+            await TestWait.UntilAsync(
+                () => server.SubscriptionSubscriberCount(channel) > 0,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(25),
+                "sse stream should subscribe to redis");
+
+            var publisher = redis.Connection.GetSubscriber();
             await publisher.PublishAsync(channel, JsonSerializer.Serialize(
                 new TranscriptSegmentEvent(task.Id.ToString(), 2000, 2500, "live-segment")));
             await publisher.PublishAsync(channel, JsonSerializer.Serialize(
                 new TranscriptSegmentEvent(task.Id.ToString(), 1000, 1500, "duplicate-segment")));
 
-            await Task.Delay(300);
+            await TestWait.UntilAsync(
+                () =>
+                {
+                    var snapshot = body.Snapshot();
+                    return snapshot.Contains("live-segment", StringComparison.Ordinal)
+                        && snapshot.Contains(": heartbeat", StringComparison.Ordinal);
+                },
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(25),
+                "live segment and heartbeat should be written to sse");
             await Tasks.SetStatusAsync(task.Id, TranscriptTaskStatus.Done);
 
-            var completed = await Task.WhenAny(streamTask, Task.Delay(TimeSpan.FromSeconds(5)));
-            Assert.Same(streamTask, completed);
-            await streamTask;
+            await streamTask.WaitAsync(TimeSpan.FromSeconds(10));
         }
         finally
         {
@@ -666,7 +678,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
         var stream = new TranscriptSegmentStream(
             Segments, Tasks, redis.Connection, NullLogger<TranscriptSegmentStream>.Instance);
 
-        using var body = new MemoryStream();
+        using var body = new SynchronizedMemoryStream();
         var context = new DefaultHttpContext { Response = { Body = body } };
 
         var originalInterval = TranscriptSegmentStream.HeartbeatInterval;
@@ -676,24 +688,36 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             var streamTask = stream.StreamAsync(context.Response, task.Id, cts.Token);
 
-            await Task.Delay(300);
-
-            var publisher = redis.Connection.GetSubscriber();
+            var server = redis.Connection.GetServer(redis.Connection.GetEndPoints().First());
             var channel = new RedisChannel(
                 RecordingEventChannels.SegmentChannel(task.Id.ToString()),
                 RedisChannel.PatternMode.Literal);
+            await TestWait.UntilAsync(
+                () => server.SubscriptionSubscriberCount(channel) > 0,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(25),
+                "sse stream should subscribe to redis");
+
+            var publisher = redis.Connection.GetSubscriber();
             await publisher.PublishAsync(channel, JsonSerializer.Serialize(
                 new TranscriptSegmentEvent(task.Id.ToString(), 2000, 2500, "live-segment")));
             // 与 replay 片段同原始 StartTime：去重键为原始值，重复事件不重发
             await publisher.PublishAsync(channel, JsonSerializer.Serialize(
                 new TranscriptSegmentEvent(task.Id.ToString(), 1000, 1500, "duplicate-segment")));
 
-            await Task.Delay(300);
+            await TestWait.UntilAsync(
+                () =>
+                {
+                    var snapshot = body.Snapshot();
+                    return snapshot.Contains("live-segment", StringComparison.Ordinal)
+                        && snapshot.Contains(": heartbeat", StringComparison.Ordinal);
+                },
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(25),
+                "live segment and heartbeat should be written to sse");
             await Tasks.SetStatusAsync(task.Id, TranscriptTaskStatus.Done);
 
-            var completed = await Task.WhenAny(streamTask, Task.Delay(TimeSpan.FromSeconds(5)));
-            Assert.Same(streamTask, completed);
-            await streamTask;
+            await streamTask.WaitAsync(TimeSpan.FromSeconds(10));
         }
         finally
         {
@@ -738,7 +762,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
             NullLogger<TranscriptSegmentStream>.Instance,
             new TranscriptSegmentEvent(task.Id.ToString(), 4000, 4500, "during-replay"));
 
-        using var body = new MemoryStream();
+        using var body = new SynchronizedMemoryStream();
         var context = new DefaultHttpContext { Response = { Body = body } };
 
         var originalInterval = TranscriptSegmentStream.HeartbeatInterval;
@@ -748,12 +772,14 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             var streamTask = stream.StreamAsync(context.Response, task.Id, cts.Token);
 
-            await Task.Delay(400);
+            await TestWait.UntilAsync(
+                () => body.Snapshot().Contains("during-replay", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(25),
+                "during-replay segment should be written to sse");
             await Tasks.SetStatusAsync(task.Id, TranscriptTaskStatus.Done);
 
-            var completed = await Task.WhenAny(streamTask, Task.Delay(TimeSpan.FromSeconds(5)));
-            Assert.Same(streamTask, completed);
-            await streamTask;
+            await streamTask.WaitAsync(TimeSpan.FromSeconds(10));
         }
         finally
         {
@@ -786,7 +812,7 @@ public class TranscriptApiTests(MongoDbFixture mongo, RedisFixture redis)
 
         var stream = new TranscriptSegmentStream(
             Segments, Tasks, redis.Connection, NullLogger<TranscriptSegmentStream>.Instance);
-        using var body = new MemoryStream();
+        using var body = new SynchronizedMemoryStream();
         var context = new DefaultHttpContext { Response = { Body = body } };
 
         await stream.StreamAsync(context.Response, task.Id, CancellationToken.None);

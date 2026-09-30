@@ -973,6 +973,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/datasets/{datasetId}/synthesize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 音频生成（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；成功返回 audio/wav 二进制（Content-Type 与响应体透传）， X-Speaker-Audio-Key / X-Emo-Audio-Key 命中头一并透传；错误码（400/404/409/502）与错误体透传。
+         */
+        post: operations["synthesizeTrainingDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}/vectors/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重建数据集向量索引（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；返回 updated 条数。
+         */
+        post: operations["rebuildTrainingDatasetVectors"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1613,6 +1653,14 @@ export interface components {
         };
         TrainingRecognizeResult: {
             text: string;
+        };
+        TrainingSynthesizeRequest: {
+            text: string;
+            lang?: string | null;
+            modelId?: string | null;
+        };
+        TrainingVectorsRebuildResult: {
+            updated: number;
         };
         TrainingEmotionTaskCreateRequest: {
             itemIds: string[];
@@ -4012,6 +4060,112 @@ export interface operations {
             };
             /** @description 同条目已有活跃任务 */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    synthesizeTrainingDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingSynthesizeRequest"];
+            };
+        };
+        responses: {
+            /** @description 合成音频（audio/wav 二进制透传） */
+            200: {
+                headers: {
+                    /** @description 命中的音色参考条目 audioKey */
+                    "X-Speaker-Audio-Key"?: string;
+                    /** @description 命中的情绪参考条目 audioKey（无情绪命中时缺省） */
+                    "X-Emo-Audio-Key"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/wav": string;
+                };
+            };
+            /** @description 请求非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 数据集或模型不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 数据集内无可用音色参考 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达（或上游 embedding/向量库/音频/TTS 不可用） */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+        };
+    };
+    rebuildTrainingDatasetVectors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重建结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingVectorsRebuildResult"];
+                };
+            };
+            /** @description 数据集不存在 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

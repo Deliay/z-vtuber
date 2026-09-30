@@ -130,14 +130,21 @@ public class SubscriptionEventCrossProcessTests(MongoDbFixture mongo, RedisFixtu
             await apiSubscription.SubscribeAsync(410001, SubscriptionType.Recording);
 
             // 容忍订阅通道建立延迟：重试发布直到 crawl 触发
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-            while (DateTime.UtcNow < deadline && !crawled.Task.IsCompleted)
-            {
-                await redis.Connection.GetSubscriber().PublishAsync(
-                    Channel,
-                    JsonSerializer.Serialize(new SubscriptionEvent(410001, SubscriptionType.Recording)));
-                await Task.Delay(200);
-            }
+            await TestWait.UntilAsync(
+                async () =>
+                {
+                    if (crawled.Task.IsCompleted)
+                    {
+                        return true;
+                    }
+
+                    await redis.Connection.GetSubscriber().PublishAsync(
+                        Channel,
+                        JsonSerializer.Serialize(new SubscriptionEvent(410001, SubscriptionType.Recording)));
+                    return crawled.Task.IsCompleted;
+                },
+                TimeSpan.FromSeconds(10),
+                TimeSpan.FromMilliseconds(200));
 
             Assert.True(crawled.Task.IsCompleted, "跨进程订阅事件未触发 crawler 即时抓取");
             Assert.Equal(410001L, await crawled.Task);

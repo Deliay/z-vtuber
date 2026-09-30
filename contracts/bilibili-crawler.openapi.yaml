@@ -1454,6 +1454,84 @@ paths:
                 $ref: "#/components/schemas/TrainingErrorResponse"
         "502":
           description: training 服务不可达
+  /api/training/datasets/{datasetId}/synthesize:
+    post:
+      summary: 音频生成（代理训练服务）
+      description: >-
+        代理 training 服务，body 原样透传；成功返回 audio/wav 二进制（Content-Type 与响应体透传），
+        X-Speaker-Audio-Key / X-Emo-Audio-Key 命中头一并透传；错误码（400/404/409/502）与错误体透传。
+      operationId: synthesizeTrainingDataset
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingSynthesizeRequest"
+      responses:
+        "200":
+          description: 合成音频（audio/wav 二进制透传）
+          headers:
+            X-Speaker-Audio-Key:
+              description: 命中的音色参考条目 audioKey
+              schema:
+                type: string
+            X-Emo-Audio-Key:
+              description: 命中的情绪参考条目 audioKey（无情绪命中时缺省）
+              schema:
+                type: string
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: 请求非法
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "404":
+          description: 数据集或模型不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "409":
+          description: 数据集内无可用音色参考
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达（或上游 embedding/向量库/音频/TTS 不可用）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+  /api/training/datasets/{datasetId}/vectors/rebuild:
+    post:
+      summary: 重建数据集向量索引（代理训练服务）
+      description: 代理 training 服务，body 原样透传；返回 updated 条数。
+      operationId: rebuildTrainingDatasetVectors
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+      responses:
+        "200":
+          description: 重建结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingVectorsRebuildResult"
+        "404":
+          description: 数据集不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
 components:
   parameters:
     TrainingDatasetId:
@@ -2821,6 +2899,24 @@ components:
       properties:
         text:
           type: string
+    TrainingSynthesizeRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+        lang:
+          type: string
+          nullable: true
+        modelId:
+          type: string
+          nullable: true
+    TrainingVectorsRebuildResult:
+      type: object
+      required: [updated]
+      properties:
+        updated:
+          type: integer
     TrainingEmotionTaskCreateRequest:
       type: object
       required: [itemIds, modelId]

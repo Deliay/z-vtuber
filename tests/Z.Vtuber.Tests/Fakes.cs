@@ -125,10 +125,14 @@ public sealed class FakeDistributedLockProvider : IDistributedLockProvider
     public TimeSpan? LastWaitTimeout { get; private set; }
     public Action<string>? LockAcquired { get; set; }
 
+    /// <summary>AcquireAsync 进入等待前回调一次，供并发用例以信号量替代固定 Task.Delay 定位「已开始等待」。</summary>
+    public Action<string>? LockWaitStarted { get; set; }
+
     public async Task<IDistributedLockHandle?> AcquireAsync(string key, TimeSpan ttl, TimeSpan waitTimeout, CancellationToken ct = default)
     {
         LastWaitTimeout = waitTimeout;
         var sem = _semaphores.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        LockWaitStarted?.Invoke(key);
         var deadline = DateTime.UtcNow + waitTimeout;
         while (true)
         {

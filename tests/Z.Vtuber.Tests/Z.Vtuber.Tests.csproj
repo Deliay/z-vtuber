@@ -21,6 +21,7 @@
     </PackageReference>
     <PackageReference Include="Testcontainers.MongoDb" Version="4.13.0" />
     <PackageReference Include="Testcontainers.Redis" Version="4.13.0" />
+    <PackageReference Include="Testcontainers.Milvus" Version="4.13.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -40,10 +41,17 @@
     <ProjectReference Include="..\..\servers\recording-transcript-api\Z.Vtuber.RecordingTranscript.Api.csproj" />
     <ProjectReference Include="..\..\servers\recording-transcript-consumer\Z.Vtuber.RecordingTranscript.Consumer.csproj" />
     <ProjectReference Include="..\..\servers\training\Z.Vtuber.Training.csproj" />
+    <ProjectReference Include="..\Z.Vtuber.TestReport\Z.Vtuber.TestReport.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Using Include="Z.Vtuber.Common.Contracts" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- xUnit 按测试程序集所在目录查找配置；不复制到输出目录会导致 xunit.runner.json 被静默忽略。 -->
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="TimeoutExceptions.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

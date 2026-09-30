@@ -178,21 +178,3 @@ internal sealed class FakeBrowserHarness
     public IBrowserType BrowserType { get; }
 }
 
-internal static class TestWait
-{
-    public static async Task UntilAsync(Func<bool> condition, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (condition())
-            {
-                return;
-            }
-
-            await Task.Delay(10);
-        }
-
-        Assert.True(condition(), "Condition was not met within the timeout.");
-    }
-}

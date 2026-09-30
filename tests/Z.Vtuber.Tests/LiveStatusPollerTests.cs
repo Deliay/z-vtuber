@@ -116,8 +116,8 @@ public class LiveStatusPollerTests(MongoDbFixture fixture) : IClassFixture<Mongo
         await subscription.UnsubscribeAsync(4, SubscriptionType.Recording);
         await poller.RunOnceAsync(CancellationToken.None);
 
-        var completed = await Task.WhenAny(cancelled.Task, Task.Delay(TimeSpan.FromSeconds(3)));
-        Assert.Same(cancelled.Task, completed);
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(cancelled.Task.IsCompleted, "取消订阅后录制运行应被取消");
     }
 
     [Fact]

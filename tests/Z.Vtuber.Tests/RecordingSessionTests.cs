@@ -62,20 +62,26 @@ public class RecordingSessionTests(MongoDbFixture fixture) : IClassFixture<Mongo
 
     private async Task<string?> WaitForStateAsync(long roomId, string state, TimeSpan? timeout = null)
     {
-        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
         var repository = Repository;
-        while (DateTime.UtcNow < deadline)
+        string? current = null;
+        try
         {
-            var record = await repository.GetByRoomIdAsync(roomId);
-            if (record?.State == state)
-            {
-                return record.State;
-            }
-
-            await Task.Delay(25);
+            await TestWait.UntilAsync(
+                async () =>
+                {
+                    current = (await repository.GetByRoomIdAsync(roomId))?.State;
+                    return current == state;
+                },
+                timeout ?? TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(25),
+                $"state '{state}' should be reached");
+        }
+        catch (Xunit.Sdk.TrueException)
+        {
+            // 保持原语义：超时不抛出，返回最后一次观察到的状态，由调用方断言。
         }
 
-        return (await repository.GetByRoomIdAsync(roomId))?.State;
+        return current;
     }
 
     [Fact]

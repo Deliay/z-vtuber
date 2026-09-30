@@ -257,6 +257,8 @@ public class TrainingMappingTests
     [InlineData("b/live/1a/recordings/a.flv")]
     [InlineData("b/live/100/recordings/")]
     [InlineData("b/live/100/recordings/a/b.flv")]
+    [InlineData("b/live/100/recordings/.")]
+    [InlineData("b/live/100/recordings/..")]
     [InlineData("b/live/100/recordingz/a.flv")]
     [InlineData("b/live/100")]
     public void ParseAudioUri_InvalidUri_ReturnsNull(string? uri)

@@ -6,6 +6,8 @@ using Z.Vtuber.Training.Ai;
 using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Configuration;
 using Z.Vtuber.Training.Emotion;
+using Z.Vtuber.Training.Synthesis;
+using Z.Vtuber.Training.Vectors;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,9 +35,38 @@ builder.Services.AddOptions<RecordingServiceOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+// 音频生成：本地 embedding / Milvus 向量库 / 上游 TTS / 编排配置（ValidateOnStart）
+builder.Services.AddOptions<EmbeddingOptions>()
+    .Bind(builder.Configuration.GetSection(EmbeddingOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddOptions<MilvusOptions>()
+    .Bind(builder.Configuration.GetSection(MilvusOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddOptions<TtsOptions>()
+    .Bind(builder.Configuration.GetSection(TtsOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(
+        o => TtsOptions.SupportedLangs.Contains(
+            o.DefaultLang?.Trim().ToUpperInvariant() ?? string.Empty, StringComparer.Ordinal),
+        "Tts:DefaultLang must be one of ZH/EN/JA/ES/AR")
+    .ValidateOnStart();
+
+builder.Services.AddOptions<SynthesizeOptions>()
+    .Bind(builder.Configuration.GetSection(SynthesizeOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<AiOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<EmotionTaskOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<RecordingServiceOptions>>().Value);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<EmbeddingOptions>>().Value);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<MilvusOptions>>().Value);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<TtsOptions>>().Value);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SynthesizeOptions>>().Value);
 
 // transcript-api 内网地址（named client，节 TranscriptService:BaseUrl）
 builder.Services.AddHttpClient<ITranscriptApiClient, TranscriptApiClient>(
@@ -63,6 +94,27 @@ builder.Services.AddHttpClient<IRecordingAudioClient, RecordingAudioClient>(clie
             ?? RecordingServiceOptions.DefaultBaseUrl);
 });
 
+// 本地 embedding（named client EmbeddingService，BaseAddress = Embedding:BaseUrl；超时经 EmbeddingOptions 控制）
+builder.Services.AddHttpClient(LocalEmbeddingClient.ClientName, client =>
+{
+    client.BaseAddress = new Uri(
+        builder.Configuration[$"{EmbeddingOptions.SectionName}:BaseUrl"]
+            ?? EmbeddingOptions.DefaultBaseUrl);
+});
+
+// Milvus REST（named client MilvusStore；禁用自动重定向）
+builder.Services.AddHttpClient(MilvusRestClient.ClientName)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+
+// 上游 index-tts-api（named client TtsService，BaseAddress = Tts:BaseUrl；IndexTtsClient 每次经 factory 取用）
+builder.Services.AddHttpClient(IndexTtsClient.ClientName, client =>
+{
+    client.BaseAddress = new Uri(
+        builder.Configuration[$"{TtsOptions.SectionName}:BaseUrl"]
+            ?? TtsOptions.DefaultBaseUrl);
+});
+builder.Services.AddSingleton<ITtsClient, IndexTtsClient>();
+
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
 
@@ -81,6 +133,13 @@ builder.Services.AddSingleton<EmotionTaskRunner>();
 builder.Services.AddSingleton<EmotionTaskScanner>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EmotionTaskScanner>());
 
+// 音频生成：embedding / Milvus 向量仓储 / 同步 / 编排 / TTS
+builder.Services.AddSingleton<IEmbeddingClient, LocalEmbeddingClient>();
+builder.Services.AddSingleton<IMilvusRestClient, MilvusRestClient>();
+builder.Services.AddSingleton<IVectorStore, MilvusVectorStore>();
+builder.Services.AddSingleton<VectorSyncService>();
+builder.Services.AddSingleton<SynthesizeService>();
+
 builder.Services.AddControllers();
 
 var app = builder.Build();
@@ -91,6 +150,17 @@ using (var scope = app.Services.CreateScope())
     var transcript = scope.ServiceProvider.GetRequiredService<TranscriptMongoSetup>();
     await training.EnsureIndexesAsync();
     await transcript.EnsureIndexesAsync();
+
+    // Milvus 集合/索引幂等建立（best-effort：Milvus 暂不可用不阻断服务启动，可由 vectors/rebuild 兜底）
+    try
+    {
+        var vectorStore = scope.ServiceProvider.GetRequiredService<IVectorStore>();
+        await vectorStore.EnsureCollectionsAsync();
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Milvus collections initialization failed; synthesize unavailable until Milvus recovers");
+    }
 }
 
 app.MapHealthChecks("/health");

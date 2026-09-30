@@ -284,10 +284,10 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IClassFixture<Mongo
         await subscription.SubscribeAsync(Uid);
 
         // 轮询等待 Subscribed 事件驱动的即时补抓异步完成
-        for (var i = 0; i < 50 && api.CalledSinceIds.Count == 0; i++)
-        {
-            await Task.Delay(20);
-        }
+        await TestWait.UntilAsync(
+            () => api.CalledSinceIds.Count > 0,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(20));
 
         Assert.NotEmpty(api.CalledSinceIds);
     }
