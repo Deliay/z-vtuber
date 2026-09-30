@@ -8,6 +8,7 @@ namespace Z.Vtuber.Training.Vectors;
 /// <summary>
 /// 本地 embedding 客户端（named client <c>EmbeddingService</c>）：<c>POST {Embedding:BaseUrl}{ApiPath}</c>。
 /// 默认 Ollama <c>/api/embeddings</c>（body <c>{"model","prompt"}</c>，响应 <c>{"embedding":[...]}</c>）；
+/// 亦兼容较新的 Ollama <c>/api/embed</c>（响应 <c>{"embeddings":[[...]]}</c>，取首个向量）；
 /// <c>ApiPath</c> 含 <c>v1</c> 时按 OpenAI 兼容（body <c>{"model","input"}</c>，响应 <c>data[0].embedding</c>）。
 /// 不可达/超时/非 2xx/响应非法 → <see cref="EmbeddingUnavailableException"/>；日志不打文本内容。
 /// </summary>
@@ -86,7 +87,10 @@ public sealed class LocalEmbeddingClient : IEmbeddingClient
         }
     }
 
-    /// <summary>兼容 Ollama（<c>embedding</c>）与 OpenAI（<c>data[0].embedding</c>）两种响应。</summary>
+    /// <summary>
+    /// 兼容 Ollama <c>{"embedding":[...]}</c>、较新的 Ollama <c>{"embeddings":[[...]]}</c>（取首个向量）
+    /// 与 OpenAI <c>data[0].embedding</c> 三种响应。
+    /// </summary>
     internal static float[]? ParseVector(string body)
     {
         try
@@ -99,6 +103,10 @@ public sealed class LocalEmbeddingClient : IEmbeddingClient
             {
                 array = embedding;
             }
+            else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("embeddings", out var embeddings))
+            {
+                array = embeddings;
+            }
             else if (root.ValueKind == JsonValueKind.Object
                 && root.TryGetProperty("data", out var data)
                 && data.ValueKind == JsonValueKind.Array
@@ -110,6 +118,14 @@ public sealed class LocalEmbeddingClient : IEmbeddingClient
             else
             {
                 return null;
+            }
+
+            // Ollama /api/embed 的 embeddings 为二维数组（[[...]]），取首个向量。
+            if (array.ValueKind == JsonValueKind.Array
+                && array.GetArrayLength() > 0
+                && array[0].ValueKind == JsonValueKind.Array)
+            {
+                array = array[0];
             }
 
             if (array.ValueKind != JsonValueKind.Array)

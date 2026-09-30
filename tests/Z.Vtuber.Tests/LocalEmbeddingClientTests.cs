@@ -9,8 +9,9 @@ using Z.Vtuber.Training.Vectors;
 namespace Z.Vtuber.Tests;
 
 /// <summary>
-/// 本地 embedding 客户端契约：Ollama <c>/api/embeddings</c>（body <c>model</c>+<c>prompt</c>）与
-/// OpenAI 兼容 <c>/v1/embeddings</c>（body <c>model</c>+<c>input</c>）两种响应解析；
+/// 本地 embedding 客户端契约：Ollama <c>/api/embeddings</c>（body <c>model</c>+<c>prompt</c>，响应 <c>embedding</c>）、
+/// 较新的 Ollama <c>/api/embed</c>（响应 <c>embeddings:[[...]]</c>，取首个向量）与
+/// OpenAI 兼容 <c>/v1/embeddings</c>（body <c>model</c>+<c>input</c>，响应 <c>data[0].embedding</c>）三种响应解析；
 /// 非 2xx/超时/响应非法 → <see cref="EmbeddingUnavailableException"/>。
 /// </summary>
 public class LocalEmbeddingClientTests
@@ -61,6 +62,21 @@ public class LocalEmbeddingClientTests
         using var body = JsonDocument.Parse(handler.Bodies[0]);
         Assert.Equal("bge-m3", body.RootElement.GetProperty("model").GetString());
         Assert.Equal("你好", body.RootElement.GetProperty("prompt").GetString());
+    }
+
+    [Fact]
+    public async Task OllamaEmbedEndpoint_ParsesNestedEmbeddingsAndTakesFirstVector()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.OK, """{"model":"bge-m3","embeddings":[[0.4,0.5,0.6]]}"""),
+        };
+        var client = Create(handler, o => o.ApiPath = "/api/embed");
+
+        var vector = await client.GetEmbeddingAsync("你好");
+
+        Assert.Equal([0.4f, 0.5f, 0.6f], vector);
+        Assert.Equal("/api/embed", handler.Paths[0]);
     }
 
     [Fact]
