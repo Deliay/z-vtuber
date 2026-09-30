@@ -387,22 +387,52 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IClassFixture
         BilibiliLiveController controller, LiveEventBus bus, long roomId, string[]? type, IEnumerable<LiveEvent> events,
         TimeSpan? waitDuration = null, bool publishEvents = true)
     {
-        using var body = new MemoryStream();
+        using var body = new SynchronizedMemoryStream();
         var context = new DefaultHttpContext { Response = { Body = body } };
         controller.ControllerContext = new ControllerContext { HttpContext = context };
 
         using var cts = new CancellationTokenSource();
         var subscribeTask = controller.Subscribe(roomId, type, cts.Token);
 
+        var published = events.ToList();
         if (publishEvents)
         {
-            foreach (var evt in events)
+            foreach (var evt in published)
             {
                 bus.TryPublish(roomId, evt);
             }
         }
 
-        await Task.Delay(waitDuration ?? TimeSpan.FromMilliseconds(300));
+        if (waitDuration is { } duration)
+        {
+            // 需要累计 N 次心跳的用例：保留受限时长（已登记为必要等待）。
+            await Task.Delay(duration);
+        }
+        else
+        {
+            // 轮询直到所有「会被过滤放行」的事件都已写出（或初始心跳已写出）。
+            var expected = published
+                .Where(e => type is null || type.Contains(e.Type))
+                .GroupBy(e => e.Type)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            await TestWait.UntilAsync(
+                () =>
+                {
+                    var snapshot = body.Snapshot();
+                    if (snapshot.Contains("event: heartbeat\n", StringComparison.Ordinal) && expected.Count == 0)
+                    {
+                        return true;
+                    }
+
+                    return expected.All(kv =>
+                        CountOccurrences(snapshot, $"event: {kv.Key}\n") >= kv.Value);
+                },
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(25),
+                "sse should write heartbeat or all expected events");
+        }
+
         cts.Cancel();
         try
         {
@@ -843,14 +873,18 @@ public class BilibiliLiveControllerTests(MongoDbFixture fixture) : IClassFixture
             new LiveEventTextIndexRepository(fixture.Database),
             bus);
 
-        using var body = new MemoryStream();
+        using var body = new SynchronizedMemoryStream();
         var context = new DefaultHttpContext { Response = { Body = body } };
         controller.ControllerContext = new ControllerContext { HttpContext = context };
 
         using var cts = new CancellationTokenSource();
         var subscribeTask = controller.Subscribe(123456, null, cts.Token);
 
-        await Task.Delay(50);
+        await TestWait.UntilAsync(
+            () => body.Snapshot().Contains("event: heartbeat\n", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(25),
+            "initial heartbeat should be written");
         cts.Cancel();
         try
         {

@@ -121,6 +121,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
 
 ## 开发流程
 
+- 跑测口径：遵循 `docs/engineering/common-rules.md`「测试性能基线与超时护栏」小节（单用例 ≤5s；报告工具 `tests/Z.Vtuber.TestReport --check` 护栏）
 - TDD 开发（单元与接口测试：`tests/Z.Vtuber.Tests` 的 `Training*`/`EmotionTask*`/`Model*` Tests，Testcontainers MongoDB + Redis；LLM/音频以假 `HttpMessageHandler` 契约测试，不打外网）
 - 契约式开发（OpenAPI）：`contracts/training.openapi.yaml`
 - 参考：`docs/engineering/common-rules.md`、`docs/engineering/backend-rules.md`、

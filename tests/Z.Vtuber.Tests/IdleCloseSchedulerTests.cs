@@ -27,16 +27,20 @@ public sealed class IdleCloseSchedulerTests
     {
         var closed = new ConcurrentQueue<string>();
         await using var scheduler = new IdleCloseScheduler(
-            TimeSpan.FromMilliseconds(300),
+            TimeSpan.FromMilliseconds(150),
             (key, _, _) => { closed.Enqueue(key); return Task.CompletedTask; },
             NullLogger.Instance);
 
         scheduler.Touch("account-a");
-        await Task.Delay(150);
+        await Task.Delay(60);
         scheduler.Touch("account-a");
 
-        await Task.Delay(250);
-        Assert.DoesNotContain("account-a", closed);
+        // 原始 150ms 到期点已过、但重新 Touch 已顺延：不得触发关闭。
+        await TestWait.NeverAsync(
+            () => closed.Contains("account-a"),
+            TimeSpan.FromMilliseconds(120),
+            TimeSpan.FromMilliseconds(15),
+            "idle close must be deferred after re-touch");
 
         await TestWait.UntilAsync(() => closed.Contains("account-a"), TimeSpan.FromSeconds(3));
         Assert.Equal(["account-a"], closed.ToArray());
@@ -54,7 +58,11 @@ public sealed class IdleCloseSchedulerTests
         scheduler.Touch("account-a");
         scheduler.Cancel("account-a");
 
-        await Task.Delay(300);
+        await TestWait.NeverAsync(
+            () => !closed.IsEmpty,
+            TimeSpan.FromMilliseconds(250),
+            TimeSpan.FromMilliseconds(15),
+            "cancelled key must not be closed");
         Assert.Empty(closed);
     }
 
@@ -112,7 +120,11 @@ public sealed class IdleCloseSchedulerTests
         scheduler.Touch("account-a");
         await scheduler.DisposeAsync();
 
-        await Task.Delay(300);
+        await TestWait.NeverAsync(
+            () => !closed.IsEmpty,
+            TimeSpan.FromMilliseconds(250),
+            TimeSpan.FromMilliseconds(15),
+            "disposed scheduler must not close");
         Assert.Empty(closed);
     }
 }

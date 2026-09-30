@@ -51,10 +51,11 @@ public class TranscriptTaskLockTests(RedisFixture fixture)
 
         await using var handle = await provider.TryAcquireAsync(taskId);
 
-        await Task.Delay(700);
+        // 1s TTL 语义：在到期前续期，并等到原到期点之后仍持有（续期已顺延）。
+        await Task.Delay(400);
         Assert.True(await handle!.RenewAsync());
 
-        await Task.Delay(700);
+        await Task.Delay(650);
         Assert.True(await handle.CheckOwnershipAsync());
     }
 
@@ -68,7 +69,12 @@ public class TranscriptTaskLockTests(RedisFixture fixture)
         await using var handleA = await providerA.TryAcquireAsync(taskId);
         Assert.NotNull(handleA);
 
-        await Task.Delay(1500);
+        // 轮询直到 1s TTL 自然过期（不硬等固定时长，过期即可接管）。
+        await TestWait.UntilAsync(
+            async () => !await providerA.IsHeldAsync(taskId),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(50),
+            "lock TTL should expire");
 
         var handleB = await providerB.TryAcquireAsync(taskId);
         Assert.NotNull(handleB);
@@ -142,6 +148,8 @@ public class TranscriptTaskLockTests(RedisFixture fixture)
         // 指向不可达端口：验证 Redis 抖动不得把在跑任务打成 FAILED，而应按失锁处理
         var config = ConfigurationOptions.Parse("127.0.0.1:1");
         config.ConnectTimeout = 200;
+        config.AsyncTimeout = 200;
+        config.SyncTimeout = 200;
         config.ConnectRetry = 1;
         config.AbortOnConnectFail = false;
         using var dead = await ConnectionMultiplexer.ConnectAsync(config);

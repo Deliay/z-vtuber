@@ -1,0 +1,52 @@
+[
+  {
+    "test": "Z.Vtuber.Tests.RecordingLockTests.Renew_KeepsLockBeyondTtl",
+    "reason": "验证锁续期语义需真实跨过 1s TTL 原到期点；LockTtlSeconds 为整秒配置，无法注入亚秒 TTL",
+    "since": "2026-09-30"
+  },
+  {
+    "test": "Z.Vtuber.Tests.TranscriptTaskLockTests.Renew_KeepsLockBeyondTtl",
+    "reason": "验证锁续期语义需真实跨过 1s TTL 原到期点；LockTtlSeconds 为整秒配置，无法注入亚秒 TTL",
+    "since": "2026-09-30"
+  },
+  {
+    "test": "Z.Vtuber.Tests.EmotionTaskLockTests.Renew_KeepsLockBeyondTtl",
+    "reason": "验证锁续期语义需真实跨过 1s TTL 原到期点；LockTtlSeconds 为整秒配置，无法注入亚秒 TTL",
+    "since": "2026-09-30"
+  },
+  {
+    "test": "Z.Vtuber.Tests.BrowserSessionManagerTests.ExtractCookies_WhenUsedAgainDuringIdle_DefersClose",
+    "reason": "验证复用会顺延空闲关闭需真实跨过原 1s 空闲窗口；PageIdleCloseDelaySeconds 为整秒配置",
+    "since": "2026-09-30"
+  },
+  {
+    "test": "Z.Vtuber.Tests.BrowserSessionManagerTests.DeleteSession_ClosesImmediately_AndDoesNotCloseTwice",
+    "reason": "验证删除后空闲定时器已取消需覆盖完整 1s 空闲观察窗口",
+    "since": "2026-09-30"
+  },
+  {
+    "test": "Z.Vtuber.Tests.IdleCloseSchedulerTests.Touch_AgainBeforeElapse_DelaysClose",
+    "reason": "验证重新 Touch 顺延空闲定时器需真实跨越原到期点",
+    "since": "2026-09-30"
+  },
+  {
+    "test": "Z.Vtuber.Tests.IdleCloseSchedulerTests.Cancel_PreventsClose",
+    "reason": "验证 Cancel 后定时器不再触发需真实观察窗口",
+    "since": "2026-09-30"
+  },
+  {
+    "test": "Z.Vtuber.Tests.IdleCloseSchedulerTests.DisposeAsync_CancelsPendingTimers",
+    "reason": "验证 Dispose 后定时器不再触发需真实观察窗口",
+    "since": "2026-09-30"
+  },
+  {
+    "test": "Z.Vtuber.Tests.BilibiliLiveControllerTests.Subscribe_HeartbeatWithShortInterval",
+    "reason": "验证短心跳间隔下的推送次数需累计真实心跳",
+    "since": "2026-09-30"
+  },
+  {
+    "test": "Z.Vtuber.Tests.BilibiliLiveControllerTests.Subscribe_HeartbeatNotAffectedByTypeFilter",
+    "reason": "验证类型过滤下心跳仍按间隔推送需累计真实心跳",
+    "since": "2026-09-30"
+  }
+]
