@@ -15,7 +15,7 @@ namespace Z.Vtuber.Tests;
 /// endpoint 拼接、payload JSON 序列化、<c>code==0</c> 成功 / 非 0 业务错误（不抛）、
 /// 非法 JSON / 超时 / 传输异常 → <see cref="VectorStoreUnavailableException"/>。
 /// </summary>
-public class MilvusRestClientTests
+public class MilvusRestClientTests(MilvusFixture milvus) : IClassFixture<MilvusFixture>
 {
     private sealed class RecordingHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder)
         : HttpMessageHandler
@@ -132,5 +132,31 @@ public class MilvusRestClientTests
 
         await Assert.ThrowsAsync<VectorStoreUnavailableException>(
             () => Create(handler, timeoutSeconds: 1).PostAsync("/p", new { }));
+    }
+
+    // ===== 真 Milvus 鉴权（Testcontainers milvusdb/milvus）：root:{pw} 通过、裸密码被拒（401 语义，回归锁定阻断项）=====
+
+    [Fact]
+    public async Task Real_BarePasswordToken_Rejected_WhileRootToken_Succeeds()
+    {
+        // root:{password}（= Aspire MilvusServerResource.Token）通过
+        var ok = await milvus.CreateRestClient().PostAsync("/v2/vectordb/collections/list", new { });
+        Assert.True(ok.IsSuccess);
+
+        // 裸密码被 ParseUsernamePassword 判为无效 API key → 401 语义（失败）
+        var bareRejected = false;
+        try
+        {
+            var resp = await milvus.CreateRestClient(milvus.BarePasswordToken)
+                .PostAsync("/v2/vectordb/collections/list", new { });
+            bareRejected = !resp.IsSuccess;
+        }
+        catch (VectorStoreUnavailableException)
+        {
+            // 401 无 JSON 体 → invalid json 异常，同为被拒
+            bareRejected = true;
+        }
+
+        Assert.True(bareRejected, "裸密码 token 必须被拒绝（401 / invalid api key）");
     }
 }

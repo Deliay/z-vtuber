@@ -41,7 +41,7 @@ type: Permanent
 5. **`lang`/`modelId` 校验补充（提案留白）**：`lang` 白名单 `ZH/EN/JA/ES/AR`（大小写不敏感、统一转大写传上游），非法 400 `invalid lang`；`modelId` 不存在 404 `model not found`、停用 400 `model disabled`（与情绪任务口径一致）；模型调用失败仍**降级中性**（不阻断，best-effort）。
 6. **测试设施口径**：提案 §8.2 写「WebApplicationFactory」，仓库实测为控制器直测 + Testcontainers fixture——沿用既有范式，断言面不变；Milvus 新增 `MilvusFixture`（Testcontainers `milvusdb/milvus`）。
 
-> **返工修订（针对代码审核意见）**：① 修正 `Milvus__Token` = `milvus.Resource.Token`（`root:{apiKey}`，裸密码 401）；② 落地 `MilvusFixture` + 真 Milvus 集成用例（`MilvusVectorStoreTests`/`TrainingSynthesizeApiTests` 各覆盖真链路）并补 `MilvusRestClientTests` 假 HTTP 契约测试（撤销「Milvus 容器测试暂缓」）；③ `IVectorStore` 增 `DeleteItemVectorsAsync` + `BatchDelete` 级联钩子、`UpsertItemVectorsAsync` null 侧删行（派生索引一致性）；④ `Tts:DefaultLang` 启动白名单校验；⑤ 三个 HTTP 客户端改 `IHttpClientFactory` 每次取用（handler 轮换）；⑥ 检索失败懒触发 `EnsureCollectionsAsync` 兜底重试；⑦ 检索固定 `consistencyLevel: Strong`（读己之写）。
+> **返工修订（针对代码审核意见）**：① 修正 `Milvus__Token` = `milvus.Resource.Token`（`root:{apiKey}`，裸密码 401）；② 落地 `MilvusFixture` + 真 Milvus 集成用例（`MilvusVectorStoreTests`/`TrainingSynthesizeApiTests` 各覆盖真链路）并补 `MilvusRestClientTests` 假 HTTP 契约测试（撤销「Milvus 容器测试暂缓」）；③ `IVectorStore` 增 `DeleteItemVectorsAsync` + `BatchDelete` 级联钩子、`UpsertItemVectorsAsync` null 侧删行（派生索引一致性）；④ `Tts:DefaultLang` 启动白名单校验；⑤ 三个 HTTP 客户端改 `IHttpClientFactory` 每次取用（handler 轮换）；⑥ 检索失败懒触发 `EnsureCollectionsAsync` 兜底重试；⑦ 检索固定 `consistencyLevel: Strong`（读己之写）。第 2 轮收口：`MilvusFixture` 镜像固定 `milvusdb/milvus:v2.5.27`（对齐 Aspire.Hosting.Milvus 13.4.6，可复现）；补真 Milvus 裸密码→401 回归用例 `Real_BarePasswordToken_Rejected_WhileRootToken_Succeeds`（锁定阻断项教训）。
 
 ### 1.1 实施范围
 

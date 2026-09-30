@@ -22,7 +22,7 @@ public sealed class MilvusFixture : IAsyncLifetime
 {
     public const string TestPassword = "MilvusTestPw1";
 
-    private static readonly MilvusContainer SharedContainer = new MilvusBuilder("milvusdb/milvus:latest")
+    private static readonly MilvusContainer SharedContainer = new MilvusBuilder("milvusdb/milvus:v2.5.27")
         .WithEnvironment("COMMON_SECURITY_AUTHORIZATIONENABLED", "true")
         .WithEnvironment("COMMON_SECURITY_DEFAULTROOTPASSWORD", TestPassword)
         .Build();
