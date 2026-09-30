@@ -143,6 +143,8 @@ public class EmotionTaskLockTests(RedisFixture fixture)
         // 指向不可达端口：Redis 抖动不得把在跑任务打成 FAILED，而应按失锁处理；IsHeld 保守按持有避免双跑
         var config = ConfigurationOptions.Parse("127.0.0.1:1");
         config.ConnectTimeout = 200;
+        config.AsyncTimeout = 200;
+        config.SyncTimeout = 200;
         config.ConnectRetry = 1;
         config.AbortOnConnectFail = false;
         using var dead = await ConnectionMultiplexer.ConnectAsync(config);
@@ -169,6 +171,8 @@ public class EmotionTaskLockTests(RedisFixture fixture)
         // Redis 抖动时 RenewAsync 必须自行兜底（置 Lost、返回 false），不得把异常抛进续期循环导致循环终止
         var config = ConfigurationOptions.Parse("127.0.0.1:1");
         config.ConnectTimeout = 200;
+        config.AsyncTimeout = 200;
+        config.SyncTimeout = 200;
         config.ConnectRetry = 1;
         config.AbortOnConnectFail = false;
         using var dead = await ConnectionMultiplexer.ConnectAsync(config);

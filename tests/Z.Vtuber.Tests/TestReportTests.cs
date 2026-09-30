@@ -271,4 +271,29 @@ public sealed class TestReportTests
         Assert.Equal(0, exitCode);
         Assert.Contains(SlowTest, outWriter.ToString());
     }
+
+    [Fact]
+    public void Run_MissingTrxFile_ReturnsNonZeroWithError()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.trx");
+        var outWriter = new StringWriter();
+        var errWriter = new StringWriter();
+
+        var exitCode = TestReportCli.Run([missing], outWriter, errWriter);
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("error", errWriter.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Run_NoArguments_PrintsUsageAndReturnsNonZero()
+    {
+        var outWriter = new StringWriter();
+        var errWriter = new StringWriter();
+
+        var exitCode = TestReportCli.Run([], outWriter, errWriter);
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("usage", errWriter.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
 }

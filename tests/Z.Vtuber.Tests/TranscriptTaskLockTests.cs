@@ -142,6 +142,8 @@ public class TranscriptTaskLockTests(RedisFixture fixture)
         // 指向不可达端口：验证 Redis 抖动不得把在跑任务打成 FAILED，而应按失锁处理
         var config = ConfigurationOptions.Parse("127.0.0.1:1");
         config.ConnectTimeout = 200;
+        config.AsyncTimeout = 200;
+        config.SyncTimeout = 200;
         config.ConnectRetry = 1;
         config.AbortOnConnectFail = false;
         using var dead = await ConnectionMultiplexer.ConnectAsync(config);
