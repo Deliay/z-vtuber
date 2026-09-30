@@ -5,14 +5,50 @@ using Z.Vtuber.Recording.Recording;
 
 namespace Z.Vtuber.Recording.Audio;
 
+/// <summary>音频片段输出格式（query <c>format</c>）。</summary>
+public enum AudioClipFormat
+{
+    /// <summary>mp3（默认）；无 libmp3lame 编码能力时降级为 wav。</summary>
+    Mp3,
+
+    /// <summary>wav（无损，忽略 mp3 编码能力）。</summary>
+    Wav,
+}
+
+/// <summary><c>format</c> query 解析：缺省/空取默认 mp3，大小写不敏感，其余非法值返回 false。</summary>
+public static class AudioClipFormats
+{
+    public const string Mp3 = "mp3";
+    public const string Wav = "wav";
+
+    public static bool TryParse(string? value, out AudioClipFormat format)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || string.Equals(value, Mp3, StringComparison.OrdinalIgnoreCase))
+        {
+            format = AudioClipFormat.Mp3;
+            return true;
+        }
+
+        if (string.Equals(value, Wav, StringComparison.OrdinalIgnoreCase))
+        {
+            format = AudioClipFormat.Wav;
+            return true;
+        }
+
+        format = AudioClipFormat.Mp3;
+        return false;
+    }
+}
+
 /// <summary>录播音频片段抽取：按 [startMs, endMs] 从录播文件抽音频并流式写出，ct 取消即 kill 进程。</summary>
 public interface IAudioClipExtractor
 {
-    /// <summary>片段输出 Content-Type：audio/mpeg（libmp3lame 可用）或 audio/wav（降级，语义不变）。</summary>
-    string ContentType { get; }
+    /// <summary>请求格式对应的实际输出 Content-Type：audio/mpeg（mp3 且 libmp3lame 可用）或 audio/wav（wav 或 mp3 降级）。</summary>
+    string ContentType(AudioClipFormat format);
 
-    /// <summary>从录播文件抽取 [startMs, endMs] 音频并转码写入输出流；抽取失败（未写出任何字节）抛 <see cref="AudioClipFailedException"/>。</summary>
-    Task ExtractAsync(string fullPath, long startMs, long endMs, Stream output, CancellationToken ct);
+    /// <summary>从录播文件抽取 [startMs, endMs] 音频并按 <paramref name="format"/> 转码写入输出流；抽取失败（未写出任何字节）抛 <see cref="AudioClipFailedException"/>。</summary>
+    Task ExtractAsync(string fullPath, long startMs, long endMs, AudioClipFormat format, Stream output, CancellationToken ct);
 }
 
 /// <summary>音频片段抽取失败（ffmpeg 非零退出且未写出任何字节）。</summary>
@@ -73,10 +109,11 @@ public sealed class AudioClipExtractor(
     Mp3EncoderSupport mp3Support,
     ILogger<AudioClipExtractor> logger) : IAudioClipExtractor
 {
-    public string ContentType => mp3Support.Available ? "audio/mpeg" : "audio/wav";
+    public string ContentType(AudioClipFormat format) =>
+        ResolveFormat(format) == AudioClipFormat.Mp3 ? "audio/mpeg" : "audio/wav";
 
     /// <summary>ffmpeg 参数构造（纯函数口径，供单测断言顺序与降级形态）。</summary>
-    public IReadOnlyList<string> BuildArguments(string fullPath, long startMs, long endMs)
+    public IReadOnlyList<string> BuildArguments(string fullPath, long startMs, long endMs, AudioClipFormat format)
     {
         var args = new List<string>
         {
@@ -97,13 +134,13 @@ public sealed class AudioClipExtractor(
             "44100",
         };
 
-        if (mp3Support.Available)
+        if (ResolveFormat(format) == AudioClipFormat.Mp3)
         {
             args.AddRange(["-b:a", "96k", "-f", "mp3"]);
         }
         else
         {
-            // libmp3lame 缺失：降级 wav，接口语义与参数不变
+            // 显式 wav，或 mp3 请求遇 libmp3lame 缺失时降级 wav，接口语义与参数不变
             args.AddRange(["-f", "wav"]);
         }
 
@@ -111,9 +148,14 @@ public sealed class AudioClipExtractor(
         return args;
     }
 
-    public async Task ExtractAsync(string fullPath, long startMs, long endMs, Stream output, CancellationToken ct)
+    /// <summary>实际输出格式：请求 mp3 但无 libmp3lame 编码能力时降级 wav；wav 恒为 wav。</summary>
+    private AudioClipFormat ResolveFormat(AudioClipFormat format) =>
+        format == AudioClipFormat.Mp3 && !mp3Support.Available ? AudioClipFormat.Wav : format;
+
+    public async Task ExtractAsync(
+        string fullPath, long startMs, long endMs, AudioClipFormat format, Stream output, CancellationToken ct)
     {
-        var command = new FfmpegCommand(options.FfmpegPath, BuildArguments(fullPath, startMs, endMs));
+        var command = new FfmpegCommand(options.FfmpegPath, BuildArguments(fullPath, startMs, endMs, format));
         await using var process = processFactory.Start(command);
 
         long written = 0;

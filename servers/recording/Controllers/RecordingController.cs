@@ -128,8 +128,13 @@ public sealed class RecordingController(
 
     [HttpGet("{roomId:long}/recordings/{fileName}/audio")]
     public async Task<IActionResult> DownloadRecordingAudioClip(
-        long roomId, string fileName, long? startMs, long? endMs, CancellationToken ct)
+        long roomId, string fileName, long? startMs, long? endMs, string? format, CancellationToken ct)
     {
+        if (!AudioClipFormats.TryParse(format, out var clipFormat))
+        {
+            return BadRequest(new { error = "format must be one of mp3, wav" });
+        }
+
         if (startMs is null || endMs is null)
         {
             return BadRequest(new { error = "startMs and endMs are required" });
@@ -160,12 +165,12 @@ public sealed class RecordingController(
             ?? throw new InvalidOperationException("IAudioClipExtractor is not configured");
 
         // 片段即最小播放单元：不支持 Range（忽略请求头，始终 200 整片段），每次现算不缓存
-        Response.ContentType = extractor.ContentType;
+        Response.ContentType = extractor.ContentType(clipFormat);
         Response.Headers.CacheControl = "no-store";
         try
         {
             // -ss/-t 输入 seek + pipe:1 直写响应体；endMs 超文件长度由 ffmpeg 自然输出到结尾
-            await extractor.ExtractAsync(fullPath, startMs.Value, endMs.Value, Response.Body, ct);
+            await extractor.ExtractAsync(fullPath, startMs.Value, endMs.Value, clipFormat, Response.Body, ct);
         }
         catch (AudioClipFailedException)
         {

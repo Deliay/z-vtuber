@@ -174,7 +174,8 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
     [Fact]
     public void BuildArguments_SeeksBeforeInputAndTargetsMp3()
     {
-        var args = CreateExtractor(new Mp3EncoderSupport()).BuildArguments("/data/1/clip.flv", 1000, 2500);
+        var args = CreateExtractor(new Mp3EncoderSupport())
+            .BuildArguments("/data/1/clip.flv", 1000, 2500, AudioClipFormat.Mp3);
 
         Assert.Equal(
             new[]
@@ -188,15 +189,57 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
     }
 
     [Fact]
+    public void BuildArguments_WavFormat_ForcesWavEvenWhenMp3Available()
+    {
+        var extractor = CreateExtractor(new Mp3EncoderSupport { Available = true });
+
+        var args = extractor.BuildArguments("/data/1/clip.flv", 0, 1000, AudioClipFormat.Wav);
+
+        Assert.Equal("wav", args[Array.IndexOf(args.ToArray(), "-f") + 1]);
+        Assert.DoesNotContain("-b:a", args);
+        Assert.Equal("audio/wav", extractor.ContentType(AudioClipFormat.Wav));
+    }
+
+    [Fact]
     public void BuildArguments_WithoutMp3Encoder_DegradesToWav()
     {
         var extractor = CreateExtractor(new Mp3EncoderSupport { Available = false });
 
-        var args = extractor.BuildArguments("/data/1/clip.flv", 0, 1000);
+        var args = extractor.BuildArguments("/data/1/clip.flv", 0, 1000, AudioClipFormat.Mp3);
 
         Assert.Equal("wav", args[Array.IndexOf(args.ToArray(), "-f") + 1]);
         Assert.DoesNotContain("-b:a", args);
-        Assert.Equal("audio/wav", extractor.ContentType);
+        Assert.Equal("audio/wav", extractor.ContentType(AudioClipFormat.Mp3));
+    }
+
+    [Fact]
+    public void ContentType_Mp3WithEncoder_ReturnsMpeg()
+    {
+        var extractor = CreateExtractor(new Mp3EncoderSupport { Available = true });
+
+        Assert.Equal("audio/mpeg", extractor.ContentType(AudioClipFormat.Mp3));
+    }
+
+    [Theory]
+    [InlineData(null, AudioClipFormat.Mp3)]
+    [InlineData("", AudioClipFormat.Mp3)]
+    [InlineData("mp3", AudioClipFormat.Mp3)]
+    [InlineData("MP3", AudioClipFormat.Mp3)]
+    [InlineData("wav", AudioClipFormat.Wav)]
+    [InlineData("WAV", AudioClipFormat.Wav)]
+    public void AudioClipFormats_TryParse_AcceptsKnownFormats(string? value, AudioClipFormat expected)
+    {
+        Assert.True(AudioClipFormats.TryParse(value, out var format));
+        Assert.Equal(expected, format);
+    }
+
+    [Theory]
+    [InlineData("ogg")]
+    [InlineData("flac")]
+    [InlineData("m4a")]
+    public void AudioClipFormats_TryParse_RejectsUnknownFormats(string value)
+    {
+        Assert.False(AudioClipFormats.TryParse(value, out _));
     }
 
     [Fact]
@@ -231,7 +274,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
         await CreateSourceAudioAsync(Path.Combine(RoomDir(701), "clip.flv"), 5);
 
         var controller = CreateController();
-        var result = await controller.DownloadRecordingAudioClip(701, "clip.flv", 1000, 2500, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(701, "clip.flv", 1000, 2500, null, CancellationToken.None);
 
         Assert.IsType<EmptyResult>(result);
         Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
@@ -240,6 +283,41 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
 
         var duration = await ProbeBodyDurationAsync(controller.HttpContext, "clip.mp3");
         Assert.InRange(duration, 1.2, 1.8);
+    }
+
+    [Fact]
+    public async Task AudioClip_WavFormat_Returns200WavWithClipDuration()
+    {
+        if (!FfmpegAvailable() || !FfprobeAvailable())
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(RoomDir(714));
+        await CreateSourceAudioAsync(Path.Combine(RoomDir(714), "clip.flv"), 5);
+
+        var controller = CreateController();
+        var result = await controller.DownloadRecordingAudioClip(
+            714, "clip.flv", 1000, 2500, "wav", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+        Assert.Equal("audio/wav", controller.Response.ContentType);
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl.ToString());
+
+        var duration = await ProbeBodyDurationAsync(controller.HttpContext, "clip.wav");
+        Assert.InRange(duration, 1.2, 1.8);
+    }
+
+    [Fact]
+    public async Task AudioClip_InvalidFormat_Returns400()
+    {
+        var controller = CreateController();
+
+        var result = await controller.DownloadRecordingAudioClip(
+            715, "clip.flv", 0, 1000, "ogg", CancellationToken.None);
+
+        Assert.Contains("format", ErrorOf(result));
     }
 
     [Fact]
@@ -254,7 +332,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
         await CreateSourceAudioAsync(Path.Combine(RoomDir(702), "clip.flv"), 5);
 
         var controller = CreateController();
-        var result = await controller.DownloadRecordingAudioClip(702, "clip.flv", 4000, 60000, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(702, "clip.flv", 4000, 60000, null, CancellationToken.None);
 
         Assert.IsType<EmptyResult>(result);
         Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
@@ -277,7 +355,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
 
         var controller = CreateController();
         controller.HttpContext.Request.Headers.Range = "bytes=0-99";
-        var result = await controller.DownloadRecordingAudioClip(703, "clip.flv", 1000, 2500, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(703, "clip.flv", 1000, 2500, null, CancellationToken.None);
 
         Assert.IsType<EmptyResult>(result);
         Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
@@ -302,7 +380,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
             RandomNumberGenerator.GetBytes(4096));
 
         var controller = CreateController();
-        var result = await controller.DownloadRecordingAudioClip(704, "corrupt.flv", 0, 1000, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(704, "corrupt.flv", 0, 1000, null, CancellationToken.None);
 
         var status = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status500InternalServerError, status.StatusCode);
@@ -319,7 +397,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
     {
         var controller = CreateController();
 
-        var result = await controller.DownloadRecordingAudioClip(705, "clip.flv", startMs, endMs, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(705, "clip.flv", startMs, endMs, null, CancellationToken.None);
 
         Assert.NotEmpty(ErrorOf(result));
     }
@@ -329,7 +407,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
     {
         var controller = CreateController();
 
-        var result = await controller.DownloadRecordingAudioClip(706, "clip.flv", -1, 1000, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(706, "clip.flv", -1, 1000, null, CancellationToken.None);
 
         Assert.NotEmpty(ErrorOf(result));
     }
@@ -342,7 +420,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
     {
         var controller = CreateController();
 
-        var result = await controller.DownloadRecordingAudioClip(707, "clip.flv", startMs, endMs, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(707, "clip.flv", startMs, endMs, null, CancellationToken.None);
 
         Assert.NotEmpty(ErrorOf(result));
     }
@@ -353,7 +431,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
         var controller = CreateController();
 
         // 默认 AudioClipMaxDurationMs = 300000
-        var result = await controller.DownloadRecordingAudioClip(708, "clip.flv", 0, 300001, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(708, "clip.flv", 0, 300001, null, CancellationToken.None);
 
         Assert.NotEmpty(ErrorOf(result));
     }
@@ -363,7 +441,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
     {
         var controller = CreateController(maxDurationMs: 1000);
 
-        var result = await controller.DownloadRecordingAudioClip(709, "clip.flv", 0, 1500, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(709, "clip.flv", 0, 1500, null, CancellationToken.None);
 
         Assert.NotEmpty(ErrorOf(result));
     }
@@ -373,7 +451,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
     {
         var controller = CreateController();
 
-        var result = await controller.DownloadRecordingAudioClip(710, "missing.flv", 0, 1000, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(710, "missing.flv", 0, 1000, null, CancellationToken.None);
 
         Assert.IsType<NotFoundResult>(result);
     }
@@ -386,7 +464,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
         await SeedRecordingAsync(711, "active.flv");
 
         var controller = CreateController();
-        var result = await controller.DownloadRecordingAudioClip(711, "active.flv", 0, 1000, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(711, "active.flv", 0, 1000, null, CancellationToken.None);
 
         Assert.Contains("recording", ErrorOf(result));
     }
@@ -399,7 +477,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
     {
         var controller = CreateController();
 
-        var result = await controller.DownloadRecordingAudioClip(712, fileName, 0, 1000, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(712, fileName, 0, 1000, null, CancellationToken.None);
 
         Assert.IsType<BadRequestObjectResult>(result);
     }
@@ -410,7 +488,7 @@ public class RecordingAudioClipTests(MongoDbFixture fixture) : IClassFixture<Mon
         var controller = CreateController();
 
         // 平文件名形式的 ".."：通过 IsSafeFileName，由解析后前缀校验兜底 404
-        var result = await controller.DownloadRecordingAudioClip(713, "..", 0, 1000, CancellationToken.None);
+        var result = await controller.DownloadRecordingAudioClip(713, "..", 0, 1000, null, CancellationToken.None);
 
         Assert.IsType<NotFoundResult>(result);
     }
