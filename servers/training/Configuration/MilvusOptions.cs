@@ -30,10 +30,6 @@ public sealed class MilvusOptions
     [Required]
     public string EmotionCollection { get; set; } = "item_emotion_vectors";
 
-    /// <summary>文本向量检索的候选数（top-k，用于逐候选兜底；实际返回按相似度排序）。</summary>
-    [Range(1, 1000)]
-    public int SearchLimit { get; set; } = 16;
-
     /// <summary>Milvus 请求超时（秒）。</summary>
     [Range(1, 3600)]
     public int RequestTimeoutSeconds { get; set; } = 30;
