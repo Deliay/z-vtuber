@@ -43,6 +43,29 @@
 - `refactor:` 重构
 - `test:` 测试变更
 
+## 测试性能基线与超时护栏
+
+测试是本项目的核心质量保障，**单个测试用例执行耗时不得超过 5 秒**（经评审登记在 `tests/Z.Vtuber.Tests/TimeoutExceptions.json` 的例外除外）。新增慢用例应被自动识别。
+
+**跑测口径**（本地与提交前验证统一走这套，见「测试运行性能优化」PRD/Plan）：
+
+```bash
+# 1. 跑测试并产出 trx（逐用例耗时）
+dotnet test tests/Z.Vtuber.Tests --logger "trx;LogFileName=tests.trx"
+
+# 2. 输出耗时排行 + 5 秒超时护栏校验（>5s 未登记用例 → 非零退出）
+dotnet run --project tests/Z.Vtuber.TestReport -- \
+  tests/Z.Vtuber.Tests/TestResults/tests.trx \
+  --check \
+  --exceptions tests/Z.Vtuber.Tests/TimeoutExceptions.json \
+  --top 30
+```
+
+- 报告工具 `tests/Z.Vtuber.TestReport`（仅 BCL，零新增依赖）解析 trx，按耗时降序输出用例清单并标注 `>5s`；`--check` 时对超过 5 秒且未登记的用例以非零退出码拦截。
+- 护栏为**事后校验**，对测试总时长零影响。
+- 例外登记：仅当用例确需真实时间流逝（如锁租约过期、调度器定时）且无法压缩到 5 秒内时，在 `TimeoutExceptions.json` 追加 `{ "test": "类全名.方法名", "reason": "理由", "since": "yyyy-MM-dd" }`；**逐条理由、数量最小化，随代码评审**。
+- 慢测试根本治理：Mongo 集成测试共享夹具（`MongoDbFixture`）只在建库时初始化一次索引、用例间以 `DeleteMany` 清数据；等待异步副作用一律用 `TestWait.UntilAsync` 轮询断言，避免硬编码 `Task.Delay`。
+
 ## 文档引用
 
 - 公共规范：`docs/engineering/common-rules.md`

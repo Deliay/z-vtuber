@@ -54,5 +54,6 @@ crawler 通过 `ICookieServiceClient`（实现 `CookieServiceClient`）HTTP 客�
 
 ## 开发流程
 
+- 跑测口径：遵循 `docs/engineering/common-rules.md`「测试性能基线与超时护栏」小节（单用例 ≤5s；报告工具 `tests/Z.Vtuber.TestReport --check` 护栏）
 - TDD 开发（单元测试：`tests/Z.Vtuber.Tests`，Testcontainers MongoDB + Redis 集成测试）
 - 参考：`docs/engineering/common-rules.md`、`docs/engineering/backend-rules.md`
