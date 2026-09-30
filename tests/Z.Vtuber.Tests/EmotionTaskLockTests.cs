@@ -52,10 +52,11 @@ public class EmotionTaskLockTests(RedisFixture fixture)
 
         await using var handle = await provider.TryAcquireAsync(taskId);
 
-        await Task.Delay(700);
+        // 1s TTL 语义：在到期前续期，并等到原到期点之后仍持有（续期已顺延）。
+        await Task.Delay(400);
         Assert.True(await handle!.RenewAsync());
 
-        await Task.Delay(700);
+        await Task.Delay(650);
         Assert.True(await handle.CheckOwnershipAsync());
     }
 
@@ -69,7 +70,12 @@ public class EmotionTaskLockTests(RedisFixture fixture)
         await using var handleA = await providerA.TryAcquireAsync(taskId);
         Assert.NotNull(handleA);
 
-        await Task.Delay(1500);
+        // 轮询直到 1s TTL 自然过期（不硬等固定时长，过期即可接管）。
+        await TestWait.UntilAsync(
+            async () => !await providerA.IsHeldAsync(taskId),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(50),
+            "lock TTL should expire");
 
         var handleB = await providerB.TryAcquireAsync(taskId);
         Assert.NotNull(handleB);
@@ -143,6 +149,8 @@ public class EmotionTaskLockTests(RedisFixture fixture)
         // 指向不可达端口：Redis 抖动不得把在跑任务打成 FAILED，而应按失锁处理；IsHeld 保守按持有避免双跑
         var config = ConfigurationOptions.Parse("127.0.0.1:1");
         config.ConnectTimeout = 200;
+        config.AsyncTimeout = 200;
+        config.SyncTimeout = 200;
         config.ConnectRetry = 1;
         config.AbortOnConnectFail = false;
         using var dead = await ConnectionMultiplexer.ConnectAsync(config);
@@ -169,6 +177,8 @@ public class EmotionTaskLockTests(RedisFixture fixture)
         // Redis 抖动时 RenewAsync 必须自行兜底（置 Lost、返回 false），不得把异常抛进续期循环导致循环终止
         var config = ConfigurationOptions.Parse("127.0.0.1:1");
         config.ConnectTimeout = 200;
+        config.AsyncTimeout = 200;
+        config.SyncTimeout = 200;
         config.ConnectRetry = 1;
         config.AbortOnConnectFail = false;
         using var dead = await ConnectionMultiplexer.ConnectAsync(config);

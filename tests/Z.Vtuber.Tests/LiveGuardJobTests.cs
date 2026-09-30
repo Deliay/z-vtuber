@@ -106,18 +106,8 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
             fetcher);
     }
 
-    private static async Task WaitForAsync(Func<Task<bool>> condition)
-    {
-        for (var i = 0; i < 100; i++)
-        {
-            if (await condition())
-            {
-                return;
-            }
-            await Task.Delay(20);
-        }
-        Assert.Fail("condition not met within timeout");
-    }
+    private static Task WaitForAsync(Func<Task<bool>> condition)
+        => TestWait.UntilAsync(condition, TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(20));
 
     [Fact]
     public async Task Run_BeforeDailyHour_DoesNotCrawl()
@@ -234,9 +224,13 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
 
         await subscription.SubscribeAsync(Mid, SubscriptionType.Danmaku);
 
-        await Task.Delay(300);
-
         var guardRepo = new LiveGuardRepository(fixture.Database);
+        // 非 Guard 订阅不得触发补抓：观察窗内轮询确认始终无快照。
+        await TestWait.NeverAsync(
+            async () => (await guardRepo.GetMidsWithSnapshotAsync("2026-08-31")).Count > 0,
+            TimeSpan.FromMilliseconds(500),
+            TimeSpan.FromMilliseconds(25),
+            "non-guard subscription must not crawl");
         Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-08-31"));
     }
 
@@ -304,7 +298,11 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
         var job = CreateJob(fetcher, subscription: subscription, timeProvider: new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 2)));
 
         await subscription.SubscribeAsync(Mid, SubscriptionType.Guard);
-        await Task.Delay(300);
+        await TestWait.NeverAsync(
+            () => fetchCalls > 0,
+            TimeSpan.FromMilliseconds(500),
+            TimeSpan.FromMilliseconds(25),
+            "existing yesterday snapshot must skip immediate crawl");
 
         Assert.Equal(0, fetchCalls);
     }
@@ -322,9 +320,14 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
         var job = CreateJob(fetcher, subscription: subscription, timeProvider: new FakeTimeProvider(BeijingDateTime(2026, 9, 1, 4)));
 
         await subscription.SubscribeAsync(Mid, SubscriptionType.Guard);
-        await Task.Delay(300);
 
         var guardRepo = new LiveGuardRepository(fixture.Database);
+        await TestWait.NeverAsync(
+            async () => (await guardRepo.GetMidsWithSnapshotAsync("2026-08-31")).Count > 0
+                || (await guardRepo.GetMidsWithSnapshotAsync("2026-09-01")).Count > 0,
+            TimeSpan.FromMilliseconds(500),
+            TimeSpan.FromMilliseconds(25),
+            "after catch-up window before daily hour must not crawl");
         Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-08-31"));
         Assert.Empty(await guardRepo.GetMidsWithSnapshotAsync("2026-09-01"));
     }

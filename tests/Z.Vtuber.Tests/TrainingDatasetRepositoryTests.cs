@@ -109,7 +109,7 @@ public class TrainingDatasetRepositoryTests(MongoDbFixture fixture) : IClassFixt
         var id = (await repository.InsertAsync(Dataset("旧名字"))).Id;
         var before = (await repository.ListAsync(AudioType)).Single().UpdatedAt;
 
-        await Task.Delay(15);
+        await TestWait.UntilAsync(() => DateTime.UtcNow >= before.AddMilliseconds(2), TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(2));
         var renamed = await repository.RenameAsync(id, "  新名字  ");
 
         Assert.True(renamed);

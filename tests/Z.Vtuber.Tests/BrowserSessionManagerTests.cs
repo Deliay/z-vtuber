@@ -86,16 +86,21 @@ public sealed class BrowserSessionManagerTests
     [Fact]
     public async Task ExtractCookies_WhenUsedAgainDuringIdle_DefersClose()
     {
-        var (manager, harness) = Create(new BilibiliCookiePlatformProfile(), idleSeconds: 2);
+        var (manager, harness) = Create(new BilibiliCookiePlatformProfile(), idleSeconds: 1);
         await using (manager)
         {
             await manager.ExtractCookiesAsync("acc-1");
             var context = harness.Contexts["acc-1"];
 
-            await Task.Delay(150);
+            await Task.Delay(400);
             await manager.ExtractCookiesAsync("acc-1");
 
-            await Task.Delay(300);
+            // 原始 1s 到期点已过，但复用已顺延空闲计时：不得关闭。
+            await TestWait.NeverAsync(
+                () => context.IsClosed,
+                TimeSpan.FromMilliseconds(700),
+                TimeSpan.FromMilliseconds(25),
+                "idle close must be deferred after reuse");
             Assert.False(context.IsClosed);
 
             await TestWait.UntilAsync(() => context.IsClosed, TimeSpan.FromSeconds(5));
@@ -117,7 +122,12 @@ public sealed class BrowserSessionManagerTests
             Assert.True(context.IsClosed);
             Assert.Equal(1, context.CloseCount);
 
-            await Task.Delay(800);
+            // 覆盖原 1s 空闲窗口，确认删除后空闲定时器已被取消、不会二次关闭。
+            await TestWait.NeverAsync(
+                () => context.CloseCount > 1,
+                TimeSpan.FromMilliseconds(1100),
+                TimeSpan.FromMilliseconds(25),
+                "idle timer must be cancelled after delete");
             Assert.Equal(1, context.CloseCount);
         }
     }

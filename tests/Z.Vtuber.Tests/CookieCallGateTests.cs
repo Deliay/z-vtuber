@@ -5,14 +5,20 @@ namespace Z.Vtuber.Tests;
 
 public class CookieCallGateTests
 {
-    private static CookieCallGate CreateGate() => new(new FakeDistributedLockProvider());
+    private static CookieCallGate CreateGate(FakeDistributedLockProvider? provider = null)
+        => new(provider ?? new FakeDistributedLockProvider());
 
     [Fact]
     public async Task AcquireAsync_ConcurrentCallsForSameCookie_AreSerialized()
     {
-        var gate = CreateGate();
+        var provider = new FakeDistributedLockProvider();
+        var gate = CreateGate(provider);
         var order = new List<int>();
         var holder = await gate.AcquireAsync("cookie1");
+
+        // 以「开始等待」信号替代固定等待：确认 waiter 已进入阻塞再断言未完成。
+        var waitStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.LockWaitStarted = _ => waitStarted.TrySetResult();
 
         var waiterTask = Task.Run(async () =>
         {
@@ -20,7 +26,7 @@ public class CookieCallGateTests
             order.Add(2);
         });
 
-        await Task.Delay(100);
+        await waitStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.False(waiterTask.IsCompleted);
 
         await holder.DisposeAsync();
@@ -39,14 +45,12 @@ public class CookieCallGateTests
         {
             await using var _ = await gate.AcquireAsync("cookie1");
             order.Add(1);
-            await Task.Delay(50);
         });
 
         var t2 = Task.Run(async () =>
         {
             await using var _ = await gate.AcquireAsync("cookie2");
             order.Add(2);
-            await Task.Delay(50);
         });
 
         await Task.WhenAll(t1, t2);
@@ -89,11 +93,22 @@ public class CookieCallGateTests
     [Fact]
     public async Task AcquireAsync_SerializationGuarantee()
     {
-        var gate = CreateGate();
+        var provider = new FakeDistributedLockProvider();
+        var gate = CreateGate(provider);
         var concurrentCount = 0;
         var maxConcurrent = 0;
 
         var holder = await gate.AcquireAsync("cookie1");
+
+        var started = 0;
+        var allWaiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.LockWaitStarted = _ =>
+        {
+            if (Interlocked.Increment(ref started) >= 4)
+            {
+                allWaiting.TrySetResult();
+            }
+        };
 
         var tasks = Enumerable.Range(0, 4).Select(_ => Task.Run(async () =>
         {
@@ -101,11 +116,10 @@ public class CookieCallGateTests
             var c = Interlocked.Increment(ref concurrentCount);
             var prev = Interlocked.CompareExchange(ref maxConcurrent, c, c);
             if (c > prev) Interlocked.CompareExchange(ref maxConcurrent, c, prev);
-            await Task.Delay(10);
             Interlocked.Decrement(ref concurrentCount);
         })).ToArray();
 
-        await Task.Delay(50);
+        await allWaiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await holder.DisposeAsync();
         await Task.WhenAll(tasks);
 

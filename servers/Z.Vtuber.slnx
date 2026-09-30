@@ -21,6 +21,7 @@
 
   <Folder Name="/tests/">
     <Project Path="../tests/Z.Vtuber.Tests/Z.Vtuber.Tests.csproj" />
+    <Project Path="../tests/Z.Vtuber.TestReport/Z.Vtuber.TestReport.csproj" />
   </Folder>
 
   <Folder Name="/infra/">

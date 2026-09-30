@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Cookie.Configuration;
 using Z.Vtuber.Cookie.Locking;
 
@@ -53,11 +54,16 @@ public class RedisDistributedLockProviderTests(RedisFixture redis)
         var handle = await provider.AcquireAsync("ttl-lock", TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(1));
         Assert.NotNull(handle);
 
-        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        // 轮询直到 200ms TTL 自然过期后可再次获取（不硬等固定时长）。
+        IDistributedLockHandle? handle2 = null;
+        await TestWait.UntilAsync(
+            async () => (handle2 = await provider.AcquireAsync("ttl-lock", TimeSpan.FromSeconds(30), TimeSpan.FromMilliseconds(50))) is not null,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromMilliseconds(25),
+            "ttl lock should expire and be re-acquirable");
 
-        var handle2 = await provider.AcquireAsync("ttl-lock", TimeSpan.FromSeconds(30), TimeSpan.FromMilliseconds(200));
         Assert.NotNull(handle2);
-        await handle2.DisposeAsync();
+        await handle2!.DisposeAsync();
     }
 
     [Fact]
