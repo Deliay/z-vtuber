@@ -32,8 +32,10 @@ public sealed class MongoDbFixture : IAsyncLifetime
 
     public IMongoDatabase Database { get; private set; } = null!;
 
-    /// <summary>fixture 清理覆盖的全部集合（7 域并集）。</summary>
-    public static readonly string[] AllCollections =
+    /// <summary>fixture 清理覆盖的全部集合（7 域并集），只读视图。</summary>
+    public static IReadOnlyList<string> AllCollections => AllCollectionsCore;
+
+    private static readonly string[] AllCollectionsCore =
     [
         CookieCollectionNames.Cookies,
         CookieCollectionNames.CookieSessions,
@@ -95,12 +97,12 @@ public sealed class MongoDbFixture : IAsyncLifetime
     }
 
     /// <summary>清空全部集合的数据（保留集合与索引）。</summary>
-    public Task ResetAsync() => ResetAsync(AllCollections);
+    public Task ResetAsync() => ResetAsync(AllCollectionsCore);
 
     /// <summary>按集合裁剪清理面：仅清空指定集合的数据。</summary>
     public async Task ResetAsync(params string[] collections)
     {
-        var targets = collections.Length == 0 ? AllCollections : collections;
+        var targets = collections.Length == 0 ? AllCollectionsCore : collections;
 
         // 并发下发删除，避免 28 次串行往返的固定开销。
         await Task.WhenAll(targets.Select(ClearAsync));

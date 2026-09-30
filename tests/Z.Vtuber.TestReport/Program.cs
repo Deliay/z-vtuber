@@ -55,9 +55,17 @@ public static class TestReportCli
                 return 0;
             }
 
-            var exceptions = exceptionsPath is not null && File.Exists(exceptionsPath)
-                ? TimeoutExceptionList.Load(exceptionsPath)
-                : TimeoutExceptionList.Empty;
+            var exceptions = TimeoutExceptionList.Empty;
+            if (exceptionsPath is not null)
+            {
+                if (!File.Exists(exceptionsPath))
+                {
+                    stderr.WriteLine($"error: exceptions file not found: {exceptionsPath}");
+                    return 2;
+                }
+
+                exceptions = TimeoutExceptionList.Load(exceptionsPath);
+            }
 
             var result = TimeoutEvaluator.Evaluate(report, exceptions, Threshold);
 

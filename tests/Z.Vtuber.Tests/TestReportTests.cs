@@ -273,6 +273,20 @@ public sealed class TestReportTests
     }
 
     [Fact]
+    public void Run_CheckWithMissingExceptionsFile_ReturnsNonZero()
+    {
+        var trx = WriteTempFile(SampleTrx, ".trx");
+        var missing = Path.Combine(Path.GetTempPath(), $"no-exceptions-{Guid.NewGuid():N}.json");
+        var outWriter = new StringWriter();
+        var errWriter = new StringWriter();
+
+        var exitCode = TestReportCli.Run([trx, "--check", "--exceptions", missing], outWriter, errWriter);
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("exceptions file not found", errWriter.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Run_MissingTrxFile_ReturnsNonZeroWithError()
     {
         var missing = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.trx");
