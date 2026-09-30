@@ -52,7 +52,7 @@ public sealed class RecordingAudioClient : IRecordingAudioClient
         }
 
         // recording 片段端点要求 endMs 必填：空则按兜底时长补齐（Plan 偏差 1）。
-        var effectiveEndMs = endMs ?? startMs + _aiOptions.AudioClipDefaultDurationMs;
+        var effectiveEndMs = endMs ?? (startMs + _aiOptions.AudioClipDefaultDurationMs);
         var file = Uri.EscapeDataString(parsed.File);
         var relative = $"api/{parsed.RoomId}/recordings/{file}/audio?startMs={startMs}&endMs={effectiveEndMs}";
 
