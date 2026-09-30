@@ -53,7 +53,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         StubTtsClient tts, TtsOptions? ttsOptions = null, SynthesizeOptions? synthesizeOptions = null)
     {
         var synthesize = new SynthesizeService(
-            Items, Providers, new ApiStubChatFactory(), audio, store, embedding, tts,
+            Items, Providers, new ApiStubChatFactory(), audio, store, tts,
             synthesizeOptions ?? new SynthesizeOptions(),
             NullLogger<SynthesizeService>.Instance);
         var vectors = new VectorSyncService(Items, store, embedding, NullLogger<VectorSyncService>.Instance);
@@ -129,7 +129,6 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         ObjectId datasetId, TrainingDatasetItemRecord speaker)
     {
         var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [1f, 0f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
         return (store, audio, new StubTtsClient { Bytes = [7, 7] });
@@ -233,17 +232,24 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     }
 
     [Fact]
-    public async Task Synthesize_EmbeddingUnavailable_Returns502()
+    public async Task Synthesize_PicksMostCharacterSimilarSpeaker()
     {
         var datasetId = await SeedDatasetAsync();
-        var speaker = await SeedItemAsync(datasetId, "你好");
+        var similar = await SeedItemAsync(datasetId, "今天天气很好");
+        var different = await SeedItemAsync(datasetId, "完全无关的长文本内容");
         var model = await SeedModelAsync();
-        var (store, audio, tts) = Arrange(datasetId, speaker);
+        var store = new InMemoryVectorStore();
+        var audio = new StubAudioClient();
+        audio.Clips[similar.AudioUri] = new AudioClip([1], "audio/mpeg");
+        audio.Clips[different.AudioUri] = new AudioClip([2], "audio/mpeg");
+        var tts = new StubTtsClient { Bytes = [7, 7] };
+        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
 
-        var result = await Create(store, new FakeEmbeddingClient { Throw = new EmbeddingUnavailableException("down") }, audio, tts)
-            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, model.Id.ToString()));
+        var result = await controller.Synthesize(
+            datasetId.ToString(), new TrainingSynthesizeRequest("今天天气真好", null, model.Id.ToString()), "llm");
 
-        Assert.Equal("embedding service unavailable", ErrorOf(result, StatusCodes.Status502BadGateway));
+        Assert.IsType<FileContentResult>(result);
+        Assert.Equal(similar.AudioKey, Header(controller, "X-Speaker-Audio-Key"));
     }
 
     [Fact]
@@ -454,10 +460,10 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         Assert.Equal("embedding service unavailable", Assert.IsType<ErrorResponse>(objectResult.Value).Error);
     }
 
-    // ===== 真 Milvus 链路（Testcontainers milvusdb/milvus）：rebuild 重建 + 检索 top-1 命中 speaker =====
+    // ===== 真 Milvus 链路（Testcontainers milvusdb/milvus）：rebuild 重建 + 字符相似 top-1 命中 speaker =====
 
     [Fact]
-    public async Task Synthesize_RealMilvus_RebuildThenTop1Search_PicksSpeaker()
+    public async Task Synthesize_RealMilvus_RebuildThenSynthesize_PicksCharSimilarSpeaker()
     {
         var datasetId = await SeedDatasetAsync();
         var target = await SeedItemAsync(datasetId, "target");
@@ -467,7 +473,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var store = milvus.CreateStore(dimensions: 3);
         await store.EnsureCollectionsAsync();
 
-        // 文本→向量：target/query → [1,0,0]，other → [0,1,0]（真检索须命中 target）
+        // 文本→向量（rebuild 仍写文本集合，但音色匹配已改走字符相似）
         var embedding = new FakeEmbeddingClient
         {
             Provider = t => t.Contains("target") ? [1f, 0f, 0f] : [0f, 1f, 0f],
@@ -482,7 +488,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var sync = new VectorSyncService(Items, store, embedding, NullLogger<VectorSyncService>.Instance);
         await sync.RebuildAsync(datasetId);
 
-        // 同一真向量库跑合成：query 向量 [1,0,0] 检索 top-1 命中 target（而非 other）
+        // 字符相似：query "target query" 与 target（编辑距离最小）比 other 更近 → 命中 target
         var controller = Create(store, embedding, audio, tts);
         var result = await controller.Synthesize(
             datasetId.ToString(), new TrainingSynthesizeRequest("target query", null, model.Id.ToString()));
