@@ -367,7 +367,7 @@ export interface paths {
         put?: never;
         /**
          * 音频生成（数据集语音合成）
-         * @description 以数据集为参考池：输入文本向量化后匹配音色参考（speaker_prompt），情感向量匹配情绪参考 （emo_prompt/emo_vector/emo_text/emo_alpha），调用内网 index-tts-api 合成并返回 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。
+         * @description 以数据集为参考池：输入文本向量化后匹配音色参考（speaker_prompt），情感向量匹配情绪参考 （emo_prompt/emo_vector/emo_text/emo_alpha），调用内网 index-tts-api 合成并返回 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。 emotionMode=llm（默认）用配置的可用模型生成情感向量后检索；emotionMode=dataset 跳过大模型， 直接使用文本向量命中条目自身的 Extensions.emotion（无则沿音色候选向下找，全无则降级中性）， 且完全跳过 modelId/模型解析。
          */
         post: operations["synthesizeTrainingDataset"];
         delete?: never;
@@ -684,6 +684,8 @@ export interface components {
         EmotionStatusQuery: string;
         /** @description 返回条数上限，默认 100、最大 500 */
         EmotionLimitQuery: number;
+        /** @description 情绪参考生成模式（大小写不敏感）：llm（默认）用配置的可用模型生成情感向量后向量匹配； dataset 跳过大模型，直接使用文本向量命中条目自身的 Extensions.emotion（无则沿音色候选向下找， 全无则降级中性），且完全跳过 modelId/模型解析。 */
+        EmotionModeQuery: "llm" | "dataset";
     };
     requestBodies: never;
     headers: never;
@@ -1613,7 +1615,10 @@ export interface operations {
     };
     synthesizeTrainingDataset: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 情绪参考生成模式（大小写不敏感）：llm（默认）用配置的可用模型生成情感向量后向量匹配； dataset 跳过大模型，直接使用文本向量命中条目自身的 Extensions.emotion（无则沿音色候选向下找， 全无则降级中性），且完全跳过 modelId/模型解析。 */
+                emotionMode?: components["parameters"]["EmotionModeQuery"];
+            };
             header?: never;
             path: {
                 /** @description 数据集 id（ObjectId） */
@@ -1640,7 +1645,7 @@ export interface operations {
                     "audio/wav": string;
                 };
             };
-            /** @description {"error": "text is required"/"invalid lang"/"model disabled"} */
+            /** @description {"error": "text is required"/"invalid lang"/"invalid emotion mode"/"model disabled"} */
             400: {
                 headers: {
                     [name: string]: unknown;

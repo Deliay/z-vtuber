@@ -621,9 +621,13 @@ paths:
         以数据集为参考池：输入文本向量化后匹配音色参考（speaker_prompt），情感向量匹配情绪参考
         （emo_prompt/emo_vector/emo_text/emo_alpha），调用内网 index-tts-api 合成并返回 audio/wav。
         命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。
+        emotionMode=llm（默认）用配置的可用模型生成情感向量后检索；emotionMode=dataset 跳过大模型，
+        直接使用文本向量命中条目自身的 Extensions.emotion（无则沿音色候选向下找，全无则降级中性），
+        且完全跳过 modelId/模型解析。
       operationId: synthesizeTrainingDataset
       parameters:
         - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/EmotionModeQuery"
       requestBody:
         required: true
         content:
@@ -648,7 +652,7 @@ paths:
                 type: string
                 format: binary
         "400":
-          description: '{"error": "text is required"/"invalid lang"/"model disabled"}'
+          description: '{"error": "text is required"/"invalid lang"/"invalid emotion mode"/"model disabled"}'
           content:
             application/json:
               schema:
@@ -788,6 +792,18 @@ components:
         minimum: 1
         maximum: 500
         default: 100
+    EmotionModeQuery:
+      name: emotionMode
+      in: query
+      required: false
+      description: >-
+        情绪参考生成模式（大小写不敏感）：llm（默认）用配置的可用模型生成情感向量后向量匹配；
+        dataset 跳过大模型，直接使用文本向量命中条目自身的 Extensions.emotion（无则沿音色候选向下找，
+        全无则降级中性），且完全跳过 modelId/模型解析。
+      schema:
+        type: string
+        enum: [llm, dataset]
+        default: llm
   schemas:
     ErrorResponse:
       type: object

@@ -77,7 +77,8 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         return record.Id;
     }
 
-    private async Task<TrainingDatasetItemRecord> SeedItemAsync(ObjectId datasetId, string text)
+    private async Task<TrainingDatasetItemRecord> SeedItemAsync(
+        ObjectId datasetId, string text, EmotionResult? emotion = null)
     {
         var now = DateTime.UtcNow;
         var item = new TrainingDatasetItemRecord
@@ -90,6 +91,9 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
             StartMs = 0,
             EndMs = 1000,
             Text = text,
+            Extensions = emotion is null
+                ? null
+                : new BsonDocument { { "emotion", TrainingMapping.ToEmotionDocument(emotion) } },
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -269,6 +273,66 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
             .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, model.Id.ToString()));
 
         Assert.Equal("tts service unavailable", ErrorOf(result, StatusCodes.Status502BadGateway));
+    }
+
+    [Fact]
+    public async Task Synthesize_DatasetMode_SkipsModelResolution_AndUsesMatchedItemEmotion()
+    {
+        var datasetId = await SeedDatasetAsync();
+        var item = await SeedItemAsync(
+            datasetId, "你好", emotion: new EmotionResult(5, "开心", 0.9, 0, 0, 0, 0, 0, 0, 0));
+        var store = new InMemoryVectorStore();
+        store.SeedText(datasetId, item.Id, item.AudioKey, [1f, 0f, 0f]);
+        var audio = new StubAudioClient();
+        audio.Clips[item.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
+        var tts = new StubTtsClient { Bytes = [7, 7] };
+        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+
+        // dataset 模式 + 非法 modelId：跳过模型解析，不应返回 404 model not found
+        var result = await controller.Synthesize(
+            datasetId.ToString(),
+            new TrainingSynthesizeRequest("文本", null, ObjectId.GenerateNewId().ToString()),
+            "dataset");
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("audio/wav", file.ContentType);
+        Assert.Equal([7, 7], file.FileContents);
+        Assert.Equal(item.AudioKey, Header(controller, "X-Speaker-Audio-Key"));
+        Assert.Equal(item.AudioKey, Header(controller, "X-Emo-Audio-Key"));
+        var request = Assert.Single(tts.Requests);
+        Assert.NotNull(request.Emotion);
+        Assert.Equal(0.9, request.Emotion!.Emotion.Happy, 3);
+    }
+
+    [Fact]
+    public async Task Synthesize_InvalidEmotionMode_Returns400()
+    {
+        var datasetId = await SeedDatasetAsync();
+
+        var result = await Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient())
+            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null), "bogus");
+
+        Assert.Equal("invalid emotion mode", ErrorOf(result, StatusCodes.Status400BadRequest));
+    }
+
+    [Fact]
+    public async Task Synthesize_DatasetMode_NoEmotion_DegradesToNeutral()
+    {
+        var datasetId = await SeedDatasetAsync();
+        var item = await SeedItemAsync(datasetId, "你好");
+        var store = new InMemoryVectorStore();
+        store.SeedText(datasetId, item.Id, item.AudioKey, [1f, 0f, 0f]);
+        var audio = new StubAudioClient();
+        audio.Clips[item.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
+        var tts = new StubTtsClient { Bytes = [7, 7] };
+        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+
+        var result = await controller.Synthesize(
+            datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null), "dataset");
+
+        Assert.IsType<FileContentResult>(result);
+        Assert.Null(Header(controller, "X-Emo-Audio-Key"));
+        Assert.Null(Assert.Single(tts.Requests).Emotion);
     }
 
     [Fact]
