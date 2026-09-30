@@ -67,7 +67,7 @@ public static class TrainingMapping
 
     /// <summary>
     /// 解析音频地址 <c>b/live/{roomId}/recordings/{file}</c>（与前端 <c>trainingAudioClipUrl</c> 同口径）；
-    /// 空/不可解析/roomId 非数字/file 为空或含 <c>/</c> → null。
+    /// 空/不可解析/roomId 非数字/file 为空、含 <c>/</c> 或为 <c>.</c>/<c>..</c> → null。
     /// </summary>
     public static ParsedAudioUri? ParseAudioUri(string? audioUri)
     {
@@ -87,13 +87,14 @@ public static class TrainingMapping
 
         var roomPart = rest[..index];
         var file = rest[(index + marker.Length)..];
-        // roomId 收紧为纯 ASCII 数字：拒绝符号（-1/+1）、空白（" 1"）与非数字；file 为空或含 '/' 也拒绝
-        // （recording 片段端点单段路径无法承载嵌套文件名，虽 BuildAudioUri 允许写入嵌套名）。
+        // roomId 收紧为纯 ASCII 数字：拒绝符号（-1/+1）、空白（" 1"）与非数字；file 为空、含 '/'、
+        // 或为相对路径段 '.'/'..'（Uri 归一化会改写路由）也拒绝。
         if (roomPart.Length == 0
             || !roomPart.All(char.IsAsciiDigit)
             || !long.TryParse(roomPart, out var roomId)
             || string.IsNullOrEmpty(file)
-            || file.Contains('/'))
+            || file.Contains('/')
+            || file is "." or "..")
         {
             return null;
         }

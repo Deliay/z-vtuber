@@ -209,7 +209,7 @@ public sealed class MilvusVectorStore(
         }
         else
         {
-            await DeleteItemAsync(_options.TextCollection, itemId, ct);
+            await DeleteItemAsync(_options.TextCollection, datasetId, itemId, ct);
         }
 
         if (emotionVector is not null)
@@ -218,7 +218,7 @@ public sealed class MilvusVectorStore(
         }
         else
         {
-            await DeleteItemAsync(_options.EmotionCollection, itemId, ct);
+            await DeleteItemAsync(_options.EmotionCollection, datasetId, itemId, ct);
         }
     }
 
@@ -258,19 +258,21 @@ public sealed class MilvusVectorStore(
 
     public async Task DeleteItemVectorsAsync(ObjectId datasetId, ObjectId itemId, CancellationToken ct = default)
     {
-        await DeleteItemAsync(_options.TextCollection, itemId, ct);
-        await DeleteItemAsync(_options.EmotionCollection, itemId, ct);
+        await DeleteItemAsync(_options.TextCollection, datasetId, itemId, ct);
+        await DeleteItemAsync(_options.EmotionCollection, datasetId, itemId, ct);
     }
 
-    private async Task DeleteItemAsync(string collection, ObjectId itemId, CancellationToken ct)
+    private async Task DeleteItemAsync(string collection, ObjectId datasetId, ObjectId itemId, CancellationToken ct)
     {
+        // 必须带 datasetId 作用域：itemId 来自请求体，若仅按 id 删会跨数据集误删他数据集同 id 的派生向量
+        // （Mongo 侧按数据集删除 0 行，但 Milvus 侧却删除了他数据集的向量）。
         var response = await client.PostAsync(
             "/v2/vectordb/entities/delete",
             new
             {
                 dbName = _options.Database,
                 collectionName = collection,
-                filter = $"id == \"{itemId}\"",
+                filter = $"datasetId == \"{datasetId}\" && id == \"{itemId}\"",
             },
             ct);
         if (!response.IsSuccess)

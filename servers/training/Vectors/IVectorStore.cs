@@ -33,7 +33,11 @@ public interface IVectorStore
         ObjectId datasetId, ObjectId itemId, string audioKey,
         float[]? textEmbedding, float[]? emotionVector, CancellationToken ct = default);
 
-    /// <summary>删除某个条目在两个集合中的向量（条目删除后清理派生索引）。</summary>
+    /// <summary>
+    /// 删除<b>指定数据集内</b>该条目在两个集合中的向量（条目删除后清理派生索引）。
+    /// 删除条件按 <c>datasetId</c> + <c>itemId</c> 双重限定：<paramref name="itemId"/> 可能来自请求体，
+    /// 仅按 id 删会跨数据集误删他数据集同 id 的向量。
+    /// </summary>
     Task DeleteItemVectorsAsync(ObjectId datasetId, ObjectId itemId, CancellationToken ct = default);
 
     /// <summary>删除某数据集的全部向量（级联删除数据集/重建前清理）。</summary>

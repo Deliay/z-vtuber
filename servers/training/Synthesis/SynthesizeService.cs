@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
@@ -32,7 +31,6 @@ public sealed class SynthesizeService(
     IVectorStore store,
     IEmbeddingClient embedding,
     ITtsClient tts,
-    IOptions<TtsOptions> ttsOptions,
     SynthesizeOptions synthesizeOptions,
     ILogger<SynthesizeService> logger)
 {
@@ -68,13 +66,16 @@ public sealed class SynthesizeService(
             emotion?.Reference);
         var bytes = await tts.SynthesizeAsync(request, ct);
 
-        var emoKey = emotion is { Reference: not null } e ? e.Match.AudioKey : null;
+        // 命中头回显条目记录（Mongo 事实源）的 audioKey，而非 Milvus 检索输出字段：
+        // 后者若为畸形值会让响应头赋值抛异常，在 TTS 已成功后落成 500。
+        var speakerKey = speaker.Item.AudioKey;
+        var emoKey = emotion?.AudioKey;
         stopwatch.Stop();
         logger.LogInformation(
             "training synthesize: datasetId={DatasetId} speakerKey={SpeakerKey} emoKey={EmoKey} lang={Lang} elapsedMs={ElapsedMs}",
-            datasetId, speaker.Match.AudioKey, emoKey, lang, stopwatch.ElapsedMilliseconds);
+            datasetId, speakerKey, emoKey, lang, stopwatch.ElapsedMilliseconds);
 
-        return new SynthesizeResult(bytes, speaker.Match.AudioKey, emoKey);
+        return new SynthesizeResult(bytes, speakerKey, emoKey);
     }
 
     private async Task<EmotionMatch?> TryBuildEmotionReferenceAsync(
@@ -117,7 +118,12 @@ public sealed class SynthesizeService(
 
             var reference = new TtsEmotionReference(
                 match.Value.Clip.Bytes, match.Value.Clip.ContentType, matchedEmotion);
-            return new EmotionMatch(reference, match.Value.Match);
+            return new EmotionMatch(reference, match.Value.Item.AudioKey);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 客户端断连 / 请求取消：不得降级为中性继续调 TTS，须原样上抛交由框架处理。
+            throw;
         }
         catch (Exception ex)
         {
@@ -169,5 +175,5 @@ public sealed class SynthesizeService(
     private readonly record struct ReferenceMatch(
         TrainingDatasetItemRecord Item, AudioClip Clip, VectorMatch Match);
 
-    private readonly record struct EmotionMatch(TtsEmotionReference Reference, VectorMatch Match);
+    private readonly record struct EmotionMatch(TtsEmotionReference Reference, string AudioKey);
 }

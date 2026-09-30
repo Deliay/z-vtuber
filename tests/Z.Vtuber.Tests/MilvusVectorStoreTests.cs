@@ -187,30 +187,37 @@ public class MilvusVectorStoreTests(MilvusFixture milvus) : IClassFixture<Milvus
     public async Task Upsert_NullSide_DeletesThatRow_NotSkip()
     {
         var client = new StubMilvusRestClient { Responder = (_, _) => Ok() };
+        var datasetId = ObjectId.GenerateNewId();
         var itemId = ObjectId.GenerateNewId();
 
-        // text 有、emotion 为 null → 情绪侧应删除旧行（而非跳过）
-        await Create(client).UpsertItemVectorsAsync(ObjectId.GenerateNewId(), itemId, "key", [1f], null);
+        // text 有、emotion 为 null → 情绪侧应删除旧行（而非跳过），且删除须带 datasetId 作用域
+        await Create(client).UpsertItemVectorsAsync(datasetId, itemId, "key", [1f], null);
 
         Assert.Equal(1, client.CountOf("/v2/vectordb/entities/upsert"));
         var delete = Assert.Single(client.Requests.Where(r => r.Path == "/v2/vectordb/entities/delete"));
         Assert.Equal("item_emotion_vectors", delete.Payload.GetProperty("collectionName").GetString());
-        Assert.Equal($"id == \"{itemId}\"", delete.Payload.GetProperty("filter").GetString());
+        Assert.Equal(
+            $"datasetId == \"{datasetId}\" && id == \"{itemId}\"",
+            delete.Payload.GetProperty("filter").GetString());
     }
 
     [Fact]
-    public async Task DeleteItem_DeletesBothCollections()
+    public async Task DeleteItem_DeletesBothCollections_ScopedByDatasetId()
     {
         var client = new StubMilvusRestClient { Responder = (_, _) => Ok() };
+        var datasetId = ObjectId.GenerateNewId();
         var itemId = ObjectId.GenerateNewId();
 
-        await Create(client).DeleteItemVectorsAsync(ObjectId.GenerateNewId(), itemId);
+        await Create(client).DeleteItemVectorsAsync(datasetId, itemId);
 
         var deletes = client.Requests.Where(r => r.Path == "/v2/vectordb/entities/delete").ToList();
         Assert.Equal(2, deletes.Count);
         foreach (var delete in deletes)
         {
-            Assert.Equal($"id == \"{itemId}\"", delete.Payload.GetProperty("filter").GetString());
+            // 删除 filter 必须同时限定 datasetId 与 id，避免跨数据集误删他数据集派生向量
+            Assert.Equal(
+                $"datasetId == \"{datasetId}\" && id == \"{itemId}\"",
+                delete.Payload.GetProperty("filter").GetString());
         }
     }
 

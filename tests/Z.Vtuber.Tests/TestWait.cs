@@ -36,7 +36,7 @@ internal static class TestWait
             await Task.Delay(effectiveInterval);
         }
 
-        Assert.True(false, describe is null
+        Assert.Fail(describe is null
             ? $"Condition was not met within {effectiveTimeout}."
             : $"Condition '{describe}' was not met within {effectiveTimeout}.");
     }

@@ -254,7 +254,8 @@ public class TrainingDatasetItemRepositoryTests(MongoDbFixture fixture) : IClass
 
         var deleted = await repository.DeleteManyAsync(datasetId, ids);
 
-        Assert.Equal(2, deleted);
+        Assert.Equal(2, deleted.Count);
+        Assert.DoesNotContain(kept.Id, deleted);
         var rest = await repository.ListAsync(datasetId);
         var survivor = Assert.Single(rest);
         Assert.Equal(kept.Id, survivor.Id);
@@ -269,7 +270,7 @@ public class TrainingDatasetItemRepositoryTests(MongoDbFixture fixture) : IClass
 
         var deleted = await repository.DeleteManyAsync(datasetId, [ObjectId.GenerateNewId()]);
 
-        Assert.Equal(0, deleted);
+        Assert.Empty(deleted);
         Assert.Single(await repository.ListAsync(datasetId));
     }
 
