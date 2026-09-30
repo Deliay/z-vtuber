@@ -58,9 +58,14 @@ builder.Services.AddHttpClient(Z.Vtuber.Controllers.RecordingTranscriptProxyCont
     client.BaseAddress = new Uri(builder.Configuration["TranscriptService:BaseUrl"] ?? "http://recording-transcript-api");
 });
 
+// 代理超时须**高于** training 各阶段上游预算（Tts/Ai/Embedding RequestTimeoutSeconds=120），
+// 否则长耗时端点（synthesize / vectors/rebuild / items/import）在 training 正常完成时被代理先判超时 → 误报 502。
 builder.Services.AddHttpClient(Z.Vtuber.Controllers.TrainingProxyController.TrainingClientName, client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["TrainingService:BaseUrl"] ?? "http://training");
+    client.Timeout = TimeSpan.FromSeconds(builder.Configuration.GetValue(
+        "TrainingService:RequestTimeoutSeconds",
+        Z.Vtuber.Controllers.TrainingProxyController.DefaultTimeoutSeconds));
 });
 
 var app = builder.Build();

@@ -14,6 +14,15 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
 {
     internal const string TrainingClientName = "TrainingService";
 
+    /// <summary>
+    /// 代理上游 training 的默认请求超时（秒）。必须**高于** training 各阶段的上游预算
+    /// （<c>Tts</c>/<c>Ai</c>/<c>Embedding</c> 的 <c>RequestTimeoutSeconds</c> 均为 120s），
+    /// 否则 `synthesize`（慢 TTS）/`vectors/rebuild`（逐条串行 embedding）等在 training 侧正常完成时，
+    /// 代理会先超时并把成功路径误报为 502 <c>training service unavailable</c>。
+    /// 可由配置 <c>TrainingService:RequestTimeoutSeconds</c> 覆盖；口径见 <c>servers/api/AGENTS.md</c>。
+    /// </summary>
+    public const int DefaultTimeoutSeconds = 180;
+
     [HttpGet("training/datasets")]
     public Task<IActionResult> ListDatasets([FromQuery] string? type, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Get, "api/training/datasets", ct);

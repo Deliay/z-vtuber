@@ -97,15 +97,27 @@ public sealed class TrainingDatasetItemRepository(IMongoDatabase database)
             .FirstOrDefaultAsync(ct);
     }
 
-    /// <summary>删除指定条目；不存在的 id 跳过，返回实际删除数。</summary>
-    public async Task<long> DeleteManyAsync(
+    /// <summary>
+    /// 删除指定条目；不存在的 id 跳过，返回**实际删除的条目 id 集合**（仅数据集作用域内的 id）。
+    /// 先按 filter 读命中 id 再删，供调用方据实际删除结果做级联清理（如向量删除），
+    /// 避免把「请求中属于其他数据集、Mongo 实际未删除」的 id 也带入级联副作用。
+    /// </summary>
+    public async Task<IReadOnlyList<ObjectId>> DeleteManyAsync(
         ObjectId datasetId, IEnumerable<ObjectId> itemIds, CancellationToken ct = default)
     {
         var ids = itemIds.ToList();
         var filter = Builders<TrainingDatasetItemRecord>.Filter.Eq(i => i.DatasetId, datasetId)
             & Builders<TrainingDatasetItemRecord>.Filter.In(i => i.Id, ids);
-        var result = await _collection.DeleteManyAsync(filter, ct);
-        return result.DeletedCount;
+
+        var deletedIds = await _collection.Find(filter)
+            .Project(i => i.Id)
+            .ToListAsync(ct);
+        if (deletedIds.Count > 0)
+        {
+            await _collection.DeleteManyAsync(filter, ct);
+        }
+
+        return deletedIds;
     }
 
     /// <summary>级联删除数据集全部条目，返回删除数。</summary>

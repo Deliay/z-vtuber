@@ -95,6 +95,15 @@ public sealed class TrainingDatasetItemsController(
                 id, taskId, detail.Task.RoomId, detail.Task.File, detail.Task.OffsetMs,
                 segment.Start, segment.End, segment.Text, now))
             .ToList();
+
+        // 记录导入前该 source 已有条目的 AudioKey：导入后只对**新增**条目做增量向量同步，
+        // 避免部分失败重导时把整批已导入条目逐条重新 embedding（浪费，且直接放大代理超时风险）。
+        var existingAudioKeys = vectors is null
+            ? null
+            : (await items.ListAsync(id, source: taskId, ct: ct))
+                .Select(i => i.AudioKey)
+                .ToHashSet(StringComparer.Ordinal);
+
         var (imported, skipped) = await items.InsertManyIgnoreDuplicatesAsync(records, ct);
 
         _logger.LogInformation(
@@ -102,10 +111,10 @@ public sealed class TrainingDatasetItemsController(
             datasetId, taskId, imported, skipped);
 
         // 增量同步 Milvus（best-effort，失败 Warn 不阻断导入；vectors/rebuild 兜底）。
-        if (imported > 0 && vectors is not null)
+        if (imported > 0 && vectors is not null && existingAudioKeys is not null)
         {
-            var importedRecords = await items.ListAsync(id, source: taskId, ct: ct);
-            foreach (var record in importedRecords)
+            var sourceItems = await items.ListAsync(id, source: taskId, ct: ct);
+            foreach (var record in sourceItems.Where(r => !existingAudioKeys.Contains(r.AudioKey)))
             {
                 await vectors.SyncItemAsync(record, ct);
             }
@@ -229,17 +238,18 @@ public sealed class TrainingDatasetItemsController(
             }
         }
 
-        var deleted = itemIds.Count == 0
-            ? 0
+        // 只删除本数据集实际存在的条目，并据实际删除的 id 做级联，避免请求中属于他数据集的 id 误删其向量。
+        var deletedIds = itemIds.Count == 0
+            ? (IReadOnlyList<ObjectId>)[]
             : await items.DeleteManyAsync(id, itemIds, ct);
 
         // 条目删除后级联清理 Milvus 派生向量（best-effort）：残留行会占用 top-k 候选位，挤出合法候选。
-        if (itemIds.Count > 0 && vectors is not null)
+        if (deletedIds.Count > 0 && vectors is not null)
         {
-            await vectors.DeleteItemsAsync(id, itemIds, ct);
+            await vectors.DeleteItemsAsync(id, deletedIds, ct);
         }
 
-        return Ok(new TrainingDatasetBatchDeleteResultDto(deleted));
+        return Ok(new TrainingDatasetBatchDeleteResultDto(deletedIds.Count));
     }
 
     /// <summary>数据集是否存在（按 id 单读，不全量列举）。</summary>

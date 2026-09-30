@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
@@ -100,7 +99,6 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
             store,
             embedding,
             tts,
-            Options.Create(new TtsOptions()),
             new SynthesizeOptions(),
             NullLogger<SynthesizeService>.Instance);
 

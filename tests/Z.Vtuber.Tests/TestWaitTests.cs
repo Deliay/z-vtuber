@@ -32,7 +32,7 @@ public sealed class TestWaitTests
     [Fact]
     public async Task UntilAsync_ThrowsWithDescriptiveMessageOnTimeout()
     {
-        var exception = await Assert.ThrowsAsync<TrueException>(() =>
+        var exception = await Assert.ThrowsAsync<FailException>(() =>
             TestWait.UntilAsync(() => false, TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(10)));
 
         Assert.Contains("Condition was not met", exception.Message);
@@ -43,7 +43,7 @@ public sealed class TestWaitTests
     {
         // 超时兜底不得再次求值：timeout 50ms + interval 60ms → 恰好在 t=0 与 t=60 各求值一次。
         var calls = 0;
-        await Assert.ThrowsAsync<TrueException>(() =>
+        await Assert.ThrowsAsync<FailException>(() =>
             TestWait.UntilAsync(
                 () =>
                 {
@@ -60,7 +60,7 @@ public sealed class TestWaitTests
     public async Task UntilAsync_RespectsInterval()
     {
         var stopwatch = Stopwatch.StartNew();
-        await Assert.ThrowsAsync<TrueException>(() =>
+        await Assert.ThrowsAsync<FailException>(() =>
             TestWait.UntilAsync(() => false, TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(50)));
         stopwatch.Stop();
 
