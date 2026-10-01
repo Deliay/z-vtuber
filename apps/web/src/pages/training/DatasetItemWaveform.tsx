@@ -106,9 +106,9 @@ export function DatasetItemWaveform({
   return (
     <div className="dataset-item-waveform" style={{ padding: 8 }}>
       <div data-testid="waveform-container" ref={containerRef} />
-      {status === 'error' && <Alert type="warning" showIcon message="音频不可用" />}
+      {status === 'error' && <Alert type="warning" showIcon title="音频不可用" />}
       {status === 'ready' && playFailed && (
-        <Alert type="warning" showIcon message="音频暂不可用，请点击播放重试" />
+        <Alert type="warning" showIcon title="音频暂不可用，请点击播放重试" />
       )}
       {status === 'ready' && (
         <Space style={{ marginTop: 8 }}>

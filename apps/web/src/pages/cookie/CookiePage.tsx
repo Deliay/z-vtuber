@@ -310,7 +310,7 @@ export function CookiePage() {
         <Alert
           type="error"
           showIcon
-          message={error}
+          title={error}
           action={<Button onClick={fetchAccounts}>重试</Button>}
         />
       ) : (
@@ -336,12 +336,12 @@ export function CookiePage() {
       >
         <div style={{ textAlign: 'center' }}>
           {creating ? (
-            <Space direction="vertical" align="center">
+            <Space orientation="vertical" align="center">
               <Spin />
               <Typography.Text type="secondary">正在创建登录会话...</Typography.Text>
             </Space>
           ) : createError ? (
-            <Space direction="vertical" align="center">
+            <Space orientation="vertical" align="center">
               <Typography.Text type="danger">{createError}</Typography.Text>
               <Space>
                 <Button type="primary" onClick={() => handleCreate(createPlatform)}>
@@ -352,7 +352,7 @@ export function CookiePage() {
             </Space>
           ) : pendingAccount?.qrCodeImage ? (
             qrExpired ? (
-              <Space direction="vertical" align="center">
+              <Space orientation="vertical" align="center">
                 <Typography.Text type="danger">二维码已过期，请重新生成</Typography.Text>
                 {pollError && <Typography.Text type="danger">{pollError}</Typography.Text>}
                 <Space>
@@ -370,7 +370,7 @@ export function CookiePage() {
                 </Space>
               </Space>
             ) : (
-              <Space direction="vertical" align="center">
+              <Space orientation="vertical" align="center">
                 <Typography.Text type="secondary">{QR_HINTS[createPlatform]}</Typography.Text>
                 <Image
                   src={`data:image/png;base64,${pendingAccount.qrCodeImage}`}

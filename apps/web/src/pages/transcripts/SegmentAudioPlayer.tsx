@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { Alert, Button, Card, Flex, Progress, Space, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Flex, Progress, Space, Tag, theme, Tooltip, Typography } from 'antd'
 import { recordingAudioClipUrl } from '../../api/client'
 import { formatPosition } from '../../utils/format'
 import { TruncatedText } from '../../components/TruncatedText'
@@ -23,6 +23,7 @@ export interface SegmentAudioPlayerProps {
  * 生命周期：ended/pause 清高亮；切换任务、收起（卸载）→ pause() 并清空 src。
  */
 export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudioPlayerProps) {
+  const { token } = theme.useToken()
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [playingSegment, setPlayingSegment] = useState<TranscriptSegment | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
@@ -161,7 +162,7 @@ export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudi
         </Card>
       )}
       {audioError && !playingSegment && (
-        <Alert type="error" showIcon message={AUDIO_UNAVAILABLE} style={{ marginBottom: 8 }} />
+        <Alert type="error" showIcon title={AUDIO_UNAVAILABLE} style={{ marginBottom: 8 }} />
       )}
 
       <div
@@ -172,6 +173,16 @@ export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudi
         <ul style={{ margin: 0, paddingLeft: 16 }}>
           {segments.map((segment) => {
             const isPlaying = playingSegment?.start === segment.start
+            const playable = canPlaySegment(segment)
+            const playButton = (
+              <Button
+                size="small"
+                onClick={() => handleToggleSegment(segment)}
+                disabled={!playable}
+              >
+                {isPlaying ? '停止' : '播放'}
+              </Button>
+            )
             return (
               <li
                 key={segment.start}
@@ -179,18 +190,20 @@ export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudi
                 style={{
                   padding: '2px 4px',
                   borderRadius: 4,
-                  background: isPlaying ? 'rgba(56, 189, 248, 0.15)' : undefined,
+                  background: isPlaying ? token.colorPrimaryBg : undefined,
                 }}
               >
                 <Space size={8} align="start">
-                  <Button
-                    size="small"
-                    onClick={() => handleToggleSegment(segment)}
-                    disabled={!canPlaySegment(segment)}
-                    title={canPlaySegment(segment) ? undefined : AUDIO_UNAVAILABLE}
-                  >
-                    {isPlaying ? '停止' : '播放'}
-                  </Button>
+                  {playable ? (
+                    playButton
+                  ) : (
+                    // 置灰说明对键盘用户同样可达：外包可聚焦 span，focus 即出 Tooltip。
+                    <Tooltip title={AUDIO_UNAVAILABLE} trigger={['hover', 'focus']}>
+                      <span tabIndex={0} style={{ display: 'inline-flex' }}>
+                        {playButton}
+                      </span>
+                    </Tooltip>
+                  )}
                   <Typography.Text type="secondary">
                     {formatPosition(segment.start)}
                   </Typography.Text>

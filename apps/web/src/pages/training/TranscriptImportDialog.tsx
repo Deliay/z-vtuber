@@ -108,12 +108,12 @@ export function TranscriptImportDialog({
       {tasks.length === 0 && !error && (
         <Typography.Text type="secondary">暂无已识别完成的任务</Typography.Text>
       )}
-      {error && <Alert type="error" showIcon message={error} />}
+      {error && <Alert type="error" showIcon title={error} />}
       {result && (
         <Alert
           type="success"
           showIcon
-          message={`已导入 ${result.imported} 条，跳过 ${result.skipped} 条`}
+          title={`已导入 ${result.imported} 条，跳过 ${result.skipped} 条`}
         />
       )}
     </Modal>

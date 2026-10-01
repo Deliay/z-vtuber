@@ -192,7 +192,7 @@ export function NotificationPage() {
         <Alert
           type="error"
           showIcon
-          message={error}
+          title={error}
           action={<Button onClick={fetchBindings}>重试</Button>}
         />
       ) : (

@@ -96,13 +96,13 @@ export function EmotionSubmitDialog({
         </Form.Item>
       </Form>
 
-      {models.length === 0 && <Alert type="info" showIcon message="请先在模型设置中配置" />}
-      {error && <Alert type="error" showIcon message={error} />}
+      {models.length === 0 && <Alert type="info" showIcon title="请先在模型设置中配置" />}
+      {error && <Alert type="error" showIcon title={error} />}
       {result && (
         <Alert
           type="success"
           showIcon
-          message={`已提交 ${result.created} 条，跳过 ${result.skipped} 条`}
+          title={`已提交 ${result.created} 条，跳过 ${result.skipped} 条`}
         />
       )}
     </Modal>

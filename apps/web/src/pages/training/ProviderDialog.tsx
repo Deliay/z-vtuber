@@ -107,7 +107,7 @@ export function ProviderDialog({ provider, onClose, onSaved }: ProviderDialogPro
         </Form.Item>
       </Form>
 
-      {error && <Alert type="error" showIcon message={error} />}
+      {error && <Alert type="error" showIcon title={error} />}
     </Modal>
   )
 }

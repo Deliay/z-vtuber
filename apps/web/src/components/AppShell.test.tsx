@@ -57,4 +57,20 @@ describe('AppShell', () => {
 
     expect(onSelect).toHaveBeenCalledWith('c')
   })
+
+  it('should not render a group title for the default (no-group) section', () => {
+    render(
+      <AppShell
+        menuGroups={[{ items: [{ key: 'a', label: '订阅管理', icon: MENU_ICONS.subscriptions }] }]}
+        currentPage="a"
+        onSelect={vi.fn()}
+      >
+        <div>内容</div>
+      </AppShell>,
+    )
+
+    // 缺省组只平铺菜单项，不出现额外的分组标题节点。
+    expect(screen.queryByText('训练')).not.toBeInTheDocument()
+    expect(screen.getByText('订阅管理')).toBeInTheDocument()
+  })
 })

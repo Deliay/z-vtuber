@@ -193,15 +193,21 @@ describe('SegmentAudioPlayer', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50')
   })
 
-  it('disables the play buttons with a hint when the task has no file', () => {
+  it('disables the play buttons with a hint when the task has no file', async () => {
     render(<SegmentAudioPlayer task={{ ...task, file: null }} segments={segments} />)
 
     const buttons = screen.getAllByRole('button', { name: '播放' })
     expect(buttons).toHaveLength(2)
     for (const button of buttons) {
       expect(button).toBeDisabled()
-      expect(button).toHaveAttribute('title', '音频暂不可用')
     }
+    // 置灰说明对键盘用户可达：聚焦外包 span 即出 Tooltip
+    const wrapper = buttons[0].closest('span') as HTMLElement
+    expect(wrapper).toHaveAttribute('tabindex', '0')
+    fireEvent.focus(wrapper)
+    expect(
+      (await screen.findAllByRole('tooltip')).some((tip) => tip.textContent === '音频暂不可用'),
+    ).toBe(true)
   })
 
   it('pauses and clears src when the task changes', () => {
@@ -256,7 +262,7 @@ describe('SegmentAudioPlayer', () => {
     )
   })
 
-  it('disables playback when the whole shifted segment is before the timeline start', () => {
+  it('disables playback when the whole shifted segment is before the timeline start', async () => {
     render(
       <SegmentAudioPlayer
         task={{ ...task, offsetMs: -3000 }}
@@ -266,10 +272,14 @@ describe('SegmentAudioPlayer', () => {
 
     const button = screen.getAllByRole('button', { name: '播放' })[0]
     expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', '音频暂不可用')
+    // 置灰说明对键盘用户可达：聚焦外包 span 即出 Tooltip
+    fireEvent.focus(button.closest('span') as HTMLElement)
+    expect(
+      (await screen.findAllByRole('tooltip')).some((tip) => tip.textContent === '音频暂不可用'),
+    ).toBe(true)
   })
 
-  it('disables playback when the shifted segment ends at the timeline start', () => {
+  it('disables playback when the shifted segment ends at the timeline start', async () => {
     render(
       <SegmentAudioPlayer
         task={{ ...task, offsetMs: -3000 }}
@@ -279,6 +289,9 @@ describe('SegmentAudioPlayer', () => {
 
     const button = screen.getAllByRole('button', { name: '播放' })[0]
     expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', '音频暂不可用')
+    fireEvent.focus(button.closest('span') as HTMLElement)
+    expect(
+      (await screen.findAllByRole('tooltip')).some((tip) => tip.textContent === '音频暂不可用'),
+    ).toBe(true)
   })
 })

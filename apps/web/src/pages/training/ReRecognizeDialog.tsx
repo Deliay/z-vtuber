@@ -160,8 +160,8 @@ export function ReRecognizeDialog({
         </Form.Item>
       </Form>
 
-      {models.length === 0 && <Alert type="info" showIcon message="请先在模型设置中配置" />}
-      {error && <Alert type="error" showIcon message={error} />}
+      {models.length === 0 && <Alert type="info" showIcon title="请先在模型设置中配置" />}
+      {error && <Alert type="error" showIcon title={error} />}
     </Modal>
   )
 }

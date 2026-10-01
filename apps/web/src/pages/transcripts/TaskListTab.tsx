@@ -5,13 +5,15 @@ import {
   Button,
   Card,
   Empty,
+  Flex,
   Form,
   InputNumber,
-  List,
   Select,
   Space,
   Table,
   Tag,
+  theme,
+  Tooltip,
   Typography,
 } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
@@ -108,6 +110,7 @@ function parseExistingTaskId(error: unknown): string | undefined {
 
 export function TaskListTab() {
   const { message } = AntdApp.useApp()
+  const { token } = theme.useToken()
   const [tasks, setTasks] = useState<TranscriptTask[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -427,7 +430,7 @@ export function TaskListTab() {
         <Alert
           type="error"
           showIcon
-          message={error}
+          title={error}
           action={<Button onClick={fetchTasks}>重试</Button>}
         />
       ) : (
@@ -474,14 +477,13 @@ export function TaskListTab() {
               </Button>
               {(['srt', 'ass'] as const).map((format) => {
                 const disabled = segments.length === 0
-                return (
+                const link = (
                   <Typography.Link
                     key={format}
                     href={transcriptSubtitleUrl(selectedTaskId, format)}
                     download
                     aria-disabled={disabled ? true : undefined}
-                    title={disabled ? '暂无识别结果' : undefined}
-                    style={disabled ? { color: '#64748b' } : undefined}
+                    style={disabled ? { color: token.colorTextDisabled } : undefined}
                     onClick={(event) => {
                       if (disabled) {
                         event.preventDefault()
@@ -491,6 +493,14 @@ export function TaskListTab() {
                     {format === 'srt' ? '下载 SRT' : '下载 ASS'}
                   </Typography.Link>
                 )
+                // 置灰说明对键盘用户同样可达（focus 即出 Tooltip）。
+                return disabled ? (
+                  <Tooltip key={format} title="暂无识别结果" trigger={['hover', 'focus']}>
+                    {link}
+                  </Tooltip>
+                ) : (
+                  link
+                )
               })}
               <Button onClick={() => setSelectedTaskId(null)} aria-label="收起识别结果">
                 收起
@@ -498,7 +508,7 @@ export function TaskListTab() {
             </Space>
           </Space>
           {offsetError && (
-            <Alert type="error" showIcon message={offsetError} style={{ marginBottom: 8 }} />
+            <Alert type="error" showIcon title={offsetError} style={{ marginBottom: 8 }} />
           )}
           {segmentsLoading && segments.length === 0 ? (
             <Typography.Text type="secondary">加载中...</Typography.Text>
@@ -576,7 +586,7 @@ export function TaskListTab() {
         />
         <Button onClick={handleQueryRoom}>查询</Button>
       </Space>
-      {roomError && <Alert type="error" showIcon message={roomError} style={{ marginBottom: 8 }} />}
+      {roomError && <Alert type="error" showIcon title={roomError} style={{ marginBottom: 8 }} />}
       {roomView && (
         <div>
           <Typography.Text type="secondary">
@@ -595,31 +605,37 @@ export function TaskListTab() {
                 {item.tasks.length === 0 ? (
                   <Typography.Text type="secondary">暂无任务</Typography.Text>
                 ) : (
-                  <List
-                    size="small"
-                    dataSource={item.tasks}
-                    renderItem={(task) => (
-                      <List.Item
-                        actions={
-                          task.status === 'FAILED'
-                            ? [
-                                <Button
-                                  key="retry"
-                                  size="small"
-                                  onClick={() => handleRetry(task.taskId ?? '')}
-                                >
-                                  重试
-                                </Button>,
-                              ]
-                            : undefined
-                        }
+                  <Space orientation="vertical" size={4} style={{ width: '100%' }}>
+                    {item.tasks.map((task) => (
+                      <Flex
+                        key={task.taskId ?? `${task.modelId}-${task.status}`}
+                        align="center"
+                        justify="space-between"
+                        gap={8}
                       >
-                        {`${task.modelName ?? task.modelId} - ${
-                          STATUS_LABELS[task.status ?? ''] ?? task.status
-                        } - ${formatPosition(task.position)}`}
-                      </List.Item>
-                    )}
-                  />
+                        <Typography.Text
+                          style={{
+                            color:
+                              task.status === 'FAILED'
+                                ? token.colorTextSecondary
+                                : undefined,
+                          }}
+                        >
+                          {`${task.modelName ?? task.modelId} - ${
+                            STATUS_LABELS[task.status ?? ''] ?? task.status
+                          } - ${formatPosition(task.position)}`}
+                        </Typography.Text>
+                        {task.status === 'FAILED' && (
+                          <Button
+                            size="small"
+                            onClick={() => handleRetry(task.taskId ?? '')}
+                          >
+                            重试
+                          </Button>
+                        )}
+                      </Flex>
+                    ))}
+                  </Space>
                 )}
               </Card>
             ))

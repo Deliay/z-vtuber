@@ -372,7 +372,7 @@ export function SettingsTab() {
         <Alert
           type="error"
           showIcon
-          message={error}
+          title={error}
           style={{ marginBottom: 16 }}
           action={<Button onClick={retryFailedAction}>重试</Button>}
         />

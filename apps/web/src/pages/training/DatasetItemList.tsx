@@ -451,7 +451,7 @@ export function DatasetItemList({
 
   return (
     <div className="dataset-item-list">
-      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
+      {error && <Alert type="error" showIcon title={error} style={{ marginBottom: 8 }} />}
 
       {items.length === 0 ? (
         <Empty description="暂无音频数据，可从 Transcript 导入" />

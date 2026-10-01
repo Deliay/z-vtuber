@@ -298,7 +298,7 @@ export function SubscriptionPage() {
         <Alert
           type="error"
           showIcon
-          message={error}
+          title={error}
           action={<Button onClick={fetchSubscriptions}>重试</Button>}
         />
       ) : (

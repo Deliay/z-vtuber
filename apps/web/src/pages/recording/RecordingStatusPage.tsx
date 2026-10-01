@@ -136,7 +136,7 @@ export function RecordingStatusPage() {
     }
 
     return (
-      <Space direction="vertical" size={4}>
+      <Space orientation="vertical" size={4}>
         {files.map((file) => (
           <Space key={file.name} size={8} wrap>
             <a href={recordingDownloadUrl(roomId, file.name)}>{file.name}</a>
@@ -193,7 +193,7 @@ export function RecordingStatusPage() {
         const roomId = item.roomId ?? null
         if (files.length === 0) return '-'
         return (
-          <Space direction="vertical" size={2}>
+          <Space orientation="vertical" size={2}>
             {files.map((file) => (
               <span key={file}>
                 {roomId ? <a href={recordingDownloadUrl(roomId, file)}>{file}</a> : file}
@@ -246,7 +246,7 @@ export function RecordingStatusPage() {
         <Alert
           type="error"
           showIcon
-          message={error}
+          title={error}
           action={<Button onClick={fetchStatus}>重试</Button>}
         />
       ) : (

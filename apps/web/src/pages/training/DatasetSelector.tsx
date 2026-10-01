@@ -169,7 +169,7 @@ export function DatasetSelector({ selectedId, onSelect }: DatasetSelectorProps) 
         <Alert
           type="error"
           showIcon
-          message={error}
+          title={error}
           style={{ marginTop: 12 }}
           role="alert"
         />

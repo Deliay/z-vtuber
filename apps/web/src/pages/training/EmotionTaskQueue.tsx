@@ -134,7 +134,7 @@ export function EmotionTaskQueue({ datasetId, reloadToken = 0 }: EmotionTaskQueu
         <Tag color="red">失败 {counts.failed}</Tag>
       </Space>
 
-      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
+      {error && <Alert type="error" showIcon title={error} style={{ marginBottom: 8 }} />}
 
       <Table<TrainingEmotionTask>
         rowKey={(task) => task.id}

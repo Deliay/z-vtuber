@@ -513,7 +513,11 @@ describe('TaskListTab', () => {
       name: '播放',
     })
     expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', '音频暂不可用')
+    // 置灰说明对键盘用户可达：聚焦外包 span 即出 Tooltip
+    fireEvent.focus(button.closest('span') as HTMLElement)
+    expect(
+      (await screen.findAllByRole('tooltip')).some((tip) => tip.textContent === '音频暂不可用'),
+    ).toBe(true)
   })
 
   it('should pause and clear src when the selected task switches', async () => {
@@ -596,9 +600,16 @@ describe('TaskListTab', () => {
     const srt = screen.getByRole('link', { name: '下载 SRT' })
     const ass = screen.getByRole('link', { name: '下载 ASS' })
     expect(srt).toHaveAttribute('aria-disabled', 'true')
-    expect(srt).toHaveAttribute('title', '暂无识别结果')
     expect(ass).toHaveAttribute('aria-disabled', 'true')
-    expect(ass).toHaveAttribute('title', '暂无识别结果')
+    // 置灰说明对键盘用户可达：聚焦链接即出 Tooltip
+    fireEvent.focus(srt)
+    expect(
+      (await screen.findAllByRole('tooltip')).some((tip) => tip.textContent === '暂无识别结果'),
+    ).toBe(true)
+    fireEvent.focus(ass)
+    expect(
+      (await screen.findAllByRole('tooltip')).some((tip) => tip.textContent === '暂无识别结果'),
+    ).toBe(true)
   })
 
   it('should show the playback offset entry with the current effective value', async () => {

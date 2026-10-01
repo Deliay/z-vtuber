@@ -265,7 +265,7 @@ export function ModelSettingsTab() {
 
   return (
     <div className="model-settings-tab">
-      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
+      {error && <Alert type="error" showIcon title={error} style={{ marginBottom: 16 }} />}
 
       <Typography.Title level={4}>Providers</Typography.Title>
       <Button onClick={openCreate} style={{ marginBottom: 12 }}>
@@ -337,10 +337,10 @@ export function ModelSettingsTab() {
         ]}
       >
         {discoverBusy && discovered.length === 0 && <Typography.Text type="secondary">加载中...</Typography.Text>}
-        {discoverError && <Alert type="error" showIcon message={discoverError} />}
+        {discoverError && <Alert type="error" showIcon title={discoverError} />}
 
         {discovered.length > 0 && (
-          <Space direction="vertical">
+          <Space orientation="vertical">
             {discovered.map((model) => (
               <Checkbox
                 key={model}
@@ -370,7 +370,7 @@ export function ModelSettingsTab() {
           <Alert
             type="success"
             showIcon
-            message={`已导入 ${discoverResult.imported} 个，跳过 ${discoverResult.skipped} 个`}
+            title={`已导入 ${discoverResult.imported} 个，跳过 ${discoverResult.skipped} 个`}
           />
         )}
       </Modal>
@@ -410,7 +410,7 @@ export function ModelSettingsTab() {
           </Form.Item>
         </Form>
 
-        {manualError && <Alert type="error" showIcon message={manualError} />}
+        {manualError && <Alert type="error" showIcon title={manualError} />}
       </Modal>
     </div>
   )
