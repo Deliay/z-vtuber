@@ -367,7 +367,7 @@ export interface paths {
         put?: never;
         /**
          * 音频生成（数据集语音合成）
-         * @description 以数据集为参考池：按输入文本与条目文本的字符相似度（归一化编辑距离，兼顾内容与长度）匹配音色参考 （speaker_prompt），情感向量匹配情绪参考（emo_prompt/emo_vector/emo_text/emo_alpha）， 调用内网 index-tts-api 合成并返回 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。 emotionMode=none（默认）不传任何情绪参考直接合成；emotionMode=llm 用配置的可用模型生成情感向量后检索； emotionMode=dataset 跳过大模型，直接使用音色命中候选条目自身的 Extensions.emotion （无则沿音色候选向下找，全无则降级中性）。dataset/none 完全跳过 modelId/模型解析。
+         * @description 以数据集为参考池：输入文本按 [，。,.\s] 断句后，每条短句与数据集候选短句按拼音相似度 （音节级归一化编辑距离）匹配取最相似 1 条，命中数据按数据 id 去重后经 recordings 合并为拼接音源 （speaker_prompt）；无候选短句时回退按输入文本与条目文本的字符相似度（归一化编辑距离）匹配单条。 情感向量匹配情绪参考（emo_prompt/emo_vector/emo_text/emo_alpha），调用内网 index-tts-api 合成并返回 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。 emotionMode=none（默认）不传任何情绪参考直接合成；emotionMode=llm 用配置的可用模型生成情感向量后检索； emotionMode=dataset 跳过大模型，直接使用音色命中候选条目自身的 Extensions.emotion （无则沿音色候选向下找，全无则降级中性）。dataset/none 完全跳过 modelId/模型解析。
          */
         post: operations["synthesizeTrainingDataset"];
         delete?: never;
@@ -390,6 +390,26 @@ export interface paths {
          * @description 从 MongoDB 条目（Text + Extensions.emotion）为 Milvus 重建文本向量与情感向量索引，返回重建条数（updated）。 用于升级后回填存量条目、向量模型变更后重建。
          */
         post: operations["rebuildTrainingDatasetVectors"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/datasets/{datasetId}/segments/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重建数据集候选短句拼音反向索引
+         * @description 清空该数据集候选短句反向索引（training_dataset_item_segments）并按条目本文断句 + 拼音全量重建， 返回重建的候选短句总数（rebuilt）。用于升级后回填存量数据集；未重建时 synthesize 自动回退字符相似匹配。
+         */
+        post: operations["rebuildTrainingDatasetSegments"];
         delete?: never;
         options?: never;
         head?: never;
@@ -648,6 +668,10 @@ export interface components {
         TrainingVectorsRebuildResult: {
             /** @description 重建（写入 Milvus）的条目数 */
             updated: number;
+        };
+        TrainingSegmentsRebuildResult: {
+            /** @description 重建的候选短句总数 */
+            rebuilt: number;
         };
         TrainingEmotionTaskCreateRequest: {
             itemIds: string[];
@@ -1635,7 +1659,7 @@ export interface operations {
             /** @description 合成音频（mono 16-bit PCM WAV @22.05kHz，上游透传） */
             200: {
                 headers: {
-                    /** @description 命中的音色参考条目 audioKey */
+                    /** @description 命中的音色参考条目 audioKey（拼接路径为逗号分隔多值，按拼接顺序；回退路径为单值） */
                     "X-Speaker-Audio-Key"?: string;
                     /** @description 命中的情绪参考条目 audioKey（无情绪命中时缺省） */
                     "X-Emo-Audio-Key"?: string;
@@ -1715,6 +1739,38 @@ export interface operations {
             };
             /** @description {"error": "embedding service unavailable"/"vector store unavailable"} */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rebuildTrainingDatasetSegments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["DatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重建结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingSegmentsRebuildResult"];
+                };
+            };
+            /** @description {"error": "dataset not found"} */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

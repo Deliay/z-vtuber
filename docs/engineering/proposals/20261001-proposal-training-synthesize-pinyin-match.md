@@ -413,5 +413,6 @@ tests/Z.Vtuber.Tests/
 
 - PRD：`docs/product/draft/20261001-training-synthesize-pinyin-match-prd.md`
 - 前序提案：`20260929-proposal-training-audio-synthesize.md`、`20261001-proposal-training-synthesize-char-match.md`
+- 实现 Plan：`docs/engineering/plans/20261001-plan-training-synthesize-pinyin-match.md`
 - 模块规范：`servers/training/AGENTS.md`、`servers/recording/AGENTS.md`、`servers/common/AGENTS.md`
 - 规范：`docs/engineering/common-rules.md`、`docs/engineering/backend-rules.md`

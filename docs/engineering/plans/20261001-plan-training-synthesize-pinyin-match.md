@@ -53,6 +53,7 @@ type: Permanent
 | 补充 1 | 增量同步挂接面 | 提案列导入/更新/批量删除/数据集删除四处；核实 `EmotionTaskRunner` 仅写 `Extensions.emotion` 不涉文本，**不挂** segments 同步（在 Plan 中显式排除，避免实现时误挂） |
 | 补充 2 | codegen 影响面 | 网关镜像变更会同时再生成 `apps/web/src/api/schema.d.ts`（bilibili-crawler 源），与 `schema-training.d.ts`/`schema-recording.d.ts` 一并 0 diff 复核 |
 | 补充 3 | 命中头兼容 | `X-Speaker-Audio-Key` 多值后 `SynthesizeResult.SpeakerAudioKey` 改为按拼接顺序的 audioKey 序列；回退路径单值语义不变（单元素序列 = 原值），控制器 join 输出逗号分隔 |
+| 补充 4 | 跨服务拼接上限对齐 | 新增 `Synthesize:MergedReferenceMaxTotalDurationMs`(600000)，`SynthesizeService` 在条数上限之外按片段总时长（`endMs` 空按 `Ai:AudioClipDefaultDurationMs` 兜底）预截断，与 recording `AudioMergeMaxTotalDurationMs` 同口径，避免合并请求超限被 400 后静默降级为单片段；`MergedReferenceLimit ≤ AudioMergeMaxItems` 由运维口径保证（AGENTS.md 记录） |
 
 ## 2. 分支与提交流程
 

@@ -107,7 +107,7 @@ synthesize 的音色参考由「整段文本字符相似匹配单条」升级为
   - [ ] 拼音匹配有候选时，speaker 参考为多条命中数据音频的拼接结果；
   - [ ] 响应命中头可体现参与拼接的数据（多个音频 key）；
   - [ ] 情绪参考（`llm`/`dataset`/`none`）行为不变；
-  - [ ] 拼接音源取数失败时按既有口径降级/报错（次优兜底、全失败 502），不返回损坏音频。
+  - [ ] 拼接音源取数失败时按既有口径降级/报错（合并整体失败按序用首个可用单片段兜底、全部命中条目音频不可用 → 502 `audio unavailable`），不返回损坏音频。
 
 ### 3.3 用户操作流程
 
@@ -159,7 +159,7 @@ flowchart LR
 | 数据集无候选短句（条目全为空文本、或未重建索引） | 回退原字符相似匹配；仍无候选 → 409 `no speaker reference` |
 | 输入文本拆分后为空（纯标点/空白） | 400 `text is required`（同既有空文本口径） |
 | 某输入短句与所有候选相似度都很低 | 仍取该句最相似 1 条（与现字符匹配「总取 top-1」同口径；相似度阈值调优留待后续） |
-| 命中数据的音频取数失败 | 该数据跳过，用次优命中兜底；全部失败 → 502 `audio unavailable` |
+| 命中数据的音频取数失败 | 该数据跳过；合并整体失败按序用首个可用单片段兜底；全部命中条目音频不可用 → 502 `audio unavailable` |
 | 合并接口片段数超上限 / 参数非法 | 400 明确错误 |
 | 合并接口任一文件不存在 | 404 明确错误 |
 | 情绪向量检索不可用 / 无情绪标注 | 降级中性合成（既有行为，不变） |
@@ -205,5 +205,6 @@ flowchart LR
 ## 六、相关文档
 
 - 技术提案：[[20261001-proposal-training-synthesize-pinyin-match]]（docs/engineering/proposals/20261001-proposal-training-synthesize-pinyin-match.md）
+- 实现 Plan：`docs/engineering/plans/20261001-plan-training-synthesize-pinyin-match.md`
 - 关联 PRD：[[20260929-training-audio-synthesize-prd]]（docs/product/draft/20260929-training-audio-synthesize-prd.md）
 - 关联提案：[[20261001-proposal-training-synthesize-char-match]]（docs/engineering/proposals/20261001-proposal-training-synthesize-char-match.md）
