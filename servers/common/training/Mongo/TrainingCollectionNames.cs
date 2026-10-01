@@ -7,5 +7,6 @@ public static class TrainingCollectionNames
     public const string TrainingProviders = "training_providers";
     public const string TrainingModels = "training_models";
     public const string TrainingEmotionTasks = "training_emotion_tasks";
+    public const string TrainingFeaturePoints = "training_feature_points";
     public const string TrainingDatasetItemSegments = "training_dataset_item_segments";
 }

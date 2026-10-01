@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  Alert,
+  App as AntdApp,
+  Button,
+  Checkbox,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import {
   getTranscriptSettings,
   setRoomAutoEnqueue,
   listTranscriptModels,
@@ -14,14 +30,6 @@ type TranscriptSettingsItem = transcriptComponents['schemas']['TranscriptSetting
 type TranscriptModel = transcriptComponents['schemas']['TranscriptModel']
 type CandidateRoom = transcriptComponents['schemas']['CandidateRoom']
 
-const inputStyle: React.CSSProperties = {
-  padding: '0.5rem',
-  backgroundColor: '#334155',
-  color: '#e2e8f0',
-  border: '1px solid #475569',
-  borderRadius: '0.25rem',
-}
-
 function normalizeConcurrency(value: string | number | null | undefined): number {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed < 1) {
@@ -31,6 +39,7 @@ function normalizeConcurrency(value: string | number | null | undefined): number
 }
 
 export function SettingsTab() {
+  const { message, modal } = AntdApp.useApp()
   const [settings, setSettings] = useState<TranscriptSettingsItem[]>([])
   const [models, setModels] = useState<TranscriptModel[]>([])
   const [candidates, setCandidates] = useState<CandidateRoom[]>([])
@@ -41,16 +50,14 @@ export function SettingsTab() {
 
   const [newRoomId, setNewRoomId] = useState('')
   const [newRoomModelId, setNewRoomModelId] = useState('')
-  const [addMessage, setAddMessage] = useState<string | null>(null)
-  const [addError, setAddError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
 
   const [modelName, setModelName] = useState('')
   const [modelApiKey, setModelApiKey] = useState('')
   const [modelIdentifier, setModelIdentifier] = useState('')
   const [modelMaxConcurrency, setModelMaxConcurrency] = useState('1')
   const [modelEnabled, setModelEnabled] = useState(true)
-  const [modelMessage, setModelMessage] = useState<string | null>(null)
-  const [modelError, setModelError] = useState<string | null>(null)
+  const [creatingModel, setCreatingModel] = useState(false)
   const [concurrencyDrafts, setConcurrencyDrafts] = useState<Record<string, string>>({})
   const [bindingDrafts, setBindingDrafts] = useState<Record<number, string>>({})
 
@@ -89,8 +96,7 @@ export function SettingsTab() {
 
     const targetModelId = item.modelId ?? bindingDrafts[item.roomId]
     if (!item.enabled && !targetModelId) {
-      setError('请先选择识别模型，自动转写需要绑定模型')
-      setRetryAction(null)
+      message.error('请先选择识别模型，自动转写需要绑定模型')
       return
     }
 
@@ -102,6 +108,7 @@ export function SettingsTab() {
       } else {
         await setRoomAutoEnqueue(item.roomId, true, targetModelId ?? undefined)
       }
+      message.success(item.enabled ? '已关闭自动识别' : '已开启自动识别')
       await fetchAll()
     } catch {
       setError('自动识别设置更新失败')
@@ -116,6 +123,7 @@ export function SettingsTab() {
       setError(null)
       setRetryAction(null)
       await deleteTranscriptSettings(roomId)
+      message.success('自动识别设置已删除')
       await fetchAll()
     } catch {
       setError('删除自动识别设置失败')
@@ -129,43 +137,44 @@ export function SettingsTab() {
     if (typeof item.roomId !== 'number') {
       return
     }
-    if (!window.confirm(`确认删除直播间 ${item.roomId} 的自动识别设置？`)) {
-      return
-    }
-    void performDelete(item.roomId)
+    modal.confirm({
+      title: `确认删除直播间 ${item.roomId} 的自动识别设置？`,
+      content: '删除后该直播间不再自动发起转写。',
+      okText: '确认删除',
+      cancelText: '返回',
+      okButtonProps: { danger: true },
+      onOk: () => performDelete(item.roomId as number),
+    })
   }
 
-  const handleAddAuto = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setAddError(null)
-    setAddMessage(null)
-
+  const handleAddAuto = async () => {
     const roomId = Number(newRoomId)
     if (!Number.isInteger(roomId) || roomId <= 0) {
-      setAddError('请输入有效的直播间号')
+      message.error('请输入有效的直播间号')
       return
     }
-
     if (!newRoomModelId) {
-      setAddError('请先选择识别模型')
+      message.error('请先选择识别模型')
       return
     }
 
-    const submit = async () => {
-      try {
-        setError(null)
-        setRetryAction(null)
-        await setRoomAutoEnqueue(roomId, true, newRoomModelId)
-        setNewRoomId('')
-        setNewRoomModelId('')
-        setAddMessage('已添加自动识别')
-        await fetchAll()
-      } catch {
-        setError('添加自动识别失败')
-        setRetryAction(() => submit)
-      }
+    setAdding(true)
+    try {
+      setError(null)
+      setRetryAction(null)
+      await setRoomAutoEnqueue(roomId, true, newRoomModelId)
+      setNewRoomId('')
+      setNewRoomModelId('')
+      message.success('已添加自动识别')
+      await fetchAll()
+    } catch {
+      setError('添加自动识别失败')
+      setRetryAction(() => () => {
+        void handleAddAuto()
+      })
+    } finally {
+      setAdding(false)
     }
-    await submit()
   }
 
   const retryFailedAction = () => {
@@ -175,24 +184,21 @@ export function SettingsTab() {
     void action()
   }
 
-  const handleCreateModel = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setModelMessage(null)
-    setModelError(null)
-
+  const handleCreateModel = async () => {
     if (!modelName.trim()) {
-      setModelError('请输入模型名称')
+      message.error('请输入模型名称')
       return
     }
     if (!modelIdentifier.trim()) {
-      setModelError('请输入识别模型')
+      message.error('请输入识别模型')
       return
     }
     if (!modelApiKey.trim()) {
-      setModelError('请输入 API Key')
+      message.error('请输入 API Key')
       return
     }
 
+    setCreatingModel(true)
     try {
       await createTranscriptModel({
         name: modelName,
@@ -208,11 +214,13 @@ export function SettingsTab() {
       setModelIdentifier('')
       setModelMaxConcurrency('1')
       setModelEnabled(true)
-      setModelMessage('模型已添加')
+      message.success('模型已添加')
       const modelsData = await listTranscriptModels()
       setModels(modelsData)
     } catch {
-      setModelError('添加模型失败')
+      message.error('添加模型失败')
+    } finally {
+      setCreatingModel(false)
     }
   }
 
@@ -228,278 +236,261 @@ export function SettingsTab() {
       const modelsData = await listTranscriptModels()
       setModels(modelsData)
     } catch {
-      setModelError('模型更新失败')
+      message.error('模型更新失败')
     }
   }
 
+  const settingsColumns: ColumnsType<TranscriptSettingsItem> = [
+    {
+      title: '主播',
+      key: 'anchor',
+      render: (_value, item) => `${item.anchorName ?? '-'}（${item.roomId}）`,
+    },
+    {
+      title: '识别模型',
+      key: 'model',
+      render: (_value, item) =>
+        item.modelId ? (
+          (item.modelName ?? item.modelId)
+        ) : (
+          <Space size={8}>
+            <Tag color="warning">待完善</Tag>
+            <Select
+              aria-label={`识别模型-${item.roomId}`}
+              value={bindingDrafts[item.roomId] ?? undefined}
+              placeholder="选择识别模型"
+              style={{ width: 180 }}
+              onChange={(value) =>
+                setBindingDrafts((prev) => ({ ...prev, [item.roomId as number]: value }))
+              }
+              options={enabledModels.map((model) => ({
+                value: model.id as string,
+                label: model.name as string,
+              }))}
+            />
+          </Space>
+        ),
+    },
+    {
+      title: '自动识别',
+      key: 'enabled',
+      width: 100,
+      render: (_value, item) => (item.enabled ? '已开启' : '已关闭'),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 180,
+      render: (_value, item) => (
+        <Space size={8}>
+          <Button onClick={() => handleToggleAuto(item)}>
+            {item.enabled ? '关闭' : '开启'}
+          </Button>
+          {typeof item.roomId === 'number' && (
+            <Button
+              danger
+              aria-label={`删除自动识别-${item.roomId}`}
+              onClick={() => handleDelete(item)}
+            >
+              删除
+            </Button>
+          )}
+        </Space>
+      ),
+    },
+  ]
+
+  const modelColumns: ColumnsType<TranscriptModel> = [
+    { title: '名称', dataIndex: 'name' },
+    { title: '识别模型', dataIndex: 'model', render: (value) => value ?? '-' },
+    { title: '提供方', dataIndex: 'provider' },
+    {
+      title: '状态',
+      key: 'enabled',
+      width: 100,
+      render: (_value, model) => (model.enabled ? '已启用' : '已禁用'),
+    },
+    {
+      title: '最大并发',
+      key: 'concurrency',
+      width: 200,
+      render: (_value, model) => (
+        <Space size={8}>
+          <InputNumber
+            aria-label={`最大并发-${model.name}`}
+            min={1}
+            value={
+              concurrencyDrafts[model.id ?? ''] !== undefined
+                ? Number(concurrencyDrafts[model.id ?? ''])
+                : (model.maxConcurrency ?? 1)
+            }
+            onChange={(value) =>
+              setConcurrencyDrafts((prev) => ({
+                ...prev,
+                [model.id ?? '']: String(value ?? ''),
+              }))
+            }
+            style={{ width: 80 }}
+          />
+          <Button
+            onClick={() =>
+              handleUpdateModel(model, {
+                maxConcurrency: normalizeConcurrency(
+                  concurrencyDrafts[model.id ?? ''] ?? model.maxConcurrency,
+                ),
+              })
+            }
+          >
+            保存
+          </Button>
+        </Space>
+      ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 100,
+      render: (_value, model) => (
+        <Button onClick={() => handleUpdateModel(model, { enabled: !model.enabled })}>
+          {model.enabled ? '禁用' : '启用'}
+        </Button>
+      ),
+    },
+  ]
+
   if (loading && !initialized) {
-    return <p>加载中...</p>
+    return (
+      <div style={{ textAlign: 'center', padding: 32 }}>
+        <Typography.Text type="secondary">加载中...</Typography.Text>
+      </div>
+    )
   }
 
   return (
     <div>
       {error && (
-        <div
-          role="alert"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.75rem',
-            border: '1px solid #7f1d1d',
-            backgroundColor: '#450a0a',
-            padding: '0.5rem 0.75rem',
-            borderRadius: '0.25rem',
-            marginBottom: '1rem',
-          }}
-        >
-          <span style={{ color: '#f87171' }}>{error}</span>
-          <button onClick={retryFailedAction} style={{ padding: '0.25rem 0.75rem' }}>
-            重试
-          </button>
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          title={error}
+          style={{ marginBottom: 16 }}
+          action={<Button onClick={retryFailedAction}>重试</Button>}
+        />
       )}
 
-      <section style={{ marginBottom: '2rem' }}>
-        <h3>识别设置</h3>
+      <Typography.Title level={4}>识别设置</Typography.Title>
 
-        {settings.length === 0 ? (
-          <p>暂无自动识别配置</p>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>主播</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>识别模型</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>自动识别</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {settings.map((item) => (
-                <tr key={item.roomId}>
-                  <td style={{ padding: '0.5rem' }}>
-                    {item.anchorName ?? '-'}（{item.roomId}）
-                  </td>
-                  <td style={{ padding: '0.5rem' }}>
-                    {item.modelId ? (
-                      item.modelName ?? item.modelId
-                    ) : (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <span
-                          style={{
-                            color: '#fbbf24',
-                            border: '1px solid #b45309',
-                            borderRadius: '0.25rem',
-                            padding: '0 0.35rem',
-                          }}
-                        >
-                          待完善
-                        </span>
-                        <select
-                          aria-label={`识别模型-${item.roomId}`}
-                          value={bindingDrafts[item.roomId] ?? ''}
-                          onChange={(e) =>
-                            setBindingDrafts((prev) => ({
-                              ...prev,
-                              [item.roomId]: e.target.value,
-                            }))
-                          }
-                          style={inputStyle}
-                        >
-                          <option value="">选择识别模型</option>
-                          {enabledModels.map((model) => (
-                            <option key={model.id} value={model.id}>
-                              {model.name}
-                            </option>
-                          ))}
-                        </select>
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ padding: '0.5rem' }}>{item.enabled ? '已开启' : '已关闭'}</td>
-                  <td style={{ padding: '0.5rem' }}>
-                    <button
-                      onClick={() => handleToggleAuto(item)}
-                      style={{ padding: '0.25rem 0.5rem' }}
-                    >
-                      {item.enabled ? '关闭' : '开启'}
-                    </button>
-                    {typeof item.roomId === 'number' && (
-                      <button
-                        onClick={() => handleDelete(item)}
-                        aria-label={`删除自动识别-${item.roomId}`}
-                        style={{ marginLeft: '0.5rem', padding: '0.25rem 0.5rem' }}
-                      >
-                        删除
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <Table<TranscriptSettingsItem>
+        rowKey={(item) => String(item.roomId)}
+        columns={settingsColumns}
+        dataSource={settings}
+        pagination={false}
+        locale={{ emptyText: <Empty description="暂无自动识别配置" /> }}
+        style={{ marginBottom: 16 }}
+      />
 
-        <form
-          onSubmit={handleAddAuto}
-          noValidate
-          style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}
+      <Space style={{ marginBottom: 8 }} wrap>
+        <Select
+          aria-label="直播间号"
+          placeholder="选择直播间"
+          value={newRoomId || undefined}
+          onChange={setNewRoomId}
+          style={{ width: 200 }}
+          options={candidates.map((candidate) => ({
+            value: String(candidate.roomId),
+            label: candidate.anchorName
+              ? `${candidate.anchorName}（${candidate.roomId}）`
+              : `${candidate.roomId}`,
+          }))}
+        />
+        <Select
+          aria-label="添加识别模型"
+          placeholder="选择识别模型"
+          value={newRoomModelId || undefined}
+          onChange={setNewRoomModelId}
+          style={{ width: 180 }}
+          options={enabledModels.map((model) => ({
+            value: model.id as string,
+            label: model.name as string,
+          }))}
+        />
+        <Button
+          type="primary"
+          disabled={candidates.length === 0}
+          loading={adding}
+          onClick={handleAddAuto}
         >
-          <select
-            aria-label="直播间号"
-            value={newRoomId}
-            onChange={(e) => setNewRoomId(e.target.value)}
-            style={{ ...inputStyle, width: '9rem' }}
-          >
-            <option value="">选择直播间</option>
-            {candidates.map((candidate) => (
-              <option key={candidate.roomId} value={String(candidate.roomId)}>
-                {candidate.anchorName
-                  ? `${candidate.anchorName}（${candidate.roomId}）`
-                  : `${candidate.roomId}`}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="添加识别模型"
-            value={newRoomModelId}
-            onChange={(e) => setNewRoomModelId(e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">选择识别模型</option>
-            {enabledModels.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            disabled={candidates.length === 0}
-            style={{ padding: '0.5rem 1rem' }}
-          >
-            添加自动识别
-          </button>
-        </form>
-        {candidates.length === 0 && (
-          <p style={{ color: '#94a3b8' }}>暂无可选主播</p>
-        )}
-        {addError && <p style={{ color: '#f87171' }}>{addError}</p>}
-        {addMessage && <p style={{ color: '#22c55e' }}>{addMessage}</p>}
-      </section>
+          添加自动识别
+        </Button>
+      </Space>
+      {candidates.length === 0 && (
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+          暂无可选主播
+        </Typography.Text>
+      )}
 
-      <section>
-        <h3>模型设置</h3>
+      <Typography.Title level={4} style={{ marginTop: 24 }}>
+        模型设置
+      </Typography.Title>
 
-        {models.length === 0 ? (
-          <p>暂无模型</p>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>名称</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>识别模型</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>提供方</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>状态</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>最大并发</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {models.map((model) => (
-                <tr key={model.id}>
-                  <td style={{ padding: '0.5rem' }}>{model.name}</td>
-                  <td style={{ padding: '0.5rem' }}>{model.model ?? '-'}</td>
-                  <td style={{ padding: '0.5rem' }}>{model.provider}</td>
-                  <td style={{ padding: '0.5rem' }}>{model.enabled ? '已启用' : '已禁用'}</td>
-                  <td style={{ padding: '0.5rem' }}>
-                    <input
-                      aria-label={`最大并发-${model.name}`}
-                      type="number"
-                      min={1}
-                      value={concurrencyDrafts[model.id ?? ''] ?? String(model.maxConcurrency ?? 1)}
-                      onChange={(e) =>
-                        setConcurrencyDrafts((prev) => ({
-                          ...prev,
-                          [model.id ?? '']: e.target.value,
-                        }))
-                      }
-                      style={{ ...inputStyle, width: '5rem' }}
-                    />
-                    <button
-                      onClick={() =>
-                        handleUpdateModel(model, {
-                          maxConcurrency: normalizeConcurrency(
-                            concurrencyDrafts[model.id ?? ''] ?? model.maxConcurrency,
-                          ),
-                        })
-                      }
-                      style={{ marginLeft: '0.5rem', padding: '0.25rem 0.5rem' }}
-                    >
-                      保存
-                    </button>
-                  </td>
-                  <td style={{ padding: '0.5rem' }}>
-                    <button
-                      onClick={() => handleUpdateModel(model, { enabled: !model.enabled })}
-                      style={{ padding: '0.25rem 0.5rem' }}
-                    >
-                      {model.enabled ? '禁用' : '启用'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <Table<TranscriptModel>
+        rowKey={(model) => model.id ?? ''}
+        columns={modelColumns}
+        dataSource={models}
+        pagination={false}
+        locale={{ emptyText: <Empty description="暂无模型" /> }}
+        style={{ marginBottom: 16 }}
+      />
 
-        <h4>添加模型</h4>
-        <form onSubmit={handleCreateModel} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <input
+      <Typography.Title level={5}>添加模型</Typography.Title>
+      <Form layout="inline" style={{ rowGap: 12 }}>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Input
             aria-label="模型名称"
             placeholder="模型名称"
             value={modelName}
             onChange={(e) => setModelName(e.target.value)}
-            style={inputStyle}
+            style={{ width: 160 }}
           />
-          <input
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Input
             aria-label="识别模型"
             placeholder="识别模型（如 fun-asr-realtime）"
             value={modelIdentifier}
             onChange={(e) => setModelIdentifier(e.target.value)}
-            style={inputStyle}
+            style={{ width: 220 }}
           />
-          <input
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Input.Password
             aria-label="API Key"
             placeholder="API Key"
-            type="password"
             value={modelApiKey}
             onChange={(e) => setModelApiKey(e.target.value)}
-            style={inputStyle}
+            style={{ width: 180 }}
           />
-          <input
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <InputNumber
             aria-label="最大并发数"
-            type="number"
             min={1}
-            value={modelMaxConcurrency}
-            onChange={(e) => setModelMaxConcurrency(e.target.value)}
-            style={{ ...inputStyle, width: '6rem' }}
+            value={Number(modelMaxConcurrency)}
+            onChange={(value) => setModelMaxConcurrency(String(value ?? 1))}
+            style={{ width: 100 }}
           />
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-            <input
-              type="checkbox"
-              checked={modelEnabled}
-              onChange={(e) => setModelEnabled(e.target.checked)}
-            />
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Checkbox checked={modelEnabled} onChange={(e) => setModelEnabled(e.target.checked)}>
             启用
-          </label>
-          <button type="submit" style={{ padding: '0.5rem 1rem' }}>
+          </Checkbox>
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Button type="primary" loading={creatingModel} onClick={handleCreateModel}>
             添加
-          </button>
-        </form>
-        {modelMessage && <p style={{ color: '#22c55e' }}>{modelMessage}</p>}
-        {modelError && <p style={{ color: '#f87171' }}>{modelError}</p>}
-      </section>
+          </Button>
+        </Form.Item>
+      </Form>
     </div>
   )
 }

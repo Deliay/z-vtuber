@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { DatasetItemList } from './DatasetItemList'
 import type { WaveformLoader, WaveformLoadOptions } from './waveformLoader'
 import type { components } from '../../api/schema-training'
@@ -16,6 +17,7 @@ vi.mock('../../api/client', async (importOriginal) => {
     updateTrainingDatasetItem: vi.fn(),
     batchDeleteTrainingDatasetItems: vi.fn(),
     listTrainingModels: vi.fn(),
+    resolveFeaturePointModel: vi.fn(),
     recognizeTrainingDatasetItem: vi.fn(),
     createEmotionTasks: vi.fn(),
   }
@@ -25,6 +27,7 @@ const mockListItems = vi.mocked(client.listTrainingDatasetItems)
 const mockUpdateItem = vi.mocked(client.updateTrainingDatasetItem)
 const mockBatchDelete = vi.mocked(client.batchDeleteTrainingDatasetItems)
 const mockListModels = vi.mocked(client.listTrainingModels)
+const mockResolveFeaturePoint = vi.mocked(client.resolveFeaturePointModel)
 const mockRecognize = vi.mocked(client.recognizeTrainingDatasetItem)
 const mockCreateEmotionTasks = vi.mocked(client.createEmotionTasks)
 
@@ -77,6 +80,8 @@ const model: TrainingModel = {
   model: 'gpt-4o',
   slug: 'openai-prod/gpt-4o',
   enabled: true,
+  inputCapabilities: ['audio', 'text'],
+  outputCapabilities: ['text'],
   createdAt: '2026-09-27T00:00:00Z',
   updatedAt: '2026-09-27T00:00:00Z',
 }
@@ -120,6 +125,24 @@ function enableAudioInfo(): void {
   fireEvent.click(screen.getByLabelText('音频信息'))
 }
 
+/** 打开 antd Select 并按选项文本（title）选择。 */
+async function pickOption(ariaLabel: string, optionText: string, scope?: HTMLElement) {
+  fireEvent.mouseDown(within(scope ?? document.body).getByRole('combobox', { name: ariaLabel }))
+  await waitFor(() => {
+    expect(document.querySelectorAll('.ant-select-item-option').length).toBeGreaterThan(0)
+  })
+  const option = Array.from(document.querySelectorAll('.ant-select-item-option')).find((el) =>
+    (el.getAttribute('title') ?? '').includes(optionText),
+  )
+  if (!option) throw new Error(`option not found: ${optionText}`)
+  fireEvent.click(option)
+}
+
+/** 确认 antd Modal.confirm 的删除（okText「确认删除」）。 */
+async function confirmDelete() {
+  fireEvent.click(await screen.findByRole('button', { name: '确认删除' }))
+}
+
 describe('DatasetItemList', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -131,6 +154,12 @@ describe('DatasetItemList', () => {
     }))
     mockBatchDelete.mockResolvedValue({ deleted: 2 })
     mockListModels.mockResolvedValue([model])
+    mockResolveFeaturePoint.mockResolvedValue({
+      slug: 'dataset-clean',
+      modelId: null,
+      modelSlug: null,
+      source: 'none',
+    })
     mockCreateEmotionTasks.mockResolvedValue({ created: 1, skipped: 0 })
   })
 
@@ -165,32 +194,29 @@ describe('DatasetItemList', () => {
     enableAudioInfo()
 
     const table = screen.getByRole('table')
-    expect(table.style.width).toBe('100%')
-    expect(table.style.borderCollapse).toBe('collapse')
     // 固定表格布局：次要列限宽后不会撑宽表格
     expect(table.style.tableLayout).toBe('fixed')
 
-    // 来源/地址/标识三列：限宽 + 省略号截断（不绑死具体像素值，仅断言样式契约）
-    for (const column of ['音频来源', '音频地址', '音频标识']) {
-      const header = screen.getByRole('columnheader', { name: column })
-      expect(header.style.maxWidth).not.toBe('')
-      expect(header.style.overflow).toBe('hidden')
-      expect(header.style.textOverflow).toBe('ellipsis')
-      expect(header.style.whiteSpace).toBe('nowrap')
-    }
-
-    // 数据单元格同样截断，并以 title 悬浮展示完整值
+    // 地址/标识列：限宽截断，且完整值对键盘可达（可聚焦 + Tooltip）
     const uriCell = screen.getByText('b/live/101/recordings/a.flv')
-    expect(uriCell.style.textOverflow).toBe('ellipsis')
-    expect(uriCell).toHaveAttribute('title', 'b/live/101/recordings/a.flv')
+    expect(uriCell.className).toContain('z-truncated')
+    expect(uriCell).toHaveAttribute('tabindex', '0')
     const keyCell = screen.getByText('transcript:t1:0')
-    expect(keyCell.style.overflow).toBe('hidden')
-    expect(keyCell).toHaveAttribute('title', 'transcript:t1:0')
+    expect(keyCell.className).toContain('z-truncated')
+    expect(keyCell).toHaveAttribute('tabindex', '0')
 
-    // 「文本」列不设 max-width，正常换行展示全文
-    const textHeader = screen.getByRole('columnheader', { name: '文本' })
-    expect(textHeader.style.maxWidth).toBe('')
-    expect(textHeader.style.whiteSpace).not.toBe('nowrap')
+    // 键盘 focus 即展示完整 Tooltip（不只 hover）
+    fireEvent.focus(uriCell)
+    expect(
+      (await screen.findAllByRole('tooltip')).some(
+        (tip) => tip.textContent === 'b/live/101/recordings/a.flv',
+      ),
+    ).toBe(true)
+    fireEvent.blur(uriCell)
+
+    // 「文本」列不截断，正常换行展示全文
+    const textCell = screen.getByText('第一句')
+    expect(textCell.className).not.toContain('z-truncated')
 
     // 仅「文本」列对应的 col 不设宽度 → 占满剩余宽度（1 勾选 + 6 音频 + 1 文本 + 10 情绪 + 1 操作）
     const cols = table.querySelectorAll('colgroup col')
@@ -207,17 +233,15 @@ describe('DatasetItemList', () => {
 
     editRow('transcript:t1:0')
 
-    // 「文本」编辑态为多行 textarea 且占满单元格（aria-label 保持不变）
+    // 「文本」编辑态为多行 textarea（aria-label 保持不变），antd autoSize 负责撑满与换行
     const textEditor = screen.getByLabelText('文本') as HTMLTextAreaElement
     expect(textEditor.tagName).toBe('TEXTAREA')
-    expect(textEditor.rows).toBeGreaterThan(1)
-    expect(textEditor.style.width).toBe('100%')
-    expect(textEditor.style.boxSizing).toBe('border-box')
+    expect(textEditor.className).toContain('ant-input')
+    expect(textEditor.style.minHeight).not.toBe('')
 
-    // 编辑态「音频地址」等输入同样 width:100% + box-sizing，不撑破列宽约束
+    // 编辑态「音频地址」等输入同样由 antd 撑满单元格，不撑破列宽约束
     const uriEditor = screen.getByLabelText('音频地址') as HTMLInputElement
-    expect(uriEditor.style.width).toBe('100%')
-    expect(uriEditor.style.boxSizing).toBe('border-box')
+    expect(uriEditor.className).toContain('ant-input')
   })
 
   it('should edit audio uri, text and the m:ss positions and save them as milliseconds', async () => {
@@ -298,7 +322,6 @@ describe('DatasetItemList', () => {
   })
 
   it('should batch delete the checked items after a confirm and refresh the list', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
@@ -309,7 +332,8 @@ describe('DatasetItemList', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '批量删除' }))
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('删除'))
+    expect(await screen.findByText(/删除后不可恢复/)).toBeInTheDocument()
+    await confirmDelete()
     await waitFor(() => {
       expect(mockBatchDelete).toHaveBeenCalledWith('d1', ['i1', 'i2'])
     })
@@ -322,13 +346,13 @@ describe('DatasetItemList', () => {
   })
 
   it('should not batch delete when the confirm is rejected', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
 
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 transcript:t1:0' }))
     fireEvent.click(screen.getByRole('button', { name: '批量删除' }))
+    fireEvent.click(await screen.findByRole('button', { name: '取消' }))
 
     expect(mockBatchDelete).not.toHaveBeenCalled()
     expect(screen.getByRole('checkbox', { name: '选择 transcript:t1:0' })).toBeChecked()
@@ -341,17 +365,15 @@ describe('DatasetItemList', () => {
 
     expect(screen.queryByText('来源: t1（2 条）')).not.toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText('分组方式'), { target: { value: 'source' } })
+    await pickOption('分组方式', '按来源')
     expect(await screen.findByText('来源: t1（2 条）')).toBeInTheDocument()
     expect(screen.getByText('来源: t2（1 条）')).toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText('分组方式'), {
-      target: { value: 'audioType' },
-    })
+    await pickOption('分组方式', '按类型')
     expect(await screen.findByText('类型: transcript（3 条）')).toBeInTheDocument()
     expect(screen.queryByText('来源: t1（2 条）')).not.toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText('分组方式'), { target: { value: 'none' } })
+    await pickOption('分组方式', '不分组')
     expect(screen.queryByText('类型: transcript（3 条）')).not.toBeInTheDocument()
   })
 
@@ -411,7 +433,7 @@ describe('DatasetItemList', () => {
     await screen.findByText('第一句')
     enableAudioInfo()
 
-    fireEvent.change(screen.getByLabelText('分组方式'), { target: { value: 'source' } })
+    await pickOption('分组方式', '按来源')
     await screen.findByText('来源: t1（2 条）')
 
     fireEvent.click(screen.getByText('transcript:t1:61000'))
@@ -423,12 +445,11 @@ describe('DatasetItemList', () => {
   })
 
   it('should select a whole group from the group header and batch delete it', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { loader } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
 
-    fireEvent.change(screen.getByLabelText('分组方式'), { target: { value: 'source' } })
+    await pickOption('分组方式', '按来源')
     await screen.findByText('来源: t1（2 条）')
 
     fireEvent.click(screen.getByRole('checkbox', { name: '全选分组 t1' }))
@@ -443,14 +464,14 @@ describe('DatasetItemList', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '批量删除' }))
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('删除'))
+    expect(await screen.findByText(/删除后不可恢复/)).toBeInTheDocument()
+    await confirmDelete()
     await waitFor(() => {
       expect(mockBatchDelete).toHaveBeenCalledWith('d1', ['i1', 'i2'])
     })
   })
 
   it('should keep the list operations usable when an item has no playable audio', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { loader, load } = createLoader()
     renderList({ waveformLoader: loader })
     await screen.findByText('第一句')
@@ -464,7 +485,8 @@ describe('DatasetItemList', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 transcript:t1:0' }))
     fireEvent.click(screen.getByRole('button', { name: '批量删除' }))
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('删除'))
+    expect(await screen.findByText(/删除后不可恢复/)).toBeInTheDocument()
+    await confirmDelete()
     await waitFor(() => {
       expect(mockBatchDelete).toHaveBeenCalledWith('d1', ['i1'])
     })
@@ -582,8 +604,16 @@ describe('DatasetItemList', () => {
     await screen.findByText('情绪句')
 
     const description = screen.getByText('克制的失落，语调低缓')
-    expect(description).toHaveAttribute('title', '克制的失落，语调低缓')
-    expect(description.style.textOverflow).toBe('ellipsis')
+    expect(description.className).toContain('z-truncated')
+    expect(description).toHaveAttribute('tabindex', '0')
+    // 键盘 focus 展示完整 Tooltip
+    fireEvent.focus(description)
+    expect(
+      (await screen.findAllByRole('tooltip')).some(
+        (tip) => tip.textContent === '克制的失落，语调低缓',
+      ),
+    ).toBe(true)
+    fireEvent.blur(description)
     expect(screen.getByText('0.6')).toBeInTheDocument()
     expect(screen.getByText('0.7')).toBeInTheDocument()
   })
@@ -596,9 +626,9 @@ describe('DatasetItemList', () => {
     editRow('transcript:t1:0')
     fireEvent.click(screen.getByRole('button', { name: '重新识别' }))
 
-    expect(await screen.findByRole('dialog', { name: '重新识别' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
     await waitFor(() => {
-      expect(mockListModels).toHaveBeenCalledWith(true)
+      expect(mockListModels).toHaveBeenCalledWith(true, 'audio,text', 'text')
     })
   })
 
@@ -614,8 +644,8 @@ describe('DatasetItemList', () => {
     fireEvent.change(screen.getByLabelText('文本'), { target: { value: '过期草稿' } })
     fireEvent.click(screen.getByRole('button', { name: '重新识别' }))
 
-    const dialog = await screen.findByRole('dialog', { name: '重新识别' })
-    fireEvent.change(within(dialog).getByLabelText('识别模型'), { target: { value: 'm1' } })
+    const dialog = await screen.findByRole('dialog')
+    await pickOption('识别模型', 'openai-prod/gpt-4o', dialog)
     fireEvent.click(within(dialog).getByRole('button', { name: '识别' }))
     await waitFor(() => {
       expect(within(dialog).getByLabelText('文本')).toHaveValue('识别后的文本')
@@ -632,9 +662,12 @@ describe('DatasetItemList', () => {
       })
     })
     // 保存成功后关闭对话框并退出该行内联编辑，旧草稿不再可回写
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: '重新识别' })).not.toBeInTheDocument()
-    })
+    await waitFor(
+      () => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      },
+      { timeout: 3000 },
+    )
     expect(screen.queryByLabelText('文本')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
     expect(screen.getByText('识别后的文本')).toBeInTheDocument()
@@ -656,8 +689,8 @@ describe('DatasetItemList', () => {
     fireEvent.change(screen.getByLabelText('结束时间'), { target: { value: '3:00' } })
     fireEvent.click(screen.getByRole('button', { name: '重新识别' }))
 
-    const dialog = await screen.findByRole('dialog', { name: '重新识别' })
-    fireEvent.change(within(dialog).getByLabelText('识别模型'), { target: { value: 'm1' } })
+    const dialog = await screen.findByRole('dialog')
+    await pickOption('识别模型', 'openai-prod/gpt-4o', dialog)
     fireEvent.click(within(dialog).getByRole('button', { name: '识别' }))
     await waitFor(() => {
       expect(within(dialog).getByLabelText('文本')).toHaveValue('识别后的文本')
@@ -689,7 +722,7 @@ describe('DatasetItemList', () => {
     expect(emotionButton).toHaveAttribute('aria-disabled', 'false')
 
     fireEvent.click(emotionButton)
-    expect(await screen.findByRole('dialog', { name: '情绪识别' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
   })
 
   it('should submit emotion tasks for the selected items and refresh the list', async () => {
@@ -701,9 +734,7 @@ describe('DatasetItemList', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 transcript:t1:61000' }))
     fireEvent.click(screen.getByRole('button', { name: '情绪识别' }))
 
-    fireEvent.change(await screen.findByLabelText('情绪识别模型'), {
-      target: { value: 'm1' },
-    })
+    await pickOption('情绪识别模型', 'openai-prod/gpt-4o')
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
 
     await waitFor(() => {
@@ -722,9 +753,7 @@ describe('DatasetItemList', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 transcript:t1:0' }))
     fireEvent.click(screen.getByRole('button', { name: '情绪识别' }))
-    fireEvent.change(await screen.findByLabelText('情绪识别模型'), {
-      target: { value: 'm1' },
-    })
+    await pickOption('情绪识别模型', 'openai-prod/gpt-4o')
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
 
     await waitFor(() => {

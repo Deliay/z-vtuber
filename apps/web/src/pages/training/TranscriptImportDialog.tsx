@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Alert, Button, Form, Modal, Select, Typography } from 'antd'
 import {
   apiErrorMessage,
   importTrainingDatasetItems,
@@ -77,75 +78,44 @@ export function TranscriptImportDialog({
   }
 
   return (
-    <div
-      className="transcript-import-overlay"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000,
-      }}
-      // 点击遮罩关闭；导入进行中忽略，避免卸载弹窗丢失「已导入/跳过」结果反馈
-      onClick={() => {
-        if (!busy) onClose()
-      }}
-    >
-      <div
-        role="dialog"
-        aria-label="从 Transcript 导入"
-        aria-modal="true"
-        className="transcript-import-dialog"
-        style={{
-          backgroundColor: '#1e293b',
-          color: '#e2e8f0',
-          padding: '1.5rem',
-          borderRadius: '0.5rem',
-          minWidth: '400px',
-          maxWidth: '90vw',
-          maxHeight: '90vh',
-          overflow: 'auto',
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h3>从 Transcript 导入</h3>
-
-        <label htmlFor="import-task">识别任务</label>
-        <select
-          id="import-task"
-          value={taskId}
-          onChange={(event) => setTaskId(event.target.value)}
-        >
-          <option value="">请选择识别任务</option>
-          {tasks.map((task) => (
-            <option key={task.id} value={task.id}>
-              {taskLabel(task)}
-            </option>
-          ))}
-        </select>
-
-        {tasks.length === 0 && !error && (
-          <div style={{ color: '#94a3b8' }}>暂无已识别完成的任务</div>
-        )}
-        {error && <div role="alert">{error}</div>}
-        {result && (
-          <div role="status">
-            已导入 {result.imported} 条，跳过 {result.skipped} 条
-          </div>
-        )}
-
-        <button onClick={handleImport} disabled={!taskId || busy}>
+    <Modal
+      title="从 Transcript 导入"
+      open
+      onCancel={onClose}
+      mask={{ closable: !busy }}
+      destroyOnHidden
+      footer={[
+        <Button key="import" type="primary" loading={busy} disabled={!taskId} onClick={handleImport}>
           确认导入
-        </button>
-        <button onClick={onClose} disabled={busy}>
+        </Button>,
+        <Button key="close" disabled={busy} onClick={onClose}>
           {result ? '完成' : '取消'}
-        </button>
-      </div>
-    </div>
+        </Button>,
+      ]}
+    >
+      <Form layout="vertical">
+        <Form.Item label="识别任务">
+          <Select
+            aria-label="识别任务"
+            value={taskId || undefined}
+            placeholder="请选择识别任务"
+            onChange={setTaskId}
+            options={tasks.map((task) => ({ value: task.id as string, label: taskLabel(task) }))}
+          />
+        </Form.Item>
+      </Form>
+
+      {tasks.length === 0 && !error && (
+        <Typography.Text type="secondary">暂无已识别完成的任务</Typography.Text>
+      )}
+      {error && <Alert type="error" showIcon title={error} />}
+      {result && (
+        <Alert
+          type="success"
+          showIcon
+          title={`已导入 ${result.imported} 条，跳过 ${result.skipped} 条`}
+        />
+      )}
+    </Modal>
   )
 }

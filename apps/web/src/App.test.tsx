@@ -48,7 +48,7 @@ describe('App', () => {
 
     expect(screen.getByTestId('training-datasets-page')).toBeInTheDocument()
     expect(screen.queryByTestId('subscription-page')).not.toBeInTheDocument()
-    expect(screen.getByText('数据集')).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByText('数据集').closest('li')).toHaveClass('ant-menu-item-selected')
   })
 
   it('should render subscription page by default', () => {
@@ -81,13 +81,13 @@ describe('App', () => {
     render(<App />)
 
     const subscriptionMenuItem = screen.getByText('订阅管理')
-    expect(subscriptionMenuItem).toHaveAttribute('aria-current', 'page')
+    expect(subscriptionMenuItem.closest('li')).toHaveClass('ant-menu-item-selected')
 
     fireEvent.click(screen.getByText('Cookie 管理'))
 
     const cookieMenuItem = screen.getByText('Cookie 管理')
-    expect(cookieMenuItem).toHaveAttribute('aria-current', 'page')
-    expect(subscriptionMenuItem).not.toHaveAttribute('aria-current')
+    expect(cookieMenuItem.closest('li')).toHaveClass('ant-menu-item-selected')
+    expect(subscriptionMenuItem.closest('li')).not.toHaveClass('ant-menu-item-selected')
   })
 
   it('should switch back to subscription page when subscription menu is clicked', () => {

@@ -1,14 +1,31 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  Alert,
+  Button,
+  Empty,
+  Space,
+  Spin,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from 'antd'
+import { AudioOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
+import { TruncatedText } from '../../components/TruncatedText'
+import type { ColumnsType } from 'antd/es/table'
+import {
   listRecordingStatus,
   listRecordings,
   recordingAudioUrl,
   recordingDownloadUrl,
 } from '../../api/client'
 import type { components } from '../../api/schema'
+import { PageHeader } from '../../components/PageHeader'
 
 type RecordingStatusItem = components['schemas']['RecordingStatusItem']
 type RecordingFile = components['schemas']['RecordingFile']
+
+export const RECORDING_REFRESH_INTERVAL = 5000
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
@@ -37,13 +54,11 @@ const STATE_LABELS: Record<string, string> = {
 }
 
 const STATE_COLORS: Record<string, string> = {
-  not_live: '#94a3b8',
-  recording: '#22c55e',
-  error: '#f87171',
-  unknown: '#eab308',
+  not_live: 'default',
+  recording: 'green',
+  error: 'red',
+  unknown: 'gold',
 }
-
-export const RECORDING_REFRESH_INTERVAL = 5000
 
 export function RecordingStatusPage() {
   const [items, setItems] = useState<RecordingStatusItem[]>([])
@@ -80,23 +95,15 @@ export function RecordingStatusPage() {
     }
   }, [])
 
-  const toggleRecordings = async (roomId: number) => {
-    if (expandedRoomId === roomId) {
-      setExpandedRoomId(null)
-      return
-    }
-
-    setExpandedRoomId(roomId)
+  const loadRecordings = async (roomId: number) => {
     setRecordingsError((prev) => {
       const next = { ...prev }
       delete next[roomId]
       return next
     })
-
     if (recordingsByRoom[roomId]) {
       return
     }
-
     try {
       setRecordingsLoading(roomId)
       const files = await listRecordings(roomId)
@@ -108,165 +115,170 @@ export function RecordingStatusPage() {
     }
   }
 
-  const renderFileList = (roomId: number) => {
+  const toggleRecordings = (roomId: number) => {
+    if (expandedRoomId === roomId) {
+      setExpandedRoomId(null)
+      return
+    }
+    setExpandedRoomId(roomId)
+    void loadRecordings(roomId)
+  }
+
+  const renderFileList = (roomId: number): ReactNode => {
     const files = recordingsByRoom[roomId]
     if (recordingsLoading === roomId) {
-      return <p style={{ margin: 0 }}>加载中...</p>
+      return <Spin />
     }
     if (recordingsError[roomId]) {
-      return <p style={{ margin: 0, color: '#f87171' }}>{recordingsError[roomId]}</p>
+      return <Typography.Text type="danger">{recordingsError[roomId]}</Typography.Text>
     }
     if (!files || files.length === 0) {
-      return <p style={{ margin: 0 }}>暂无历史录播</p>
+      return <Empty description="暂无历史录播" />
     }
 
     return (
-      <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+      <Space orientation="vertical" size={4}>
         {files.map((file) => (
-          <li key={file.name}>
-            <a href={recordingDownloadUrl(roomId, file.name)}>{file.name}</a>{' '}
-            <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
-              {file.info.title}
-            </span>{' '}
-            <span style={{ color: '#64748b', fontSize: '0.875rem' }}>
-              {formatBytes(file.size)}
-            </span>
-          </li>
+          <Space key={file.name} size={8} wrap>
+            <a href={recordingDownloadUrl(roomId, file.name)}>{file.name}</a>
+            <Typography.Text type="secondary">{file.info.title}</Typography.Text>
+            <Typography.Text type="secondary">{formatBytes(file.size)}</Typography.Text>
+          </Space>
         ))}
-      </ul>
+      </Space>
     )
   }
 
+  const rowKey = (item: RecordingStatusItem) => String(item.mid ?? item.roomId ?? '')
+
+  const expandedKeys = items
+    .filter(
+      (item) =>
+        item.roomId !== null && item.roomId !== undefined && item.roomId === expandedRoomId,
+    )
+    .map(rowKey)
+
+  const columns: ColumnsType<RecordingStatusItem> = [
+    {
+      title: '主播',
+      key: 'streamer',
+      render: (_value, item) =>
+        item.streamer?.name ? `${item.streamer.name}（${item.mid}）` : (item.mid ?? '-'),
+    },
+    { title: 'Room ID', dataIndex: 'roomId', width: 100, render: (value) => value ?? '-' },
+    {
+      title: '状态',
+      key: 'state',
+      width: 110,
+      render: (_value, item) => {
+        const state = item.state ?? 'unknown'
+        return <Tag color={STATE_COLORS[state] ?? 'default'}>{STATE_LABELS[state] ?? state}</Tag>
+      },
+    },
+    {
+      title: '实例',
+      dataIndex: 'hostName',
+      width: 180,
+      render: (value) => <TruncatedText text={String(value ?? '-')} />,
+    },
+    {
+      title: '场次',
+      dataIndex: 'sessionTitle',
+      render: (value) => <TruncatedText text={String(value ?? '-')} />,
+    },
+    {
+      title: '当前文件',
+      key: 'files',
+      render: (_value, item) => {
+        const files = item.files ?? []
+        const roomId = item.roomId ?? null
+        if (files.length === 0) return '-'
+        return (
+          <Space orientation="vertical" size={2}>
+            {files.map((file) => (
+              <span key={file}>
+                {roomId ? <a href={recordingDownloadUrl(roomId, file)}>{file}</a> : file}
+              </span>
+            ))}
+          </Space>
+        )
+      },
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 200,
+      render: (_value, item) => {
+        const roomId = item.roomId ?? null
+        if (!roomId) return '-'
+        const expanded = expandedRoomId === roomId
+        return (
+          <Space size={8}>
+            {item.state === 'recording' && (
+              // 悬浮提示对键盘用户同样可达：focus 即出 Tooltip。
+              <Tooltip
+                title="FLV 音频流，需支持 FLV 的播放器打开"
+                trigger={['hover', 'focus']}
+              >
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<AudioOutlined />}
+                  href={recordingAudioUrl(roomId)}
+                  target="_blank"
+                >
+                  实时音频
+                </Button>
+              </Tooltip>
+            )}
+            <Button
+              size="small"
+              icon={expanded ? <UpOutlined /> : <DownOutlined />}
+              onClick={() => toggleRecordings(roomId)}
+            >
+              {expanded ? '收起录播' : '历史录播'}
+            </Button>
+          </Space>
+        )
+      },
+    },
+  ]
+
   return (
     <div>
-      <h2>录制状态</h2>
+      <PageHeader title="录制状态" description="按录播订阅查看录制状态与历史文件。" />
 
-      {loading && items.length === 0 ? (
-        <p>加载中...</p>
-      ) : error && items.length === 0 ? (
-        <p style={{ color: '#f87171' }}>{error}</p>
-      ) : items.length === 0 ? (
-        <p>暂无录播订阅</p>
+      {error && items.length === 0 ? (
+        <Alert
+          type="error"
+          showIcon
+          title={error}
+          action={<Button onClick={fetchStatus}>重试</Button>}
+        />
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>主播</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>Room ID</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>状态</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>实例</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>场次</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>当前文件</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => {
-              const state = item.state ?? 'unknown'
-              const roomId = item.roomId ?? null
-              const files = item.files ?? []
-
-              return (
-                <FragmentRow
-                  key={item.mid}
-                  item={item}
-                  state={state}
-                  roomId={roomId}
-                  files={files}
-                  expanded={roomId !== null && expandedRoomId === roomId}
-                  onToggle={toggleRecordings}
-                  renderFileList={renderFileList}
-                />
-              )
-            })}
-          </tbody>
-        </table>
+        <Table<RecordingStatusItem>
+          rowKey={rowKey}
+          columns={columns}
+          dataSource={items}
+          loading={loading}
+          pagination={false}
+          locale={{ emptyText: <Empty description="暂无录播订阅" /> }}
+          expandable={{
+            expandedRowKeys: expandedKeys,
+            expandedRowRender: (item) =>
+              item.roomId !== null && item.roomId !== undefined
+                ? renderFileList(item.roomId)
+                : null,
+            showExpandColumn: false,
+          }}
+        />
       )}
 
       {error && !loading && items.length > 0 && (
-        <p style={{ color: '#f87171', fontSize: '0.875rem' }}>
+        <Typography.Text type="danger" style={{ display: 'block', marginTop: 8 }}>
           状态刷新失败，展示的是上次结果
-        </p>
+        </Typography.Text>
       )}
     </div>
-  )
-}
-
-interface FragmentRowProps {
-  item: RecordingStatusItem
-  state: string
-  roomId: number | null
-  files: string[]
-  expanded: boolean
-  onToggle: (roomId: number) => void
-  renderFileList: (roomId: number) => ReactNode
-}
-
-function FragmentRow({ item, state, roomId, files, expanded, onToggle, renderFileList }: FragmentRowProps) {
-  return (
-    <>
-      <tr>
-        <td style={{ padding: '0.5rem' }}>
-          {item.streamer?.name
-            ? `${item.streamer.name}（${item.mid}）`
-            : (item.mid ?? '-')}
-        </td>
-        <td style={{ padding: '0.5rem' }}>{roomId ?? '-'}</td>
-        <td style={{ padding: '0.5rem' }}>
-          <span style={{ color: STATE_COLORS[state] ?? '#e2e8f0' }}>
-            {STATE_LABELS[state] ?? state}
-          </span>
-        </td>
-        <td style={{ padding: '0.5rem' }}>{item.hostName ?? '-'}</td>
-        <td style={{ padding: '0.5rem' }}>{item.sessionTitle ?? '-'}</td>
-        <td style={{ padding: '0.5rem' }}>
-          {files.length === 0 ? (
-            '-'
-          ) : (
-            <ul style={{ margin: 0, paddingLeft: '1rem' }}>
-              {files.map((file) => (
-                <li key={file}>
-                  {roomId ? (
-                    <a href={recordingDownloadUrl(roomId, file)}>{file}</a>
-                  ) : (
-                    file
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </td>
-        <td style={{ padding: '0.5rem' }}>
-          {state === 'recording' && roomId ? (
-            <a
-              href={recordingAudioUrl(roomId)}
-              title="FLV 音频流，需支持 FLV 的播放器打开"
-            >
-              实时音频
-            </a>
-          ) : (
-            '-'
-          )}
-          {roomId && (
-            <>
-              {' '}
-              <button
-                onClick={() => onToggle(roomId)}
-                style={{ padding: '0.25rem 0.5rem' }}
-              >
-                {expanded ? '收起录播' : '历史录播'}
-              </button>
-            </>
-          )}
-        </td>
-      </tr>
-      {expanded && roomId && (
-        <tr>
-          <td colSpan={7} style={{ padding: '0.5rem', backgroundColor: 'rgba(148,163,184,0.08)' }}>
-            {renderFileList(roomId)}
-          </td>
-        </tr>
-      )}
-    </>
   )
 }

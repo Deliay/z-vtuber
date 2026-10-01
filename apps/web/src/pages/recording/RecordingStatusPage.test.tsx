@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { RecordingStatusPage, RECORDING_REFRESH_INTERVAL } from './RecordingStatusPage'
 import * as client from '../../api/client'
 
@@ -34,12 +35,7 @@ describe('RecordingStatusPage', () => {
 
   it('should render three states with hostname, session title and files', async () => {
     mockListRecordingStatus.mockResolvedValue([
-      {
-        mid: 1,
-        roomId: 101,
-        state: 'not_live',
-        streamer: { name: '主播A' },
-      },
+      { mid: 1, roomId: 101, state: 'not_live', streamer: { name: '主播A' } },
       {
         mid: 2,
         roomId: 202,
@@ -49,13 +45,7 @@ describe('RecordingStatusPage', () => {
         files: ['[RAW][202][主播B] 2026-09-13-晚间歌回.flv'],
         streamer: { name: '主播B' },
       },
-      {
-        mid: 3,
-        roomId: 303,
-        state: 'error',
-        error: 'ffmpeg exited with code 1',
-        streamer: { name: '主播C' },
-      },
+      { mid: 3, roomId: 303, state: 'error', error: 'ffmpeg exited with code 1', streamer: { name: '主播C' } },
     ])
 
     render(<RecordingStatusPage />)
@@ -66,11 +56,35 @@ describe('RecordingStatusPage', () => {
       expect(screen.getByText('录制出错')).toBeInTheDocument()
       expect(screen.getByText('z-vtuber-recording-7d9f')).toBeInTheDocument()
       expect(screen.getByText('晚间歌回')).toBeInTheDocument()
-      expect(
-        screen.getByText('[RAW][202][主播B] 2026-09-13-晚间歌回.flv'),
-      ).toBeInTheDocument()
+      expect(screen.getByText('[RAW][202][主播B] 2026-09-13-晚间歌回.flv')).toBeInTheDocument()
       expect(screen.getByText('实时音频')).toBeInTheDocument()
     })
+  })
+
+  it('should expose the live audio hint to keyboard users via a focus tooltip', async () => {
+    mockListRecordingStatus.mockResolvedValue([
+      {
+        mid: 2,
+        roomId: 202,
+        state: 'recording',
+        sessionTitle: '晚间歌回',
+        streamer: { name: '主播B' },
+      },
+    ])
+    mockListRecordings.mockResolvedValue([])
+
+    render(<RecordingStatusPage />)
+
+    const label = await screen.findByText('实时音频')
+    const link = label.closest('a') as HTMLElement
+    expect(link).not.toBeNull()
+    // 悬浮提示对键盘用户可达：focus 链接即出 Tooltip
+    fireEvent.focus(link)
+    expect(
+      (await screen.findAllByRole('tooltip')).some(
+        (tip) => tip.textContent === 'FLV 音频流，需支持 FLV 的播放器打开',
+      ),
+    ).toBe(true)
   })
 
   it('should load and render historical recordings', async () => {
@@ -95,23 +109,18 @@ describe('RecordingStatusPage', () => {
     render(<RecordingStatusPage />)
 
     await waitFor(() => {
-      expect(screen.getByText('历史录播')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /历史录播/ })).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText('历史录播'))
+    fireEvent.click(screen.getByRole('button', { name: /历史录播/ }))
 
     await waitFor(() => {
-      expect(
-        screen.getByText('[RAW][101][主播A] 2026-09-01-歌回.flv'),
-      ).toBeInTheDocument()
+      expect(screen.getByText('[RAW][101][主播A] 2026-09-01-歌回.flv')).toBeInTheDocument()
     })
     expect(screen.getByText('1.2 GB')).toBeInTheDocument()
     expect(screen.getByText('往期歌回')).toBeInTheDocument()
     expect(mockListRecordings).toHaveBeenCalledWith(101)
-    expect(mockDownloadUrl).toHaveBeenCalledWith(
-      101,
-      '[RAW][101][主播A] 2026-09-01-歌回.flv',
-    )
+    expect(mockDownloadUrl).toHaveBeenCalledWith(101, '[RAW][101][主播A] 2026-09-01-歌回.flv')
   })
 
   it('should render unknown state for missing state', async () => {
@@ -132,6 +141,7 @@ describe('RecordingStatusPage', () => {
     await waitFor(() => {
       expect(screen.getByText('服务不可用')).toBeInTheDocument()
     })
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
   })
 
   it('should auto refresh on interval', async () => {

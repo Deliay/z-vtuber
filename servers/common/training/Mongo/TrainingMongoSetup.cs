@@ -1,4 +1,6 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
+using Z.Vtuber.Common.Contracts;
 using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Common.Persistence;
@@ -110,6 +112,15 @@ public sealed class TrainingMongoSetup(IMongoDatabase database, ILogger<Training
                 }),
             cancellationToken: ct);
 
+        // training_feature_points：Slug 唯一（登记 upsert 的身份键）
+        var featurePoints = Database.GetCollection<TrainingFeaturePointRecord>(
+            TrainingCollectionNames.TrainingFeaturePoints);
+        var featurePointSlugKeys = Builders<TrainingFeaturePointRecord>.IndexKeys.Ascending(f => f.Slug);
+        await featurePoints.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingFeaturePointRecord>(
+                featurePointSlugKeys, new CreateIndexOptions { Unique = true, Name = "Slug_1" }),
+            cancellationToken: ct);
+
         // training_dataset_item_segments：(DatasetId) 按数据集加载/清空/级联；(DatasetId, ItemId) 条目级替换/删除。
         // 匹配为内存相似度计算（非等值检索），故不建 Pinyin 等值索引。
         var segments = Database.GetCollection<TrainingDatasetItemSegmentRecord>(
@@ -130,5 +141,49 @@ public sealed class TrainingMongoSetup(IMongoDatabase database, ILogger<Training
             cancellationToken: ct);
 
         Logger.LogInformation("Ensured training collection indexes.");
+    }
+
+    /// <summary>存量模型能力清洗的迁移 marker（<c>zvtuber_meta</c>）。</summary>
+    public const string ModelCapabilitiesBackfillMigrationKey = "training_model_capabilities_backfill_v1";
+
+    /// <summary>存量模型能力清洗补齐的输入能力（PRD：输入「语音、文本」）。</summary>
+    private static readonly string[] BackfillInputCapabilities =
+        [TrainingModelCapabilities.Audio, TrainingModelCapabilities.Text];
+
+    /// <summary>存量模型能力清洗补齐的输出能力（PRD：输出「文本」）。</summary>
+    private static readonly string[] BackfillOutputCapabilities = [TrainingModelCapabilities.Text];
+
+    /// <summary>
+    /// 存量模型能力一次性清洗（幂等）：<c>training_models</c> 中 <c>InputCapabilities</c>/<c>OutputCapabilities</c>
+    /// **字段缺失**的文档逐侧 <c>$set</c> 为输入 <c>["audio","text"]</c>/输出 <c>["text"]</c>，
+    /// 只补缺失字段、**不覆盖**已设置的能力（PRD：不覆盖用户已手动调整的能力）。
+    /// 用 BsonDocument 级 <c>Exists</c> 判定（强类型无法表达字段缺失），marker 落 <c>zvtuber_meta</c>，
+    /// 已存在即跳过；marker 在更新成功后写入，重复执行零副作用。
+    /// </summary>
+    public async Task BackfillModelCapabilitiesAsync(CancellationToken ct = default)
+    {
+        if (await IsMigrationAppliedAsync(ModelCapabilitiesBackfillMigrationKey, ct))
+        {
+            Logger.LogInformation("Training model capabilities backfill already applied; skipping.");
+            return;
+        }
+
+        var collection = Database.GetCollection<BsonDocument>(TrainingCollectionNames.TrainingModels);
+        var inputFilter = Builders<BsonDocument>.Filter.Exists("InputCapabilities", false);
+        var outputFilter = Builders<BsonDocument>.Filter.Exists("OutputCapabilities", false);
+        var inputUpdate = Builders<BsonDocument>.Update.Set(
+            "InputCapabilities", new BsonArray(BackfillInputCapabilities));
+        var outputUpdate = Builders<BsonDocument>.Update.Set(
+            "OutputCapabilities", new BsonArray(BackfillOutputCapabilities));
+
+        var inputResult = await collection.UpdateManyAsync(inputFilter, inputUpdate, cancellationToken: ct);
+        var outputResult = await collection.UpdateManyAsync(outputFilter, outputUpdate, cancellationToken: ct);
+
+        Logger.LogInformation(
+            "Training model capabilities backfill filled input {InputModified} and output {OutputModified} documents.",
+            inputResult.ModifiedCount, outputResult.ModifiedCount);
+
+        await MarkMigrationAppliedAsync(ModelCapabilitiesBackfillMigrationKey, ct);
+        Logger.LogInformation("Training model capabilities backfill completed and marked as applied.");
     }
 }

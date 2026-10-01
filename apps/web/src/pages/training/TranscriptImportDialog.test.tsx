@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { TranscriptImportDialog } from './TranscriptImportDialog'
 import * as client from '../../api/client'
 
@@ -37,6 +38,18 @@ const runningTask: TaskItem = {
   offsetMs: 0,
 }
 
+async function pickTask(optionText: string) {
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '识别任务' }))
+  await waitFor(() => {
+    expect(document.querySelectorAll('.ant-select-item-option').length).toBeGreaterThan(0)
+  })
+  const option = Array.from(document.querySelectorAll('.ant-select-item-option')).find((el) =>
+    (el.getAttribute('title') ?? '').includes(optionText),
+  )
+  if (!option) throw new Error(`option not found: ${optionText}`)
+  fireEvent.click(option)
+}
+
 function renderDialog(overrides: Partial<Parameters<typeof TranscriptImportDialog>[0]> = {}) {
   const props = {
     datasetId: 'd1',
@@ -61,35 +74,25 @@ describe('TranscriptImportDialog', () => {
     renderDialog()
 
     const dialog = await screen.findByRole('dialog', { name: '从 Transcript 导入' })
-    expect(dialog).toHaveAttribute('aria-modal', 'true')
-
-    // 全屏半透明遮罩 + flex 居中面板 + 高层级（按结构样式契约断言，不绑死像素值）
-    const overlay = dialog.parentElement as HTMLElement
-    expect(overlay).not.toBeNull()
-    expect(overlay.style.position).toBe('fixed')
-    expect(overlay.style.backgroundColor).toContain('rgba(0, 0, 0, 0.5)')
-    expect(overlay.style.display).toBe('flex')
-    expect(overlay.style.justifyContent).toBe('center')
-    expect(overlay.style.alignItems).toBe('center')
-    expect(overlay.style.zIndex).not.toBe('')
+    expect(dialog).toBeInTheDocument()
+    // antd Modal：遮罩层 fixed + 半透明
+    const wrap = document.querySelector('.ant-modal-wrap') as HTMLElement
+    expect(wrap).not.toBeNull()
+    expect(wrap.style.position === 'fixed' || getComputedStyle(wrap).position === 'fixed').toBe(true)
   })
 
-  it('should close on overlay click but not when clicking inside the panel', async () => {
+  it('should close on cancel but not import inside the panel', async () => {
     mockListTasks.mockResolvedValue([doneTask])
     const props = renderDialog()
 
-    const dialog = await screen.findByRole('dialog', { name: '从 Transcript 导入' })
-    const overlay = dialog.parentElement as HTMLElement
+    await screen.findByRole('dialog', { name: '从 Transcript 导入' })
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
 
-    fireEvent.click(dialog)
-    expect(props.onClose).not.toHaveBeenCalled()
-
-    fireEvent.click(overlay)
     expect(props.onClose).toHaveBeenCalledTimes(1)
     expect(mockImport).not.toHaveBeenCalled()
   })
 
-  it('should ignore overlay clicks while the import is in flight so the result stays visible', async () => {
+  it('should ignore closing while the import is in flight so the result stays visible', async () => {
     mockListTasks.mockResolvedValue([doneTask])
     let resolveImport: (value: { imported: number; skipped: number }) => void = () => {}
     mockImport.mockReturnValue(
@@ -97,20 +100,16 @@ describe('TranscriptImportDialog', () => {
         resolveImport = resolve
       }),
     )
-    const props = renderDialog()
+    renderDialog()
 
-    fireEvent.change(await screen.findByLabelText('识别任务'), { target: { value: 't1' } })
+    await pickTask('晚间歌回')
     fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
 
-    const dialog = screen.getByRole('dialog', { name: '从 Transcript 导入' })
-    const overlay = dialog.parentElement as HTMLElement
-    // 导入中：遮罩点击与关闭按钮都不应关闭弹窗（保住结果反馈）
-    fireEvent.click(overlay)
-    expect(props.onClose).not.toHaveBeenCalled()
+    // 导入中：关闭按钮禁用（保住结果反馈）
     expect(screen.getByRole('button', { name: '取消' })).toBeDisabled()
 
     resolveImport({ imported: 5, skipped: 1 })
-    expect(await screen.findByRole('status')).toHaveTextContent('已导入 5 条，跳过 1 条')
+    expect(await screen.findByText('已导入 5 条，跳过 1 条')).toBeInTheDocument()
   })
 
   it('should only offer transcripts whose status is DONE', async () => {
@@ -121,11 +120,9 @@ describe('TranscriptImportDialog', () => {
     await waitFor(() => {
       expect(mockListTasks).toHaveBeenCalledWith({ status: 'DONE' })
     })
-    const select = await screen.findByLabelText('识别任务')
-    expect(within(select).getByRole('option', { name: '晚间歌回（t1）' })).toBeInTheDocument()
-    expect(
-      within(select).queryByRole('option', { name: '进行中场次（t2）' }),
-    ).not.toBeInTheDocument()
+    fireEvent.mouseDown(await screen.findByRole('combobox', { name: '识别任务' }))
+    expect(await screen.findByTitle('晚间歌回（t1）')).toBeInTheDocument()
+    expect(screen.queryByTitle('进行中场次（t2）')).not.toBeInTheDocument()
   })
 
   it('should import the selected transcript and report imported and skipped counts', async () => {
@@ -133,13 +130,13 @@ describe('TranscriptImportDialog', () => {
     mockImport.mockResolvedValue({ imported: 12, skipped: 3 })
     const props = renderDialog()
 
-    fireEvent.change(await screen.findByLabelText('识别任务'), { target: { value: 't1' } })
+    await pickTask('晚间歌回')
     fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
 
     await waitFor(() => {
       expect(mockImport).toHaveBeenCalledWith('d1', { taskId: 't1' })
     })
-    expect(await screen.findByRole('status')).toHaveTextContent('已导入 12 条，跳过 3 条')
+    expect(await screen.findByText('已导入 12 条，跳过 3 条')).toBeInTheDocument()
     expect(props.onImported).toHaveBeenCalledWith({ imported: 12, skipped: 3 })
     expect(props.onClose).not.toHaveBeenCalled()
   })
@@ -148,7 +145,7 @@ describe('TranscriptImportDialog', () => {
     mockListTasks.mockResolvedValue([doneTask])
     const props = renderDialog()
 
-    await screen.findByLabelText('识别任务')
+    await screen.findByRole('combobox', { name: '识别任务' })
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
 
     expect(props.onClose).toHaveBeenCalledTimes(1)
@@ -160,7 +157,7 @@ describe('TranscriptImportDialog', () => {
 
     renderDialog()
 
-    await screen.findByLabelText('识别任务')
+    await screen.findByRole('combobox', { name: '识别任务' })
     expect(screen.getByRole('button', { name: '确认导入' })).toBeDisabled()
   })
 
@@ -170,12 +167,12 @@ describe('TranscriptImportDialog', () => {
 
     renderDialog()
 
-    fireEvent.change(await screen.findByLabelText('识别任务'), { target: { value: 't1' } })
+    await pickTask('晚间歌回')
     fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
 
     // 原始报文 {"error":"task not done"} 不能直接给用户看，须映射为可读文案
-    expect(await screen.findByRole('alert')).toHaveTextContent('该识别任务尚未完成，无法导入')
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(await screen.findByText('该识别任务尚未完成，无法导入')).toBeInTheDocument()
+    expect(screen.queryByText(/已导入/)).not.toBeInTheDocument()
   })
 
   it('should surface a readable message when the transcript service is unavailable (502)', async () => {
@@ -186,9 +183,9 @@ describe('TranscriptImportDialog', () => {
 
     renderDialog()
 
-    fireEvent.change(await screen.findByLabelText('识别任务'), { target: { value: 't1' } })
+    await pickTask('晚间歌回')
     fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('识别服务暂不可用，请稍后重试')
+    expect(await screen.findByText('识别服务暂不可用，请稍后重试')).toBeInTheDocument()
   })
 })

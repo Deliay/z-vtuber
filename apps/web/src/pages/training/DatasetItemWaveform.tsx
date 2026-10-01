@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Alert, Button, Space, Typography } from 'antd'
+import { PauseOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { trainingAudioClipUrl } from '../../api/client'
 import {
   WAVEFORM_PREVIEW_MAX_MS,
@@ -102,20 +104,29 @@ export function DatasetItemWaveform({
   }, [loader, url, item.startMs, previewEndMs, startPlayback])
 
   return (
-    <div className="dataset-item-waveform">
+    <div className="dataset-item-waveform" style={{ padding: 8 }}>
       <div data-testid="waveform-container" ref={containerRef} />
-      {status === 'error' && <div role="alert">音频不可用</div>}
+      {status === 'error' && <Alert type="warning" showIcon title="音频不可用" />}
       {status === 'ready' && playFailed && (
-        <div role="alert">音频暂不可用，请点击播放重试</div>
+        <Alert type="warning" showIcon title="音频暂不可用，请点击播放重试" />
       )}
       {status === 'ready' && (
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-          <button onClick={() => startPlayback(playerRef.current)}>播放</button>
-          <button onClick={() => playerRef.current?.stop()}>停止</button>
-        </div>
+        <Space style={{ marginTop: 8 }}>
+          <Button
+            icon={<PlayCircleOutlined />}
+            onClick={() => startPlayback(playerRef.current)}
+          >
+            播放
+          </Button>
+          <Button icon={<PauseOutlined />} onClick={() => playerRef.current?.stop()}>
+            停止
+          </Button>
+        </Space>
       )}
       {(item.endMs === null || item.endMs === undefined) && (
-        <span style={{ color: '#94a3b8' }}>试听预览上限 5 分钟</span>
+        <div>
+          <Typography.Text type="secondary">试听预览上限 5 分钟</Typography.Text>
+        </div>
       )}
     </div>
   )

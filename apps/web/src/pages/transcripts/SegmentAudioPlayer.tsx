@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
+import { Alert, Button, Card, Flex, Progress, Space, Tag, theme, Tooltip, Typography } from 'antd'
 import { recordingAudioClipUrl } from '../../api/client'
 import { formatPosition } from '../../utils/format'
+import { TruncatedText } from '../../components/TruncatedText'
 import type { components } from '../../api/schema-recording-transcript'
 
 type TranscriptTask = components['schemas']['TranscriptTask']
@@ -21,6 +23,7 @@ export interface SegmentAudioPlayerProps {
  * 生命周期：ended/pause 清高亮；切换任务、收起（卸载）→ pause() 并清空 src。
  */
 export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudioPlayerProps) {
+  const { token } = theme.useToken()
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [playingSegment, setPlayingSegment] = useState<TranscriptSegment | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
@@ -131,91 +134,81 @@ export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudi
 
   return (
     <>
-      {(playingSegment || audioError) && (
-        <div
-          style={{
-            display: 'flex',
-            gap: '0.75rem',
-            alignItems: 'center',
-            padding: '0.5rem',
-            marginBottom: '0.5rem',
-            backgroundColor: '#1e293b',
-            borderRadius: '0.25rem',
-          }}
+      {playingSegment && (
+        <Card
+          size="small"
+          style={{ marginBottom: 8 }}
+          styles={{ body: { padding: 8 } }}
         >
-          {playingSegment ? (
-            <>
-              <span style={{ color: '#94a3b8' }}>试听中</span>
-              <span>
-                {`${formatPosition(playingSegment.start)} - ${formatPosition(playingSegment.end)}`}
-              </span>
-              <span
-                style={{
-                  maxWidth: '24rem',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {playingSegment.text}
-              </span>
-              <div
-                role="progressbar"
-                aria-label="试听进度"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={progress}
-                style={{
-                  flex: 1,
-                  height: '0.5rem',
-                  backgroundColor: '#334155',
-                  borderRadius: '0.25rem',
-                }}
-              >
-                <div
-                  style={{
-                    width: `${progress}%`,
-                    height: '100%',
-                    backgroundColor: '#38bdf8',
-                    borderRadius: '0.25rem',
-                  }}
-                />
-              </div>
-              <button
-                onClick={stopPlayback}
-                aria-label="停止试听"
-                style={{ padding: '0.25rem 0.75rem' }}
-              >
-                停止
-              </button>
-            </>
-          ) : (
-            <span style={{ color: '#f87171' }}>{AUDIO_UNAVAILABLE}</span>
-          )}
-        </div>
+          <Flex gap={12} align="center" wrap>
+            <Tag color="processing">试听中</Tag>
+            <Typography.Text>
+              {`${formatPosition(playingSegment.start)} - ${formatPosition(playingSegment.end)}`}
+            </Typography.Text>
+            <TruncatedText
+              text={playingSegment.text}
+              style={{ maxWidth: '24rem', flex: 1 }}
+            />
+            <Progress
+              aria-label="试听进度"
+              percent={progress}
+              showInfo={false}
+              style={{ flex: 1, minWidth: 120, margin: 0 }}
+            />
+            <Button onClick={stopPlayback} aria-label="停止试听">
+              停止
+            </Button>
+          </Flex>
+        </Card>
+      )}
+      {audioError && !playingSegment && (
+        <Alert type="error" showIcon title={AUDIO_UNAVAILABLE} style={{ marginBottom: 8 }} />
       )}
 
-      <div ref={containerRef} style={{ maxHeight: '24rem', overflowY: 'auto' }}>
-        <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+      <div
+        ref={containerRef}
+        className="segment-audio-list"
+        style={{ maxHeight: '24rem', overflowY: 'auto' }}
+      >
+        <ul style={{ margin: 0, paddingLeft: 16 }}>
           {segments.map((segment) => {
             const isPlaying = playingSegment?.start === segment.start
+            const playable = canPlaySegment(segment)
+            const playButton = (
+              <Button
+                size="small"
+                onClick={() => handleToggleSegment(segment)}
+                disabled={!playable}
+              >
+                {isPlaying ? '停止' : '播放'}
+              </Button>
+            )
             return (
               <li
                 key={segment.start}
-                style={isPlaying ? { backgroundColor: '#1e3a5f', borderRadius: '0.25rem' } : undefined}
+                className={isPlaying ? 'segment-audio-playing' : undefined}
+                style={{
+                  padding: '2px 4px',
+                  borderRadius: 4,
+                  background: isPlaying ? token.colorPrimaryBg : undefined,
+                }}
               >
-                <button
-                  onClick={() => handleToggleSegment(segment)}
-                  disabled={!canPlaySegment(segment)}
-                  title={canPlaySegment(segment) ? undefined : AUDIO_UNAVAILABLE}
-                  style={{ marginRight: '0.5rem', padding: '0.125rem 0.25rem' }}
-                >
-                  {isPlaying ? '停止' : '播放'}
-                </button>
-                <span style={{ color: '#94a3b8', marginRight: '0.5rem' }}>
-                  {formatPosition(segment.start)}
-                </span>
-                <span>{segment.text}</span>
+                <Space size={8} align="start">
+                  {playable ? (
+                    playButton
+                  ) : (
+                    // 置灰说明对键盘用户同样可达：外包可聚焦 span，focus 即出 Tooltip。
+                    <Tooltip title={AUDIO_UNAVAILABLE} trigger={['hover', 'focus']}>
+                      <span tabIndex={0} style={{ display: 'inline-flex' }}>
+                        {playButton}
+                      </span>
+                    </Tooltip>
+                  )}
+                  <Typography.Text type="secondary">
+                    {formatPosition(segment.start)}
+                  </Typography.Text>
+                  <Typography.Text>{segment.text}</Typography.Text>
+                </Space>
               </li>
             )
           })}
