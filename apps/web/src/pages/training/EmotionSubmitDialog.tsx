@@ -71,7 +71,7 @@ export function EmotionSubmitDialog({
       title="情绪识别"
       open
       onCancel={onClose}
-      maskClosable={false}
+      mask={{ closable: false }}
       destroyOnHidden
       footer={[
         <Button key="submit" type="primary" loading={busy} disabled={!modelId} onClick={handleSubmit}>

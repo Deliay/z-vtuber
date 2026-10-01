@@ -332,7 +332,7 @@ export function CookiePage() {
         onCancel={handleCloseCreateModal}
         footer={null}
         width={420}
-        maskClosable={false}
+        mask={{ closable: false }}
       >
         <div style={{ textAlign: 'center' }}>
           {creating ? (

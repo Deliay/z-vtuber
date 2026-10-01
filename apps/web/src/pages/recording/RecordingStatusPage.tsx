@@ -10,6 +10,7 @@ import {
   Typography,
 } from 'antd'
 import { AudioOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
+import { TruncatedText } from '../../components/TruncatedText'
 import type { ColumnsType } from 'antd/es/table'
 import {
   listRecordingStatus,
@@ -177,14 +178,12 @@ export function RecordingStatusPage() {
       title: '实例',
       dataIndex: 'hostName',
       width: 180,
-      ellipsis: true,
-      render: (value) => value ?? '-',
+      render: (value) => <TruncatedText text={String(value ?? '-')} />,
     },
     {
       title: '场次',
       dataIndex: 'sessionTitle',
-      ellipsis: true,
-      render: (value) => value ?? '-',
+      render: (value) => <TruncatedText text={String(value ?? '-')} />,
     },
     {
       title: '当前文件',

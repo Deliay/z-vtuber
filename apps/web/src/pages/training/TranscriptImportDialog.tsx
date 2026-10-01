@@ -82,7 +82,7 @@ export function TranscriptImportDialog({
       title="从 Transcript 导入"
       open
       onCancel={onClose}
-      maskClosable={!busy}
+      mask={{ closable: !busy }}
       destroyOnHidden
       footer={[
         <Button key="import" type="primary" loading={busy} disabled={!taskId} onClick={handleImport}>

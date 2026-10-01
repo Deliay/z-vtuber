@@ -15,6 +15,7 @@ import {
   Typography,
 } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
+import { TruncatedText } from '../../components/TruncatedText'
 import type { ColumnsType } from 'antd/es/table'
 import {
   listTranscriptTasks,
@@ -373,15 +374,17 @@ export function TaskListTab() {
     {
       title: '场次',
       key: 'title',
-      ellipsis: true,
-      render: (_value, task) => task.title ?? task.recordingId ?? '-',
+      render: (_value, task) => (
+        <TruncatedText text={task.title ?? task.recordingId ?? '-'} />
+      ),
     },
     {
       title: '模型',
       key: 'model',
       width: 160,
-      ellipsis: true,
-      render: (_value, task) => task.modelName ?? task.modelId ?? '-',
+      render: (_value, task) => (
+        <TruncatedText text={task.modelName ?? task.modelId ?? '-'} />
+      ),
     },
     {
       title: '进度',

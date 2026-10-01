@@ -126,7 +126,7 @@ export function ReRecognizeDialog({
       title="重新识别"
       open
       onCancel={onClose}
-      maskClosable={false}
+      mask={{ closable: false }}
       destroyOnHidden
       footer={[
         <Button key="recognize" type="primary" loading={recognizing} disabled={!modelId || busy} onClick={handleRecognize}>

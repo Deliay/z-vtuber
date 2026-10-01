@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Alert, Button, Card, Flex, Progress, Space, Tag, Typography } from 'antd'
 import { recordingAudioClipUrl } from '../../api/client'
 import { formatPosition } from '../../utils/format'
+import { TruncatedText } from '../../components/TruncatedText'
 import type { components } from '../../api/schema-recording-transcript'
 
 type TranscriptTask = components['schemas']['TranscriptTask']
@@ -143,12 +144,10 @@ export function SegmentAudioPlayer({ task, segments, containerRef }: SegmentAudi
             <Typography.Text>
               {`${formatPosition(playingSegment.start)} - ${formatPosition(playingSegment.end)}`}
             </Typography.Text>
-            <Typography.Text
-              ellipsis
+            <TruncatedText
+              text={playingSegment.text}
               style={{ maxWidth: '24rem', flex: 1 }}
-            >
-              {playingSegment.text}
-            </Typography.Text>
+            />
             <Progress
               aria-label="试听进度"
               percent={progress}

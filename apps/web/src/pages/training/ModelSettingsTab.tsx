@@ -25,6 +25,7 @@ import {
   updateTrainingModel,
 } from '../../api/client'
 import { ProviderDialog } from './ProviderDialog'
+import { TruncatedText } from '../../components/TruncatedText'
 import type { components } from '../../api/schema-training'
 
 type TrainingProvider = components['schemas']['TrainingProvider']
@@ -155,6 +156,7 @@ export function ModelSettingsTab() {
   const handleDeleteModel = (model: TrainingModel) => {
     modal.confirm({
       title: `确认删除模型「${model.slug}」？`,
+      content: '删除后不可恢复，相关任务将不再可选该模型。',
       okText: '确认删除',
       cancelText: '取消',
       okButtonProps: { danger: true },
@@ -195,7 +197,11 @@ export function ModelSettingsTab() {
   const providerColumns: TableColumnsType<TrainingProvider> = [
     { title: '名称', dataIndex: 'name' },
     { title: '模型类型', dataIndex: 'type' },
-    { title: 'Endpoint', dataIndex: 'endpoint', ellipsis: true },
+    {
+      title: 'Endpoint',
+      dataIndex: 'endpoint',
+      render: (value) => <TruncatedText text={String(value ?? '-')} />,
+    },
     {
       title: 'API key 状态',
       key: 'apiKeySet',
@@ -313,7 +319,7 @@ export function ModelSettingsTab() {
         onCancel={() => {
           if (!discoverImporting) setDiscoverTarget(null)
         }}
-        maskClosable={!discoverImporting}
+        mask={{ closable: !discoverImporting }}
         destroyOnHidden
         footer={[
           <Button
@@ -334,18 +340,26 @@ export function ModelSettingsTab() {
         {discoverError && <Alert type="error" showIcon message={discoverError} />}
 
         {discovered.length > 0 && (
-          <Checkbox.Group
-            value={discoverSelected}
-            onChange={(values) => setDiscoverSelected(values as string[])}
-          >
-            <Space direction="vertical">
-              {discovered.map((model) => (
-                <Checkbox key={model} value={model} aria-label={`导入 ${model}`}>
-                  {model}
-                </Checkbox>
-              ))}
-            </Space>
-          </Checkbox.Group>
+          <Space direction="vertical">
+            {discovered.map((model) => (
+              <Checkbox
+                key={model}
+                aria-label={`导入 ${model}`}
+                // 不用 Checkbox.Group：其 onChange 会经 registeredValues 过滤，
+                // 而子项注册在 effect 中、异步 discovery 场景下首次勾选会被吞。
+                checked={discoverSelected.includes(model)}
+                onChange={(event) =>
+                  setDiscoverSelected((prev) =>
+                    event.target.checked
+                      ? [...prev, model]
+                      : prev.filter((value) => value !== model),
+                  )
+                }
+              >
+                {model}
+              </Checkbox>
+            ))}
+          </Space>
         )}
 
         {!discoverBusy && !discoverError && discovered.length === 0 && (
@@ -367,7 +381,7 @@ export function ModelSettingsTab() {
         onCancel={() => {
           if (!manualSubmitting) setManualOpen(false)
         }}
-        maskClosable={!manualSubmitting}
+        mask={{ closable: !manualSubmitting }}
         destroyOnHidden
         footer={[
           <Button key="ok" type="primary" loading={manualSubmitting} onClick={() => void handleCreateModel()}>

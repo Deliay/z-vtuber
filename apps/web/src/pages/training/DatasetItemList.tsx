@@ -22,6 +22,7 @@ import { formatPosition, parsePosition } from '../../utils/format'
 import { DatasetItemWaveform } from './DatasetItemWaveform'
 import { ReRecognizeDialog } from './ReRecognizeDialog'
 import { EmotionSubmitDialog } from './EmotionSubmitDialog'
+import { TruncatedText } from '../../components/TruncatedText'
 import type { WaveformLoader } from './waveformLoader'
 import type { components } from '../../api/schema-training'
 
@@ -332,7 +333,6 @@ export function DatasetItemList({
           dataIndex: column.key,
           key: column.key,
           width: column.width,
-          ellipsis: column.truncate ? { showTitle: true } : undefined,
           onCell: (record) => (isGroupRow(record) ? { colSpan: 0 } : {}),
           render: (_value, record) => {
             if (isGroupRow(record)) return null
@@ -347,7 +347,7 @@ export function DatasetItemList({
                   onChange={(event) => setDraft({ ...draft, audioUri: event.target.value })}
                 />
               ) : (
-                (item.audioUri || '无')
+                <TruncatedText text={item.audioUri || '无'} />
               )
             }
             if (column.key === 'startMs') {
@@ -374,8 +374,9 @@ export function DatasetItemList({
                 formatPosition(item.endMs)
               )
             }
-            if (column.key === 'audioKey') return item.audioKey
-            return String(item[column.key] ?? '-')
+            if (column.key === 'audioKey') return <TruncatedText text={item.audioKey} />
+            const value = String(item[column.key] ?? '-')
+            return column.truncate ? <TruncatedText text={value} /> : value
           },
         }))
       : []),
@@ -407,11 +408,11 @@ export function DatasetItemList({
           title: column.label,
           key: column.key,
           width: column.width,
-          ellipsis: column.truncate ? { showTitle: true } : { showTitle: false },
           onCell: (record) => (isGroupRow(record) ? { colSpan: 0 } : {}),
           render: (_value, record) => {
             if (isGroupRow(record)) return null
-            return emotionCellValue(record.emotion, column.key).text
+            const value = emotionCellValue(record.emotion, column.key).text
+            return column.truncate ? <TruncatedText text={value} /> : value
           },
         }))
       : []),

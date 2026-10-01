@@ -187,23 +187,26 @@ describe('DatasetItemList', () => {
     // 固定表格布局：次要列限宽后不会撑宽表格
     expect(table.style.tableLayout).toBe('fixed')
 
-    // 来源/地址/标识三列：限宽 + 省略号截断（antd 以 ellipsis class + title 实现）
-    for (const column of ['音频来源', '音频地址', '音频标识']) {
-      const header = screen.getByRole('columnheader', { name: column })
-      expect(header.className).toContain('ant-table-cell-ellipsis')
-    }
-
-    // 数据单元格同样截断，并以 title 悬浮展示完整值
+    // 地址/标识列：限宽截断，且完整值对键盘可达（可聚焦 + Tooltip）
     const uriCell = screen.getByText('b/live/101/recordings/a.flv')
-    expect(uriCell.className).toContain('ant-table-cell-ellipsis')
-    expect(uriCell).toHaveAttribute('title', 'b/live/101/recordings/a.flv')
+    expect(uriCell.className).toContain('z-truncated')
+    expect(uriCell).toHaveAttribute('tabindex', '0')
     const keyCell = screen.getByText('transcript:t1:0')
-    expect(keyCell.className).toContain('ant-table-cell-ellipsis')
-    expect(keyCell).toHaveAttribute('title', 'transcript:t1:0')
+    expect(keyCell.className).toContain('z-truncated')
+    expect(keyCell).toHaveAttribute('tabindex', '0')
+
+    // 键盘 focus 即展示完整 Tooltip（不只 hover）
+    fireEvent.focus(uriCell)
+    expect(
+      (await screen.findAllByRole('tooltip')).some(
+        (tip) => tip.textContent === 'b/live/101/recordings/a.flv',
+      ),
+    ).toBe(true)
+    fireEvent.blur(uriCell)
 
     // 「文本」列不截断，正常换行展示全文
-    const textHeader = screen.getByRole('columnheader', { name: '文本' })
-    expect(textHeader.className).not.toContain('ant-table-cell-ellipsis')
+    const textCell = screen.getByText('第一句')
+    expect(textCell.className).not.toContain('z-truncated')
 
     // 仅「文本」列对应的 col 不设宽度 → 占满剩余宽度（1 勾选 + 6 音频 + 1 文本 + 10 情绪 + 1 操作）
     const cols = table.querySelectorAll('colgroup col')
@@ -591,8 +594,16 @@ describe('DatasetItemList', () => {
     await screen.findByText('情绪句')
 
     const description = screen.getByText('克制的失落，语调低缓')
-    expect(description).toHaveAttribute('title', '克制的失落，语调低缓')
-    expect(description.className).toContain('ant-table-cell-ellipsis')
+    expect(description.className).toContain('z-truncated')
+    expect(description).toHaveAttribute('tabindex', '0')
+    // 键盘 focus 展示完整 Tooltip
+    fireEvent.focus(description)
+    expect(
+      (await screen.findAllByRole('tooltip')).some(
+        (tip) => tip.textContent === '克制的失落，语调低缓',
+      ),
+    ).toBe(true)
+    fireEvent.blur(description)
     expect(screen.getByText('0.6')).toBeInTheDocument()
     expect(screen.getByText('0.7')).toBeInTheDocument()
   })

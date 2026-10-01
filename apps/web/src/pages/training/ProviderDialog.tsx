@@ -70,7 +70,7 @@ export function ProviderDialog({ provider, onClose, onSaved }: ProviderDialogPro
       confirmLoading={busy}
       okText="保存"
       cancelText="取消"
-      maskClosable={false}
+      mask={{ closable: false }}
       destroyOnHidden
     >
       <Form layout="vertical">
