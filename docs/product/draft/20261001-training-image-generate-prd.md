@@ -57,37 +57,37 @@ training 服务新增**绘图接口**：以 `multipart/form-data` 接收「文�
 - **描述**: training 提供 `POST /api/training/images/generate`，请求为 `multipart/form-data`：字段 `text`（文本，必填）、`image`（图片文件，必填）、`modelId`（可选，指定模型）。成功返回生成图片二进制（`200`，`Content-Type: image/*`）。
 - **用户价值**: 一个接口完成「文本 + 图片 → 图片」，屏蔽上游模型服务细节。
 - **验收标准**:
-  - [ ] multipart 传入 `text` 与 `image` 返回生成图片二进制；
-  - [ ] `text` 缺失/为空返回 400，图片缺失返回 400；
-  - [ ] 该接口经 z-vtuber `/api/training/**` 代理同样可访问（multipart 请求体与图片响应透传，与既有 training API 同口径）。
+  - [x] multipart 传入 `text` 与 `image` 返回生成图片二进制；
+  - [x] `text` 缺失/为空返回 400，图片缺失返回 400；
+  - [x] 该接口经 z-vtuber `/api/training/**` 代理同样可访问（multipart 请求体与图片响应透传，与既有 training API 同口径）。
 
 #### 功能点 2: 模型选择（指定模型 / 功能点默认解析）
 
 - **描述**: 生成所用模型必须满足「输入能力覆盖 文本+图片、输出能力覆盖 图片」。显式传入 `modelId` 时使用该模型（须存在、启用且能力匹配）；缺省时按功能点 `image-generate`（输入 文本+图片 → 输出 图片）解析：指定模型优先，其次默认模型（首个启用且能力匹配的模型）；无可用模型则返回明确错误。
 - **用户价值**: 与既有「模型设置 / 功能点模型设置」管理面打通，调用方无需关心用哪个模型，运营者可在管理面调整默认模型。
 - **验收标准**:
-  - [ ] 显式 `modelId` 非法/不存在返回 404 `model not found`，停用返回 400 `model disabled`，能力不满足返回 400 `model does not support image input`/`model does not support image output`；
-  - [ ] 缺省时命中功能点 `image-generate` 的指定模型（可用时）或默认模型；
-  - [ ] 无任何可用模型时返回明确错误（不返回图片）。
+  - [x] 显式 `modelId` 非法/不存在返回 404 `model not found`，停用返回 400 `model disabled`，能力不满足返回 400 `model does not support image input`/`model does not support image output`；
+  - [x] 缺省时命中功能点 `image-generate` 的指定模型（可用时）或默认模型；
+  - [x] 无任何可用模型时返回明确错误（不返回图片）。
 
 #### 功能点 3: 输入图片校验
 
 - **描述**: 对上传图片做类型与大小校验：类型白名单（`image/png`/`image/jpeg`/`image/webp`），大小不超过配置上限（默认 10MB）；非法输入在进入模型调用前拦截。
 - **用户价值**: 失败前置、报错明确，避免无效上游调用。
 - **验收标准**:
-  - [ ] 非白名单类型返回 400 `unsupported image type`；
-  - [ ] 超过大小上限返回 400 `image too large`；
-  - [ ] 校验失败不发起上游模型调用。
+  - [x] 非白名单类型返回 400 `unsupported image type`；
+  - [x] 超过大小上限返回 400 `image too large`；
+  - [x] 校验失败不发起上游模型调用。
 
 #### 功能点 4: 生成结果与错误返回
 
 - **描述**: 调用上游模型服务生成图片，成功将图片二进制透传返回；失败按语义映射状态码与错误信息（统一 `{"error": "..."}` 错误体）。
 - **用户价值**: 成功即拿图，失败可诊断。
 - **验收标准**:
-  - [ ] 成功返回 `200` + 图片二进制（`Content-Type: image/*`）；
-  - [ ] 模型服务不可达/超时/非成功返回 502 `model service unavailable`；
-  - [ ] 模型返回内容无法解析出图片返回 502 `invalid model output`；
-  - [ ] Provider 类型不支持图片输出（如 Claude-like）返回 400 `model does not support image output`。
+  - [x] 成功返回 `200` + 图片二进制（`Content-Type: image/*`）；
+  - [x] 模型服务不可达/超时/非成功返回 502 `model service unavailable`；
+  - [x] 模型返回内容无法解析出图片返回 502 `invalid model output`；
+  - [x] Provider 类型不支持图片输出（如 Claude-like）返回 400 `model does not support image output`。
 
 ### 3.3 用户操作流程
 

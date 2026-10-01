@@ -51,6 +51,7 @@ type: Permanent
 
 - 需求总分支 `prd/training-image-generate`（基于 main @ `515cb11`，PRD 与技术提案已随该 commit 提交，需求总 PR #171）：本 Plan 提交到该分支随 PR 评审。
 - 实现分支 `feat/training-image-generate`（基于需求总分支切出，提案 §0 口径）：实现按 z-coding「编写实现」流程推进（子项目为单位委托 subagent、TDD 红-绿、测试与实现分开提交），实现 PR 回需求总分支评审。
+- **实现记录（已完成）**：实现分支 `feat/training-image-generate`，实现 PR https://github.com/Deliay/z-vtuber/pull/172（目标分支 `prd/training-image-generate`）。契约 + codegen、training Ai 图片客户端/编排/端点/配置/注册、api 代理镜像、测试与文档同步均已落地；训练相关回归 490/490 通过，新增核心逻辑覆盖率 ≥ 80%（`OpenAiLikeImageClient`/`ImageModelClientFactory`/`ImageGenerateService`/`FeaturePointIds` 100%，控制器 ≥ 88%）。
 - 提交顺序（Conventional Commits）：
   1. `docs(training):` 本实现 Plan（需求总分支）；
   2. `feat(contracts):` 契约变更 + `npm run codegen`；

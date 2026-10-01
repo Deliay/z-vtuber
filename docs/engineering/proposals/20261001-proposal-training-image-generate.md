@@ -352,13 +352,13 @@ tests/Z.Vtuber.Tests/（变更）
 
 ## 10. 验收标准
 
-- [ ] 技术方案评审通过；契约评审通过（含 api 镜像）
-- [ ] `POST /api/training/images/generate` multipart 传 `text` + `image` 返回图片二进制；经 z-vtuber 代理同口径可访问
-- [ ] 模型选择：显式 `modelId` 404/400/能力校验；缺省按功能点 `image-generate` 指定→默认解析；无可用模型 409
-- [ ] 输入校验：text 空 / image 缺 / 类型非白名单 / 超限分别 400，且不发起上游调用
-- [ ] 失败返回明确报错：上游不可用 502 `model service unavailable`、输出非法 502 `invalid model output`、Claude-like 400 `model does not support image output`
-- [ ] 客户端/控制器/代理测试覆盖（假模型服务契约测试）；核心逻辑覆盖率 ≥ 80%
-- [ ] 既有功能回归不回退
+- [x] 技术方案评审通过；契约评审通过（含 api 镜像）
+- [x] `POST /api/training/images/generate` multipart 传 `text` + `image` 返回图片二进制；经 z-vtuber 代理同口径可访问
+- [x] 模型选择：显式 `modelId` 404/400/能力校验；缺省按功能点 `image-generate` 指定→默认解析；无可用模型 409
+- [x] 输入校验：text 空 / image 缺 / 类型非白名单 / 超限分别 400，且不发起上游调用
+- [x] 失败返回明确报错：上游不可用 502 `model service unavailable`、输出非法 502 `invalid model output`、Claude-like 400 `model does not support image output`
+- [x] 客户端/控制器/代理测试覆盖（假模型服务契约测试）；核心逻辑覆盖率 ≥ 80%
+- [x] 既有功能回归不回退
 
 ## 11. 相关文档
 
