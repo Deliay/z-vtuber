@@ -14,7 +14,8 @@ public sealed class RecordingController(
     RecordingRepository recordings,
     AudioStreamHub audio,
     RecordingOptions options,
-    IAudioClipExtractor? clipExtractor = null) : ControllerBase
+    IAudioClipExtractor? clipExtractor = null,
+    IAudioClipMerger? clipMerger = null) : ControllerBase
 {
     internal const int MaxFileStatsItems = 100;
 
@@ -177,6 +178,76 @@ public sealed class RecordingController(
         return new EmptyResult();
     }
 
+    [HttpPost("recordings/audio/merge")]
+    public async Task<IActionResult> MergeRecordingAudioClips(
+        [FromBody] RecordingAudioMergeRequest? request, CancellationToken ct)
+    {
+        var items = request?.Items;
+        if (items is null || items.Count == 0)
+        {
+            return BadRequest(new { error = "items is required" });
+        }
+
+        if (items.Count > options.AudioMergeMaxItems)
+        {
+            return BadRequest(new { error = "too many items" });
+        }
+
+        var resolved = new List<AudioMergeClip>(items.Count);
+        long totalMs = 0;
+
+        // 先做全部参数校验（区间/单段上限/总时长），避免文件解析先于参数错误返回。
+        foreach (var item in items)
+        {
+            if (item.StartMs < 0 || item.EndMs <= item.StartMs)
+            {
+                return BadRequest(new { error = "invalid time range" });
+            }
+
+            var duration = item.EndMs - item.StartMs;
+            if (duration > options.AudioClipMaxDurationMs)
+            {
+                return BadRequest(new { error = "invalid time range" });
+            }
+
+            totalMs += duration;
+            if (totalMs > options.AudioMergeMaxTotalDurationMs)
+            {
+                return BadRequest(new { error = "total duration too long" });
+            }
+        }
+
+        // 再逐项解析文件（复用路径穿越防护与录制中判定）。
+        foreach (var item in items)
+        {
+            var (error, fullPath) = await ResolveMergeFileAsync(item.RoomId, item.FileName, ct);
+            if (error is not null)
+            {
+                return error;
+            }
+
+            resolved.Add(new AudioMergeClip(fullPath, item.StartMs, item.EndMs));
+        }
+
+        var merger = clipMerger
+            ?? throw new InvalidOperationException("IAudioClipMerger is not configured");
+
+        Response.ContentType = merger.ContentType;
+        Response.Headers.CacheControl = "no-store";
+        try
+        {
+            await merger.MergeAsync(resolved, Response.Body, ct);
+        }
+        catch (AudioMergeFailedException)
+        {
+            // 零字节失败说明尚未写出任何响应体：清掉音频头信息后按契约返回 500
+            Response.ContentType = null;
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "audio merge failed" });
+        }
+
+        return new EmptyResult();
+    }
+
     [HttpGet("{roomId:long}/stream/audio")]
     public async Task StreamAudio(long roomId, CancellationToken ct)
     {
@@ -246,6 +317,39 @@ public sealed class RecordingController(
         if (!System.IO.File.Exists(fullPath))
         {
             return (NotFound(), string.Empty);
+        }
+
+        return (null, fullPath);
+    }
+
+    /// <summary>
+    /// 合并端点的文件解析（与下载/片段同防护，但错误体按合并契约）：非法文件名/越界/不存在 → 404
+    /// <c>file not found</c>；文件正在录制中 → 400 <c>recording in progress</c>。
+    /// </summary>
+    private async Task<(IActionResult? Error, string FullPath)> ResolveMergeFileAsync(
+        long roomId, string fileName, CancellationToken ct)
+    {
+        if (!IsSafeFileName(fileName))
+        {
+            return (NotFound(new { error = "file not found" }), string.Empty);
+        }
+
+        var directory = Path.GetFullPath(RoomDirectory(roomId));
+        var fullPath = Path.GetFullPath(Path.Combine(directory, fileName));
+        if (!fullPath.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return (NotFound(new { error = "file not found" }), string.Empty);
+        }
+
+        var recordingFiles = await GetRecordingFilesAsync(roomId, ct);
+        if (recordingFiles.Contains(fileName))
+        {
+            return (BadRequest(new { error = "recording in progress" }), string.Empty);
+        }
+
+        if (!System.IO.File.Exists(fullPath))
+        {
+            return (NotFound(new { error = "file not found" }), string.Empty);
         }
 
         return (null, fullPath);
