@@ -618,9 +618,10 @@ paths:
     post:
       summary: 音频生成（数据集语音合成）
       description: >-
-        以数据集为参考池：按输入文本与条目文本的字符相似度（归一化编辑距离，兼顾内容与长度）匹配音色参考
-        （speaker_prompt），情感向量匹配情绪参考（emo_prompt/emo_vector/emo_text/emo_alpha），
-        调用内网 index-tts-api 合成并返回 audio/wav。
+        以数据集为参考池：输入文本按 [，。,.\s] 断句后，每条短句与数据集候选短句按拼音相似度
+        （音节级归一化编辑距离）匹配取最相似 1 条，命中数据按数据 id 去重后经 recordings 合并为拼接音源
+        （speaker_prompt）；无候选短句时回退按输入文本与条目文本的字符相似度（归一化编辑距离）匹配单条。
+        情感向量匹配情绪参考（emo_prompt/emo_vector/emo_text/emo_alpha），调用内网 index-tts-api 合成并返回 audio/wav。
         命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。
         emotionMode=none（默认）不传任何情绪参考直接合成；emotionMode=llm 用配置的可用模型生成情感向量后检索；
         emotionMode=dataset 跳过大模型，直接使用音色命中候选条目自身的 Extensions.emotion
@@ -640,7 +641,7 @@ paths:
           description: 合成音频（mono 16-bit PCM WAV @22.05kHz，上游透传）
           headers:
             X-Speaker-Audio-Key:
-              description: 命中的音色参考条目 audioKey
+              description: 命中的音色参考条目 audioKey（拼接路径为逗号分隔多值，按拼接顺序；回退路径为单值）
               schema:
                 type: string
             X-Emo-Audio-Key:
@@ -700,6 +701,28 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: '{"error": "embedding service unavailable"/"vector store unavailable"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/segments/rebuild:
+    post:
+      summary: 重建数据集候选短句拼音反向索引
+      description: >-
+        清空该数据集候选短句反向索引（training_dataset_item_segments）并按条目本文断句 + 拼音全量重建，
+        返回重建的候选短句总数（rebuilt）。用于升级后回填存量数据集；未重建时 synthesize 自动回退字符相似匹配。
+      operationId: rebuildTrainingDatasetSegments
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      responses:
+        "200":
+          description: 重建结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingSegmentsRebuildResult"
+        "404":
+          description: '{"error": "dataset not found"}'
           content:
             application/json:
               schema:
@@ -1241,6 +1264,13 @@ components:
         updated:
           type: integer
           description: 重建（写入 Milvus）的条目数
+    TrainingSegmentsRebuildResult:
+      type: object
+      required: [rebuilt]
+      properties:
+        rebuilt:
+          type: integer
+          description: 重建的候选短句总数
     TrainingEmotionTaskCreateRequest:
       type: object
       required: [itemIds, modelId]
