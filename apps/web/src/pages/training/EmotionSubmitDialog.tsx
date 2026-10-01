@@ -1,12 +1,21 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useState } from 'react'
+import { Alert, Button, Form, Modal, Select, Typography } from 'antd'
 import {
   apiErrorMessage,
   createEmotionTasks,
   listTrainingModels,
+  resolveFeaturePointModel,
 } from '../../api/client'
 import type { components } from '../../api/schema-training'
 
 type TrainingModel = components['schemas']['TrainingModel']
+type TrainingModelCapability = components['schemas']['TrainingModelCapability']
+
+/** 输入语音识别情绪功能点的标识与能力要求。 */
+const FEATURE_POINT_SLUG = 'emotion-from-audio'
+const FEATURE_POINT_NAME = '输入语音识别情绪'
+const INPUT_CAPABILITIES: TrainingModelCapability[] = ['audio', 'text']
+const OUTPUT_CAPABILITIES: TrainingModelCapability[] = ['text']
 
 export interface EmotionSubmitResult {
   created: number
@@ -19,16 +28,6 @@ export interface EmotionSubmitDialogProps {
   onClose: () => void
   /** 提交成功回调（用于刷新列表与任务队列）。 */
   onSubmitted?: (result: EmotionSubmitResult) => void
-}
-
-const inputStyle: CSSProperties = {
-  width: '100%',
-  boxSizing: 'border-box',
-  padding: '0.5rem',
-  backgroundColor: '#334155',
-  color: '#e2e8f0',
-  border: '1px solid #475569',
-  borderRadius: '0.25rem',
 }
 
 /**
@@ -48,9 +47,20 @@ export function EmotionSubmitDialog({
 
   useEffect(() => {
     let active = true
-    listTrainingModels(true)
-      .then((list) => {
-        if (active) setModels(list)
+    // resolve 完成功能点自动登记并取回解析结果；候选按功能点能力过滤且仅取启用者。
+    Promise.all([
+      resolveFeaturePointModel(FEATURE_POINT_SLUG, {
+        name: FEATURE_POINT_NAME,
+        inputCapabilities: INPUT_CAPABILITIES,
+        outputCapabilities: OUTPUT_CAPABILITIES,
+      }),
+      listTrainingModels(true, INPUT_CAPABILITIES.join(','), OUTPUT_CAPABILITIES.join(',')),
+    ])
+      .then(([resolved, list]) => {
+        if (!active) return
+        setModels(list)
+        // 默认选中解析结果（specified 优先、default 兜底）；用户仍可临时改选。
+        if (resolved.modelId) setModelId(resolved.modelId)
       })
       .catch((err) => {
         if (active) setError(apiErrorMessage(err, '加载模型失败'))
@@ -76,80 +86,46 @@ export function EmotionSubmitDialog({
   }
 
   return (
-    <div
-      className="emotion-submit-overlay"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000,
-      }}
-      onClick={() => {
-        if (!busy) onClose()
-      }}
+    <Modal
+      title="情绪识别"
+      open
+      onCancel={onClose}
+      mask={{ closable: false }}
+      destroyOnHidden
+      footer={[
+        <Button key="submit" type="primary" loading={busy} disabled={!modelId} onClick={handleSubmit}>
+          提交
+        </Button>,
+        <Button key="cancel" disabled={busy} onClick={onClose}>
+          取消
+        </Button>,
+      ]}
     >
-      <div
-        role="dialog"
-        aria-label="情绪识别"
-        aria-modal="true"
-        className="emotion-submit-dialog"
-        style={{
-          backgroundColor: '#1e293b',
-          color: '#e2e8f0',
-          padding: '1.5rem',
-          borderRadius: '0.5rem',
-          minWidth: '400px',
-          maxWidth: '90vw',
-          maxHeight: '90vh',
-          overflow: 'auto',
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h3>情绪识别</h3>
-        <div>已选择 {itemIds.length} 条数据</div>
+      <Typography.Text>已选择 {itemIds.length} 条数据</Typography.Text>
 
-        <label htmlFor="emotion-model">识别模型</label>
-        <select
-          id="emotion-model"
-          aria-label="情绪识别模型"
-          style={inputStyle}
-          value={modelId}
-          onChange={(event) => setModelId(event.target.value)}
-        >
-          <option value="">请选择识别模型</option>
-          {models.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.slug}
-            </option>
-          ))}
-        </select>
+      <Form layout="vertical" style={{ marginTop: 12 }}>
+        <Form.Item label="识别模型">
+          <Select
+            aria-label="情绪识别模型"
+            value={modelId || undefined}
+            placeholder="请选择识别模型"
+            onChange={setModelId}
+            options={models.map((model) => ({ value: model.id as string, label: model.slug as string }))}
+          />
+        </Form.Item>
+      </Form>
 
-        {models.length === 0 && (
-          <div style={{ color: '#94a3b8' }}>请先在模型设置中配置</div>
-        )}
-
-        {error && <div role="alert">{error}</div>}
-        {result && (
-          <div role="status">
-            已提交 {result.created} 条，跳过 {result.skipped} 条
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-          <button onClick={() => void handleSubmit()} disabled={!modelId || busy}>
-            提交
-          </button>
-          <button onClick={onClose} disabled={busy}>
-            取消
-          </button>
-        </div>
-      </div>
-    </div>
+      {models.length === 0 && (
+        <Alert type="info" showIcon title="请先在模型设置中配置模型与能力" />
+      )}
+      {error && <Alert type="error" showIcon title={error} />}
+      {result && (
+        <Alert
+          type="success"
+          showIcon
+          title={`已提交 ${result.created} 条，跳过 ${result.skipped} 条`}
+        />
+      )}
+    </Modal>
   )
 }

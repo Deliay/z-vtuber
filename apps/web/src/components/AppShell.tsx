@@ -1,4 +1,4 @@
-import { Layout, Menu, Typography, type MenuProps } from 'antd'
+import { Layout, Menu, theme, Typography, type MenuProps } from 'antd'
 import { ThunderboltOutlined } from '@ant-design/icons'
 import type { ReactNode } from 'react'
 
@@ -67,6 +67,8 @@ function buildMenuItems(menuGroups: AppShellMenuGroup[]): MenuProps['items'] {
  */
 export function AppShell({ menuGroups, currentPage, onSelect, children }: AppShellProps) {
   const items = buildMenuItems(menuGroups)
+  // 颜色/边框统一取自 Design Token，避免绕过 theme.ts 写死色值。
+  const { token } = theme.useToken()
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -75,7 +77,7 @@ export function AppShell({ menuGroups, currentPage, onSelect, children }: AppShe
         breakpoint="lg"
         collapsedWidth={0}
         theme="dark"
-        style={{ borderInlineEnd: '1px solid #334155' }}
+        style={{ borderInlineEnd: `1px solid ${token.colorBorder}` }}
       >
         <div
           style={{
@@ -84,7 +86,7 @@ export function AppShell({ menuGroups, currentPage, onSelect, children }: AppShe
             gap: 8,
             height: 56,
             paddingInline: 16,
-            color: '#38bdf8',
+            color: token.colorPrimary,
             fontWeight: 600,
             fontSize: 16,
           }}
@@ -108,8 +110,8 @@ export function AppShell({ menuGroups, currentPage, onSelect, children }: AppShe
             alignItems: 'center',
             height: 56,
             paddingInline: 24,
-            background: '#1e293b',
-            borderBottom: '1px solid #334155',
+            background: token.colorBgContainer,
+            borderBottom: `1px solid ${token.colorBorder}`,
           }}
         >
           <Typography.Text strong>管理后台</Typography.Text>

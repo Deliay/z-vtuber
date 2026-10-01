@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { SubscriptionPage } from './SubscriptionPage'
 import * as client from '../../api/client'
 
@@ -12,6 +13,13 @@ const mockListWeiboSubscriptions = vi.mocked(client.listWeiboSubscriptions)
 const mockSubscribeWeibo = vi.mocked(client.subscribeWeibo)
 const mockUnsubscribeWeibo = vi.mocked(client.unsubscribeWeibo)
 
+/** antd Select：点开后选中文案。 */
+function pickSelect(placeholder: string, optionText: string) {
+  const combo = screen.getByRole('combobox', { name: placeholder }) as HTMLElement
+  fireEvent.mouseDown(combo)
+  return screen.findByTitle(optionText)
+}
+
 describe('SubscriptionPage', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -23,21 +31,13 @@ describe('SubscriptionPage', () => {
     render(<SubscriptionPage />)
 
     expect(screen.getByText('订阅管理')).toBeInTheDocument()
-    expect(screen.getByText('新增订阅')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /新增订阅/ })).toBeInTheDocument()
   })
 
   it('should load and display subscriptions', async () => {
     mockListSubscriptions.mockResolvedValue([
-      {
-        mid: 123,
-        type: 'danmaku',
-        subscribedAt: '2024-01-01T00:00:00Z',
-      },
-      {
-        mid: 456,
-        type: 'dynamic',
-        subscribedAt: '2024-01-02T00:00:00Z',
-      },
+      { mid: 123, type: 'danmaku', subscribedAt: '2024-01-01T00:00:00Z' },
+      { mid: 456, type: 'dynamic', subscribedAt: '2024-01-02T00:00:00Z' },
     ])
 
     render(<SubscriptionPage />)
@@ -60,24 +60,9 @@ describe('SubscriptionPage', () => {
 
   it('should render streamer nickname and placeholder', async () => {
     mockListSubscriptions.mockResolvedValue([
-      {
-        mid: 123,
-        type: 'danmaku',
-        subscribedAt: '2024-01-01T00:00:00Z',
-        streamer: { name: '某主播' },
-      },
-      {
-        mid: 456,
-        type: 'dynamic',
-        subscribedAt: '2024-01-02T00:00:00Z',
-        streamer: null,
-      },
-      {
-        mid: 789,
-        type: 'dynamic',
-        subscribedAt: '2024-01-03T00:00:00Z',
-        streamer: { name: null },
-      },
+      { mid: 123, type: 'danmaku', subscribedAt: '2024-01-01T00:00:00Z', streamer: { name: '某主播' } },
+      { mid: 456, type: 'dynamic', subscribedAt: '2024-01-02T00:00:00Z', streamer: null },
+      { mid: 789, type: 'dynamic', subscribedAt: '2024-01-03T00:00:00Z', streamer: { name: null } },
     ])
 
     render(<SubscriptionPage />)
@@ -90,18 +75,8 @@ describe('SubscriptionPage', () => {
 
   it('should render same mid both types as separate rows with nickname', async () => {
     mockListSubscriptions.mockResolvedValue([
-      {
-        mid: 123,
-        type: 'danmaku',
-        subscribedAt: '2024-01-01T00:00:00Z',
-        streamer: { name: '同主播' },
-      },
-      {
-        mid: 123,
-        type: 'dynamic',
-        subscribedAt: '2024-01-02T00:00:00Z',
-        streamer: { name: '同主播' },
-      },
+      { mid: 123, type: 'danmaku', subscribedAt: '2024-01-01T00:00:00Z', streamer: { name: '同主播' } },
+      { mid: 123, type: 'dynamic', subscribedAt: '2024-01-02T00:00:00Z', streamer: { name: '同主播' } },
     ])
 
     render(<SubscriptionPage />)
@@ -124,11 +99,7 @@ describe('SubscriptionPage', () => {
 
   it('should render guard type label and selectable option', async () => {
     mockListSubscriptions.mockResolvedValue([
-      {
-        mid: 777,
-        type: 'guard',
-        subscribedAt: '2024-01-05T00:00:00Z',
-      },
+      { mid: 777, type: 'guard', subscribedAt: '2024-01-05T00:00:00Z' },
     ])
 
     render(<SubscriptionPage />)
@@ -140,20 +111,10 @@ describe('SubscriptionPage', () => {
   })
 
   it('should subscribe with guard type', async () => {
-    mockSubscribe.mockResolvedValue({
-      mid: 888,
-      type: 'guard',
-      subscribedAt: '2024-01-06T00:00:00Z',
-    })
+    mockSubscribe.mockResolvedValue({ mid: 888, type: 'guard', subscribedAt: '2024-01-06T00:00:00Z' })
     mockListSubscriptions
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          mid: 888,
-          type: 'guard',
-          subscribedAt: '2024-01-06T00:00:00Z',
-        },
-      ])
+      .mockResolvedValueOnce([{ mid: 888, type: 'guard', subscribedAt: '2024-01-06T00:00:00Z' }])
 
     render(<SubscriptionPage />)
 
@@ -161,14 +122,9 @@ describe('SubscriptionPage', () => {
       expect(screen.getByText('暂无订阅')).toBeInTheDocument()
     })
 
-    const typeSelect = screen.getByDisplayValue('请选择类型')
-    fireEvent.change(typeSelect, { target: { value: 'guard' } })
-
-    const midInput = screen.getByPlaceholderText('主播 ID (mid)')
-    fireEvent.change(midInput, { target: { value: '888' } })
-
-    const submitButton = screen.getByText('新增订阅')
-    fireEvent.click(submitButton)
+    fireEvent.click(await pickSelect('订阅类型', '舰长'))
+    fireEvent.change(screen.getByPlaceholderText('主播 ID (mid)'), { target: { value: '888' } })
+    fireEvent.click(screen.getByRole('button', { name: /新增订阅/ }))
 
     await waitFor(() => {
       expect(mockSubscribe).toHaveBeenCalledWith({ mid: 888, type: 'guard' })
@@ -176,15 +132,9 @@ describe('SubscriptionPage', () => {
     })
   })
 
-  it('should cancel guard subscription', async () => {
+  it('should cancel guard subscription after modal confirmation', async () => {
     mockListSubscriptions
-      .mockResolvedValueOnce([
-        {
-          mid: 999,
-          type: 'guard',
-          subscribedAt: '2024-01-07T00:00:00Z',
-        },
-      ])
+      .mockResolvedValueOnce([{ mid: 999, type: 'guard', subscribedAt: '2024-01-07T00:00:00Z' }])
       .mockResolvedValueOnce([])
     mockUnsubscribe.mockResolvedValue(undefined)
 
@@ -194,11 +144,10 @@ describe('SubscriptionPage', () => {
       expect(screen.getByText('999')).toBeInTheDocument()
     })
 
-    const cancelButton = screen.getByText('取消')
-    fireEvent.click(cancelButton)
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
 
-    const confirmButton = screen.getByText('确认取消')
-    fireEvent.click(confirmButton)
+    await screen.findAllByText('确认取消该订阅？')
+    fireEvent.click(screen.getByRole('button', { name: '确认取消' }))
 
     await waitFor(() => {
       expect(mockUnsubscribe).toHaveBeenCalledWith(999, 'guard')
@@ -209,8 +158,8 @@ describe('SubscriptionPage', () => {
   it('should validate type selection before submission', async () => {
     render(<SubscriptionPage />)
 
-    const submitButton = screen.getByText('新增订阅')
-    fireEvent.click(submitButton)
+    fireEvent.change(screen.getByPlaceholderText('主播 ID (mid)'), { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: /新增订阅/ }))
 
     await waitFor(() => {
       expect(screen.getByText('请选择订阅类型')).toBeInTheDocument()
@@ -220,11 +169,8 @@ describe('SubscriptionPage', () => {
   it('should validate mid input before submission', async () => {
     render(<SubscriptionPage />)
 
-    const typeSelect = screen.getByDisplayValue('请选择类型')
-    fireEvent.change(typeSelect, { target: { value: 'danmaku' } })
-
-    const submitButton = screen.getByText('新增订阅')
-    fireEvent.click(submitButton)
+    fireEvent.click(await pickSelect('订阅类型', '弹幕'))
+    fireEvent.click(screen.getByRole('button', { name: /新增订阅/ }))
 
     await waitFor(() => {
       expect(screen.getByText('请输入有效的主播 ID（纯数字）')).toBeInTheDocument()
@@ -234,14 +180,9 @@ describe('SubscriptionPage', () => {
   it('should reject non-numeric mid input', async () => {
     render(<SubscriptionPage />)
 
-    const typeSelect = screen.getByDisplayValue('请选择类型')
-    fireEvent.change(typeSelect, { target: { value: 'danmaku' } })
-
-    const midInput = screen.getByPlaceholderText('主播 ID (mid)')
-    fireEvent.change(midInput, { target: { value: '123abc' } })
-
-    const submitButton = screen.getByText('新增订阅')
-    fireEvent.click(submitButton)
+    fireEvent.click(await pickSelect('订阅类型', '弹幕'))
+    fireEvent.change(screen.getByPlaceholderText('主播 ID (mid)'), { target: { value: '123abc' } })
+    fireEvent.click(screen.getByRole('button', { name: /新增订阅/ }))
 
     await waitFor(() => {
       expect(screen.getByText('请输入有效的主播 ID（纯数字）')).toBeInTheDocument()
@@ -249,20 +190,10 @@ describe('SubscriptionPage', () => {
   })
 
   it('should subscribe successfully and refresh list', async () => {
-    mockSubscribe.mockResolvedValue({
-      mid: 789,
-      type: 'danmaku',
-      subscribedAt: '2024-01-03T00:00:00Z',
-    })
+    mockSubscribe.mockResolvedValue({ mid: 789, type: 'danmaku', subscribedAt: '2024-01-03T00:00:00Z' })
     mockListSubscriptions
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          mid: 789,
-          type: 'danmaku',
-          subscribedAt: '2024-01-03T00:00:00Z',
-        },
-      ])
+      .mockResolvedValueOnce([{ mid: 789, type: 'danmaku', subscribedAt: '2024-01-03T00:00:00Z' }])
 
     render(<SubscriptionPage />)
 
@@ -270,14 +201,9 @@ describe('SubscriptionPage', () => {
       expect(screen.getByText('暂无订阅')).toBeInTheDocument()
     })
 
-    const typeSelect = screen.getByDisplayValue('请选择类型')
-    fireEvent.change(typeSelect, { target: { value: 'danmaku' } })
-
-    const midInput = screen.getByPlaceholderText('主播 ID (mid)')
-    fireEvent.change(midInput, { target: { value: '789' } })
-
-    const submitButton = screen.getByText('新增订阅')
-    fireEvent.click(submitButton)
+    fireEvent.click(await pickSelect('订阅类型', '弹幕'))
+    fireEvent.change(screen.getByPlaceholderText('主播 ID (mid)'), { target: { value: '789' } })
+    fireEvent.click(screen.getByRole('button', { name: /新增订阅/ }))
 
     await waitFor(() => {
       expect(mockSubscribe).toHaveBeenCalledWith({ mid: 789, type: 'danmaku' })
@@ -286,21 +212,17 @@ describe('SubscriptionPage', () => {
   })
 
   it('should show server error on 400 response', async () => {
-    const error = new Error('API request failed')
-    ;(error as any).status = 400
-    ;(error as any).serverMessage = 'mid 非法'
+    const error = Object.assign(new Error('API request failed'), {
+      status: 400,
+      serverMessage: 'mid 非法',
+    })
     mockSubscribe.mockRejectedValue(error)
 
     render(<SubscriptionPage />)
 
-    const typeSelect = screen.getByDisplayValue('请选择类型')
-    fireEvent.change(typeSelect, { target: { value: 'danmaku' } })
-
-    const midInput = screen.getByPlaceholderText('主播 ID (mid)')
-    fireEvent.change(midInput, { target: { value: '123' } })
-
-    const submitButton = screen.getByText('新增订阅')
-    fireEvent.click(submitButton)
+    fireEvent.click(await pickSelect('订阅类型', '弹幕'))
+    fireEvent.change(screen.getByPlaceholderText('主播 ID (mid)'), { target: { value: '123' } })
+    fireEvent.click(screen.getByRole('button', { name: /新增订阅/ }))
 
     await waitFor(() => {
       expect(screen.getByText('mid 非法')).toBeInTheDocument()
@@ -309,11 +231,7 @@ describe('SubscriptionPage', () => {
 
   it('should show confirmation dialog when cancel is clicked', async () => {
     mockListSubscriptions.mockResolvedValue([
-      {
-        mid: 123,
-        type: 'danmaku',
-        subscribedAt: '2024-01-01T00:00:00Z',
-      },
+      { mid: 123, type: 'danmaku', subscribedAt: '2024-01-01T00:00:00Z' },
     ])
 
     render(<SubscriptionPage />)
@@ -322,56 +240,18 @@ describe('SubscriptionPage', () => {
       expect(screen.getByText('123')).toBeInTheDocument()
     })
 
-    const cancelButton = screen.getByText('取消')
-    fireEvent.click(cancelButton)
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
 
-    expect(screen.getByText('确认取消')).toBeInTheDocument()
-    expect(screen.getByText('返回')).toBeInTheDocument()
-  })
-
-  it('should cancel subscription after confirmation', async () => {
-    mockListSubscriptions
-      .mockResolvedValueOnce([
-        {
-          mid: 123,
-          type: 'danmaku',
-          subscribedAt: '2024-01-01T00:00:00Z',
-        },
-      ])
-      .mockResolvedValueOnce([])
-    mockUnsubscribe.mockResolvedValue(undefined)
-
-    render(<SubscriptionPage />)
-
-    await waitFor(() => {
-      expect(screen.getByText('123')).toBeInTheDocument()
-    })
-
-    const cancelButton = screen.getByText('取消')
-    fireEvent.click(cancelButton)
-
-    const confirmButton = screen.getByText('确认取消')
-    fireEvent.click(confirmButton)
-
-    await waitFor(() => {
-      expect(mockUnsubscribe).toHaveBeenCalledWith(123, 'danmaku')
-      expect(screen.getByText('暂无订阅')).toBeInTheDocument()
-    })
+    await screen.findAllByText('确认取消该订阅？')
+    expect(screen.getByRole('button', { name: '确认取消' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '返回' })).toBeInTheDocument()
   })
 
   it('should handle 404 error on cancel', async () => {
     mockListSubscriptions
-      .mockResolvedValueOnce([
-        {
-          mid: 123,
-          type: 'danmaku',
-          subscribedAt: '2024-01-01T00:00:00Z',
-        },
-      ])
+      .mockResolvedValueOnce([{ mid: 123, type: 'danmaku', subscribedAt: '2024-01-01T00:00:00Z' }])
       .mockResolvedValueOnce([])
-    const error = new Error('API request failed')
-    ;(error as any).status = 404
-    mockUnsubscribe.mockRejectedValue(error)
+    mockUnsubscribe.mockRejectedValue(Object.assign(new Error('API request failed'), { status: 404 }))
 
     render(<SubscriptionPage />)
 
@@ -379,11 +259,9 @@ describe('SubscriptionPage', () => {
       expect(screen.getByText('123')).toBeInTheDocument()
     })
 
-    const cancelButton = screen.getByText('取消')
-    fireEvent.click(cancelButton)
-
-    const confirmButton = screen.getByText('确认取消')
-    fireEvent.click(confirmButton)
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    await screen.findAllByText('确认取消该订阅？')
+    fireEvent.click(screen.getByRole('button', { name: '确认取消' }))
 
     await waitFor(() => {
       expect(screen.getByText('该订阅已不存在')).toBeInTheDocument()
@@ -391,9 +269,7 @@ describe('SubscriptionPage', () => {
   })
 
   it('should display weibo subscription with platform label', async () => {
-    mockListWeiboSubscriptions.mockResolvedValue([
-      { uid: 555, subscribedAt: '2024-01-01T00:00:00Z' },
-    ])
+    mockListWeiboSubscriptions.mockResolvedValue([{ uid: 555, subscribedAt: '2024-01-01T00:00:00Z' }])
 
     render(<SubscriptionPage />)
 
@@ -405,24 +281,18 @@ describe('SubscriptionPage', () => {
   })
 
   it('should subscribe a weibo account', async () => {
-    mockSubscribeWeibo.mockResolvedValue({
-      uid: 777,
-      subscribedAt: '2024-01-02T00:00:00Z',
-    })
+    mockSubscribeWeibo.mockResolvedValue({ uid: 777, subscribedAt: '2024-01-02T00:00:00Z' })
     mockListWeiboSubscriptions
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ uid: 777, subscribedAt: '2024-01-02T00:00:00Z' }])
 
     render(<SubscriptionPage />)
 
-    const platformSelect = screen.getByLabelText('订阅平台')
-    fireEvent.change(platformSelect, { target: { value: 'weibo' } })
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '订阅平台' }))
+    fireEvent.click(await screen.findByTitle('微博'))
 
-    const uidInput = screen.getByPlaceholderText('微博用户 ID (uid)')
-    fireEvent.change(uidInput, { target: { value: '777' } })
-
-    const submitButton = screen.getByText('新增订阅')
-    fireEvent.click(submitButton)
+    fireEvent.change(screen.getByPlaceholderText('微博用户 ID (uid)'), { target: { value: '777' } })
+    fireEvent.click(screen.getByRole('button', { name: /新增订阅/ }))
 
     await waitFor(() => {
       expect(mockSubscribeWeibo).toHaveBeenCalledWith({ uid: 777 })
@@ -433,14 +303,11 @@ describe('SubscriptionPage', () => {
   it('should reject invalid weibo uid before submission', async () => {
     render(<SubscriptionPage />)
 
-    const platformSelect = screen.getByLabelText('订阅平台')
-    fireEvent.change(platformSelect, { target: { value: 'weibo' } })
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '订阅平台' }))
+    fireEvent.click(await screen.findByTitle('微博'))
 
-    const uidInput = screen.getByPlaceholderText('微博用户 ID (uid)')
-    fireEvent.change(uidInput, { target: { value: '12ab' } })
-
-    const submitButton = screen.getByText('新增订阅')
-    fireEvent.click(submitButton)
+    fireEvent.change(screen.getByPlaceholderText('微博用户 ID (uid)'), { target: { value: '12ab' } })
+    fireEvent.click(screen.getByRole('button', { name: /新增订阅/ }))
 
     await waitFor(() => {
       expect(screen.getByText('请输入有效的微博用户 ID（纯数字）')).toBeInTheDocument()
@@ -459,11 +326,9 @@ describe('SubscriptionPage', () => {
       expect(screen.getByText('333')).toBeInTheDocument()
     })
 
-    const cancelButton = screen.getByText('取消')
-    fireEvent.click(cancelButton)
-
-    const confirmButton = screen.getByText('确认取消')
-    fireEvent.click(confirmButton)
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    await screen.findAllByText('确认取消该订阅？')
+    fireEvent.click(screen.getByRole('button', { name: '确认取消' }))
 
     await waitFor(() => {
       expect(mockUnsubscribeWeibo).toHaveBeenCalledWith(333)
@@ -473,11 +338,7 @@ describe('SubscriptionPage', () => {
 
   it('should render recording type label', async () => {
     mockListSubscriptions.mockResolvedValue([
-      {
-        mid: 321,
-        type: 'recording',
-        subscribedAt: '2024-01-08T00:00:00Z',
-      },
+      { mid: 321, type: 'recording', subscribedAt: '2024-01-08T00:00:00Z' },
     ])
 
     render(<SubscriptionPage />)
@@ -489,20 +350,10 @@ describe('SubscriptionPage', () => {
   })
 
   it('should subscribe with recording type', async () => {
-    mockSubscribe.mockResolvedValue({
-      mid: 654,
-      type: 'recording',
-      subscribedAt: '2024-01-09T00:00:00Z',
-    })
+    mockSubscribe.mockResolvedValue({ mid: 654, type: 'recording', subscribedAt: '2024-01-09T00:00:00Z' })
     mockListSubscriptions
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          mid: 654,
-          type: 'recording',
-          subscribedAt: '2024-01-09T00:00:00Z',
-        },
-      ])
+      .mockResolvedValueOnce([{ mid: 654, type: 'recording', subscribedAt: '2024-01-09T00:00:00Z' }])
 
     render(<SubscriptionPage />)
 
@@ -510,13 +361,9 @@ describe('SubscriptionPage', () => {
       expect(screen.getByText('暂无订阅')).toBeInTheDocument()
     })
 
-    const typeSelect = screen.getByDisplayValue('请选择类型')
-    fireEvent.change(typeSelect, { target: { value: 'recording' } })
-
-    const midInput = screen.getByPlaceholderText('主播 ID (mid)')
-    fireEvent.change(midInput, { target: { value: '654' } })
-
-    fireEvent.click(screen.getByText('新增订阅'))
+    fireEvent.click(await pickSelect('订阅类型', '录播'))
+    fireEvent.change(screen.getByPlaceholderText('主播 ID (mid)'), { target: { value: '654' } })
+    fireEvent.click(screen.getByRole('button', { name: /新增订阅/ }))
 
     await waitFor(() => {
       expect(mockSubscribe).toHaveBeenCalledWith({ mid: 654, type: 'recording' })

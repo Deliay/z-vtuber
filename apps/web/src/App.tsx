@@ -68,7 +68,11 @@ function App() {
     SubscriptionPage
 
   return (
-    <ConfigProvider locale={zhCN} theme={appTheme}>
+    <ConfigProvider
+      locale={zhCN}
+      theme={appTheme}
+      button={{ autoInsertSpace: false }}
+    >
       <AntdApp>
         <AppShell
           menuGroups={shellMenuGroups}

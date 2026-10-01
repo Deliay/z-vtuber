@@ -124,6 +124,30 @@ public static class TrainingMapping
             record.Model,
             BuildModelSlug(providerName, record.Model),
             record.Enabled,
+            record.InputCapabilities,
+            record.OutputCapabilities,
+            record.CreatedAt,
+            record.UpdatedAt);
+
+    /// <summary>
+    /// 功能点 DTO 映射：实时计算项（指定模型可用性/默认选择）由调用方传入，不落库。
+    /// </summary>
+    public static TrainingFeaturePointDto ToFeaturePointDto(
+        TrainingFeaturePointRecord record,
+        string? specifiedModelSlug,
+        bool specifiedModelAvailable,
+        TrainingModelRecord? defaultModel,
+        string? defaultModelSlug) =>
+        new(
+            record.Slug,
+            record.Name,
+            record.InputCapabilities,
+            record.OutputCapabilities,
+            record.ModelId?.ToString(),
+            specifiedModelSlug,
+            specifiedModelAvailable,
+            defaultModel?.Id.ToString(),
+            defaultModelSlug,
             record.CreatedAt,
             record.UpdatedAt);
 

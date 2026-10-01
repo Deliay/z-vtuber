@@ -232,6 +232,68 @@ paths:
                   error:
                     type: string
                     example: audio clip failed
+  /api/recordings/audio/merge:
+    post:
+      summary: 多片段音频合并（服务间内部能力）
+      description: >-
+        按请求顺序抽取多段录播音频并 ffmpeg 单进程 concat 合并输出单个 mp3（单声道 44.1kHz 96kbps；
+        未探测到 mp3 编码能力时降级 wav，语义不变），流式返回不落盘。
+        供 training synthesize 将断句拼音匹配命中的多条参考拼接为 speaker_prompt；录制中文件返回 400。
+      operationId: mergeRecordingAudioClips
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingAudioMergeRequest"
+      responses:
+        "200":
+          description: 合并音频（mp3；无 mp3 编码能力时降级 wav，语义不变）
+          headers:
+            Cache-Control:
+              description: 固定 no-store，合并每次现算不缓存
+              schema:
+                type: string
+                example: no-store
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: '{"error": "items is required"/"too many items"/"invalid time range"/"total duration too long"/"recording in progress"}'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+        "404":
+          description: '{"error": "file not found"}（任一文件不存在/非法文件名）'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: '{"error": "audio merge failed"}（ffmpeg 合并失败）'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
 components:
   parameters:
     RoomId:
@@ -256,6 +318,34 @@ components:
       schema:
         type: string
   schemas:
+    RecordingAudioMergeRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 按顺序合并的片段，1 ~ Recording:AudioMergeMaxItems（默认 16）
+          items:
+            $ref: "#/components/schemas/RecordingAudioMergeItem"
+    RecordingAudioMergeItem:
+      type: object
+      required: [roomId, fileName, startMs, endMs]
+      properties:
+        roomId:
+          type: integer
+          format: int64
+        fileName:
+          type: string
+          description: 录播文件名（仅允许平文件名，禁止路径分隔符与穿越）
+        startMs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: 片段起点（毫秒）
+        endMs:
+          type: integer
+          format: int64
+          description: 片段终点（毫秒，必须大于 startMs；单段 ≤ Recording:AudioClipMaxDurationMs，总时长 ≤ Recording:AudioMergeMaxTotalDurationMs）
     RecordingStatus:
       type: object
       properties:

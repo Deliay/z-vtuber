@@ -1,1 +1,10 @@
 /* 全站最小全局样式：布局与主题均由 antd（ConfigProvider + theme.ts）承接。 */
+
+/* 限宽截断文本（配合 TruncatedText 的 Tooltip 提供键盘可达的完整信息）。 */
+.z-truncated {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

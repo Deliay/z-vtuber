@@ -8,6 +8,7 @@ using Z.Vtuber.Training.Ai;
 using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Configuration;
 using Z.Vtuber.Training.Contracts;
+using Z.Vtuber.Training.FeaturePoints;
 using Z.Vtuber.Training.Synthesis;
 using Z.Vtuber.Training.Vectors;
 
@@ -26,7 +27,7 @@ public sealed class TrainingSynthesizeController(
     SynthesizeService synthesize,
     VectorSyncService vectors,
     TtsOptions ttsOptions,
-    SynthesizeOptions synthesizeOptions,
+    ITrainingModelResolver modelResolver,
     ILogger<TrainingSynthesizeController>? logger = null) : ControllerBase
 {
     /// <summary>上游 index-tts-api 支持的语种白名单（大小写不敏感）。</summary>
@@ -37,7 +38,7 @@ public sealed class TrainingSynthesizeController(
 
     /// <summary>
     /// 音频生成：dataset（404）→ text（400）→ lang（400）→ emotionMode（400）→（llm）model（404/400）校验 →
-    /// <see cref="SynthesizeService"/>（字符相似音色匹配/参考取数/TTS）→ 200 <c>audio/wav</c> +
+    /// <see cref="SynthesizeService"/>（拼音断句多命中拼接/无候选回退字符相似/参考取数/TTS）→ 200 <c>audio/wav</c> +
     /// <c>X-Speaker-Audio-Key</c>/<c>X-Emo-Audio-Key</c> 命中头。query <c>emotionMode</c> 缺省 <c>none</c>
     /// （不传情绪参考）；<c>llm</c> 用大模型生成情绪参考；<c>dataset</c> 与 <c>none</c> 均跳过模型解析
     /// （<c>dataset</c> 用音色命中条目自身情绪）。
@@ -88,9 +89,9 @@ public sealed class TrainingSynthesizeController(
         try
         {
             var result = await synthesize.SynthesizeAsync(datasetObjectId, text, lang, model, mode, ct);
-            if (!string.IsNullOrEmpty(result.SpeakerAudioKey))
+            if (result.SpeakerAudioKeys.Count > 0)
             {
-                Response.Headers["X-Speaker-Audio-Key"] = result.SpeakerAudioKey;
+                Response.Headers["X-Speaker-Audio-Key"] = string.Join(',', result.SpeakerAudioKeys);
             }
 
             if (!string.IsNullOrEmpty(result.EmoAudioKey))
@@ -159,7 +160,8 @@ public sealed class TrainingSynthesizeController(
 
     /// <summary>
     /// 解析情感向量生成所用模型：显式 <paramref name="rawModelId"/>（非法/不存在 404、停用 400）；
-    /// 否则 <c>Synthesize:DefaultEmotionModelId</c>，再否则首个启用模型；均无 → null（情绪降级中性）。
+    /// 否则按功能点 <c>emotion-from-text</c> 解析（指定优先 → 默认选择 → 无）；无可用模型 → null
+    /// （情绪降级中性）。
     /// </summary>
     private async Task<(TrainingModelRecord? Model, ObjectResult? Error)> ResolveEmotionModelAsync(
         string? rawModelId, CancellationToken ct)
@@ -177,15 +179,16 @@ public sealed class TrainingSynthesizeController(
                 : (null, BadRequest(new ErrorResponse("model disabled")));
         }
 
-        if (!string.IsNullOrWhiteSpace(synthesizeOptions.DefaultEmotionModelId)
-            && ObjectId.TryParse(synthesizeOptions.DefaultEmotionModelId, out var defaultId)
-            && await models.GetByIdAsync(defaultId, ct) is { Enabled: true } configured)
+        var definition = FeaturePointIds.EmotionFromTextDefinition;
+        var resolution = await modelResolver.ResolveAsync(
+            definition.Slug, definition.Name,
+            definition.InputCapabilities, definition.OutputCapabilities, ct);
+        if (resolution.ModelId is not { } resolvedId)
         {
-            return (configured, null);
+            return (null, null);
         }
 
-        var fallback = (await models.ListAsync(enabled: true, ct)).FirstOrDefault();
-        return (fallback, null);
+        return (await models.GetByIdAsync(resolvedId, ct), null);
     }
 
     /// <summary>

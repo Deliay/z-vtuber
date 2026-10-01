@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react'
 import {
+  Alert,
+  App as AntdApp,
+  Button,
+  Empty,
+  Form,
+  Input,
+  Select,
+  Table,
+  Tag,
+} from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
+import type { ColumnsType } from 'antd/es/table'
+import {
   listBackstageSubscriptions,
   listWeiboSubscriptions,
   subscribe,
@@ -7,6 +20,7 @@ import {
   unsubscribe,
   unsubscribeWeibo,
 } from '../../api/client'
+import { PageHeader } from '../../components/PageHeader'
 
 type Platform = 'bilibili' | 'weibo'
 
@@ -31,19 +45,33 @@ const PLATFORM_LABELS: Record<Platform, string> = {
   weibo: '微博',
 }
 
+const PLATFORM_COLORS: Record<Platform, string> = {
+  bilibili: 'blue',
+  weibo: 'orange',
+}
+
+const TYPE_OPTIONS = [
+  { value: 'danmaku', label: '弹幕' },
+  { value: 'dynamic', label: '动态' },
+  { value: 'guard', label: '舰长' },
+  { value: 'recording', label: '录播' },
+]
+
+function formatDate(dateString?: string | null) {
+  if (!dateString) return '-'
+  return new Date(dateString).toLocaleString()
+}
+
 export function SubscriptionPage() {
+  const { message, modal } = AntdApp.useApp()
+  const [form] = Form.useForm()
+
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const [platform, setPlatform] = useState<Platform>('bilibili')
-  const [mid, setMid] = useState('')
-  const [uid, setUid] = useState('')
-  const [type, setType] = useState<'danmaku' | 'dynamic' | 'guard' | 'recording' | ''>('')
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState<string | null>(null)
-
-  const [confirmingCancel, setConfirmingCancel] = useState<string | null>(null)
 
   const fetchSubscriptions = async () => {
     try {
@@ -82,216 +110,208 @@ export function SubscriptionPage() {
     fetchSubscriptions()
   }, [])
 
-  const handleSubscribe = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSubmitError(null)
-
+  const handleSubscribe = async (values: {
+    mid?: string
+    uid?: string
+    type?: string
+  }) => {
     try {
       setSubmitting(true)
       if (platform === 'bilibili') {
-        if (!type) {
-          setSubmitError('请选择订阅类型')
-          return
-        }
-
-        if (!mid || !/^\d+$/.test(mid)) {
-          setSubmitError('请输入有效的主播 ID（纯数字）')
-          return
-        }
-
-        const midNum = Number(mid)
-        if (midNum <= 0) {
-          setSubmitError('主播 ID 必须为正整数')
-          return
-        }
-
-        await subscribe({ mid: midNum, type })
-        setMid('')
-        setType('')
+        const midNum = Number(values.mid)
+        await subscribe({ mid: midNum, type: values.type as 'danmaku' })
+        form.setFieldsValue({ mid: undefined, type: undefined })
       } else {
-        if (!uid || !/^\d+$/.test(uid)) {
-          setSubmitError('请输入有效的微博用户 ID（纯数字）')
-          return
-        }
-
-        const uidNum = Number(uid)
-        if (uidNum <= 0) {
-          setSubmitError('微博用户 ID 必须为正整数')
-          return
-        }
-
+        const uidNum = Number(values.uid)
         await subscribeWeibo({ uid: uidNum })
-        setUid('')
+        form.setFieldsValue({ uid: undefined })
       }
+      message.success('订阅已创建')
       await fetchSubscriptions()
     } catch (err: any) {
       if (err.status === 400 && err.serverMessage) {
-        setSubmitError(err.serverMessage)
+        message.error(err.serverMessage)
       } else {
-        setSubmitError('提交失败，请重试')
+        message.error('提交失败，请重试')
       }
     } finally {
       setSubmitting(false)
     }
   }
 
-  const handleCancel = async (row: Row) => {
-    try {
-      if (row.platform === 'weibo') {
-        await unsubscribeWeibo(row.id)
-      } else if (row.type) {
-        await unsubscribe(row.id, row.type)
-      }
-      await fetchSubscriptions()
-    } catch (err: any) {
-      if (err.status === 404) {
-        setSubmitError('该订阅已不存在')
-        await fetchSubscriptions()
-      } else {
-        setSubmitError('取消订阅失败，请重试')
-      }
-    }
-    setConfirmingCancel(null)
+  const handleCancel = (row: Row) => {
+    modal.confirm({
+      title: '确认取消该订阅？',
+      content: `取消后将不再收到该${PLATFORM_LABELS[row.platform]}订阅的更新。`,
+      okText: '确认取消',
+      cancelText: '返回',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          if (row.platform === 'weibo') {
+            await unsubscribeWeibo(row.id)
+          } else if (row.type) {
+            await unsubscribe(row.id, row.type)
+          }
+          message.success('订阅已取消')
+          await fetchSubscriptions()
+        } catch (err: any) {
+          if (err.status === 404) {
+            message.error('该订阅已不存在')
+            await fetchSubscriptions()
+          } else {
+            message.error('取消订阅失败，请重试')
+          }
+        }
+      },
+    })
   }
 
-  const formatDate = (dateString?: string | null) => {
-    if (!dateString) return '-'
-    return new Date(dateString).toLocaleString()
-  }
+  const columns: ColumnsType<Row> = [
+    {
+      title: '平台',
+      dataIndex: 'platform',
+      width: 90,
+      render: (value: Platform) => (
+        <Tag color={PLATFORM_COLORS[value]}>{PLATFORM_LABELS[value]}</Tag>
+      ),
+    },
+    {
+      title: '主播昵称',
+      dataIndex: 'name',
+      render: (_value, record) =>
+        record.platform === 'bilibili' ? (record.name ?? '暂无资料') : '-',
+    },
+    { title: '主播 ID', dataIndex: 'id', width: 120 },
+    {
+      title: '类型',
+      dataIndex: 'type',
+      width: 100,
+      render: (_value, record) =>
+        record.platform === 'weibo'
+          ? '微博动态'
+          : (TYPE_LABELS[record.type ?? ''] ?? record.type),
+    },
+    {
+      title: '订阅时间',
+      dataIndex: 'subscribedAt',
+      width: 200,
+      render: (value: string) => formatDate(value),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 100,
+      render: (_value, record) => (
+        <Button danger onClick={() => handleCancel(record)}>
+          取消
+        </Button>
+      ),
+    },
+  ]
 
   return (
     <div>
-      <h2>订阅管理</h2>
+      <PageHeader title="订阅管理" description="管理 B站 / 微博的主播与微博订阅。" />
 
-      <form onSubmit={handleSubscribe} style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <select
-            value={platform}
-            onChange={(e) => setPlatform(e.target.value as Platform)}
-            style={{ padding: '0.5rem' }}
+      <Form
+        form={form}
+        layout="inline"
+        onFinish={handleSubscribe}
+        style={{ marginBottom: 16, rowGap: 12 }}
+      >
+        <Form.Item label="订阅平台" style={{ marginBottom: 0 }}>
+          <Select
             aria-label="订阅平台"
-          >
-            <option value="bilibili">B站</option>
-            <option value="weibo">微博</option>
-          </select>
+            value={platform}
+            onChange={(value) => {
+              const nextPlatform = value as Platform
+              setPlatform(nextPlatform)
+              form.resetFields()
+            }}
+            options={[
+              { value: 'bilibili', label: 'B站' },
+              { value: 'weibo', label: '微博' },
+            ]}
+            style={{ width: 100 }}
+          />
+        </Form.Item>
 
-          {platform === 'bilibili' ? (
-            <>
-              <input
-                type="text"
-                value={mid}
-                onChange={(e) => setMid(e.target.value)}
-                placeholder="主播 ID (mid)"
-                style={{ padding: '0.5rem' }}
+        {platform === 'bilibili' ? (
+          <>
+            <Form.Item
+              name="mid"
+              rules={[
+                { required: true, message: '请输入有效的主播 ID（纯数字）' },
+                { pattern: /^\d+$/, message: '请输入有效的主播 ID（纯数字）' },
+                {
+                  validator: (_rule, value) =>
+                    value && Number(value) <= 0
+                      ? Promise.reject(new Error('主播 ID 必须为正整数'))
+                      : Promise.resolve(),
+                },
+              ]}
+              style={{ marginBottom: 0 }}
+            >
+              <Input placeholder="主播 ID (mid)" style={{ width: 160 }} />
+            </Form.Item>
+            <Form.Item
+              name="type"
+              rules={[{ required: true, message: '请选择订阅类型' }]}
+              style={{ marginBottom: 0 }}
+            >
+              <Select
+                placeholder="请选择类型"
+                options={TYPE_OPTIONS}
+                style={{ width: 130 }}
+                aria-label="订阅类型"
               />
-              <select
-                value={type}
-                onChange={(e) =>
-                  setType(e.target.value as 'danmaku' | 'dynamic' | 'guard' | 'recording' | '')
-                }
-                style={{ padding: '0.5rem' }}
-              >
-                <option value="">请选择类型</option>
-                <option value="danmaku">弹幕</option>
-                <option value="dynamic">动态</option>
-                <option value="guard">舰长</option>
-                <option value="recording">录播</option>
-              </select>
-            </>
-          ) : (
-            <input
-              type="text"
-              value={uid}
-              onChange={(e) => setUid(e.target.value)}
-              placeholder="微博用户 ID (uid)"
-              style={{ padding: '0.5rem' }}
-            />
-          )}
-
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{ padding: '0.5rem 1rem' }}
+            </Form.Item>
+          </>
+        ) : (
+          <Form.Item
+            name="uid"
+            rules={[
+              { required: true, message: '请输入有效的微博用户 ID（纯数字）' },
+              { pattern: /^\d+$/, message: '请输入有效的微博用户 ID（纯数字）' },
+              {
+                validator: (_rule, value) =>
+                  value && Number(value) <= 0
+                    ? Promise.reject(new Error('微博用户 ID 必须为正整数'))
+                    : Promise.resolve(),
+              },
+            ]}
+            style={{ marginBottom: 0 }}
           >
-            {submitting ? '提交中...' : '新增订阅'}
-          </button>
-        </div>
-        {submitError && (
-          <p style={{ color: '#f87171', margin: '0.5rem 0' }}>{submitError}</p>
+            <Input placeholder="微博用户 ID (uid)" style={{ width: 180 }} />
+          </Form.Item>
         )}
-      </form>
 
-      {loading ? (
-        <p>加载中...</p>
-      ) : error ? (
-        <p style={{ color: '#f87171' }}>{error}</p>
-      ) : rows.length === 0 ? (
-        <p>暂无订阅</p>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Button type="primary" htmlType="submit" icon={<PlusOutlined />} loading={submitting}>
+            新增订阅
+          </Button>
+        </Form.Item>
+      </Form>
+
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          title={error}
+          action={<Button onClick={fetchSubscriptions}>重试</Button>}
+        />
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>平台</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>主播昵称</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>主播 ID</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>类型</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>订阅时间</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const isConfirming = confirmingCancel === row.key
-
-              return (
-                <tr key={row.key}>
-                  <td style={{ padding: '0.5rem' }}>
-                    {PLATFORM_LABELS[row.platform]}
-                  </td>
-                  <td style={{ padding: '0.5rem' }}>
-                    {row.platform === 'bilibili'
-                      ? (row.name ?? '暂无资料')
-                      : '-'}
-                  </td>
-                  <td style={{ padding: '0.5rem' }}>{row.id}</td>
-                  <td style={{ padding: '0.5rem' }}>
-                    {row.platform === 'weibo'
-                      ? '微博动态'
-                      : (TYPE_LABELS[row.type ?? ''] ?? row.type)}
-                  </td>
-                  <td style={{ padding: '0.5rem' }}>
-                    {formatDate(row.subscribedAt)}
-                  </td>
-                  <td style={{ padding: '0.5rem' }}>
-                    {isConfirming ? (
-                      <span style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button
-                          onClick={() => handleCancel(row)}
-                          style={{ padding: '0.25rem 0.5rem' }}
-                        >
-                          确认取消
-                        </button>
-                        <button
-                          onClick={() => setConfirmingCancel(null)}
-                          style={{ padding: '0.25rem 0.5rem' }}
-                        >
-                          返回
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmingCancel(row.key)}
-                        style={{ padding: '0.25rem 0.5rem' }}
-                      >
-                        取消
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+        <Table<Row>
+          rowKey="key"
+          columns={columns}
+          dataSource={rows}
+          loading={loading}
+          pagination={false}
+          locale={{
+            emptyText: <Empty description="暂无订阅" />,
+          }}
+        />
       )}
     </div>
   )
