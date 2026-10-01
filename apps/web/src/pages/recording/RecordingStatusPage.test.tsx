@@ -61,6 +61,32 @@ describe('RecordingStatusPage', () => {
     })
   })
 
+  it('should expose the live audio hint to keyboard users via a focus tooltip', async () => {
+    mockListRecordingStatus.mockResolvedValue([
+      {
+        mid: 2,
+        roomId: 202,
+        state: 'recording',
+        sessionTitle: '晚间歌回',
+        streamer: { name: '主播B' },
+      },
+    ])
+    mockListRecordings.mockResolvedValue([])
+
+    render(<RecordingStatusPage />)
+
+    const label = await screen.findByText('实时音频')
+    const link = label.closest('a') as HTMLElement
+    expect(link).not.toBeNull()
+    // 悬浮提示对键盘用户可达：focus 链接即出 Tooltip
+    fireEvent.focus(link)
+    expect(
+      (await screen.findAllByRole('tooltip')).some(
+        (tip) => tip.textContent === 'FLV 音频流，需支持 FLV 的播放器打开',
+      ),
+    ).toBe(true)
+  })
+
   it('should load and render historical recordings', async () => {
     mockListRecordingStatus.mockResolvedValue([
       { mid: 1, roomId: 101, state: 'not_live', streamer: { name: '主播A' } },

@@ -7,6 +7,7 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd'
 import { AudioOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
@@ -214,16 +215,21 @@ export function RecordingStatusPage() {
         return (
           <Space size={8}>
             {item.state === 'recording' && (
-              <Button
-                type="link"
-                size="small"
-                icon={<AudioOutlined />}
-                href={recordingAudioUrl(roomId)}
-                target="_blank"
+              // 悬浮提示对键盘用户同样可达：focus 即出 Tooltip。
+              <Tooltip
                 title="FLV 音频流，需支持 FLV 的播放器打开"
+                trigger={['hover', 'focus']}
               >
-                实时音频
-              </Button>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<AudioOutlined />}
+                  href={recordingAudioUrl(roomId)}
+                  target="_blank"
+                >
+                  实时音频
+                </Button>
+              </Tooltip>
             )}
             <Button
               size="small"

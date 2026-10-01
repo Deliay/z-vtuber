@@ -613,14 +613,7 @@ export function TaskListTab() {
                         justify="space-between"
                         gap={8}
                       >
-                        <Typography.Text
-                          style={{
-                            color:
-                              task.status === 'FAILED'
-                                ? token.colorTextSecondary
-                                : undefined,
-                          }}
-                        >
+                        <Typography.Text>
                           {`${task.modelName ?? task.modelId} - ${
                             STATUS_LABELS[task.status ?? ''] ?? task.status
                           } - ${formatPosition(task.position)}`}

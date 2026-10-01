@@ -58,19 +58,19 @@ describe('AppShell', () => {
     expect(onSelect).toHaveBeenCalledWith('c')
   })
 
-  it('should not render a group title for the default (no-group) section', () => {
+  it('should render the default section outside any menu group and group the titled section', () => {
     render(
-      <AppShell
-        menuGroups={[{ items: [{ key: 'a', label: '订阅管理', icon: MENU_ICONS.subscriptions }] }]}
-        currentPage="a"
-        onSelect={vi.fn()}
-      >
+      <AppShell menuGroups={menuGroups} currentPage="a" onSelect={vi.fn()}>
         <div>内容</div>
       </AppShell>,
     )
 
-    // 缺省组只平铺菜单项，不出现额外的分组标题节点。
-    expect(screen.queryByText('训练')).not.toBeInTheDocument()
-    expect(screen.getByText('订阅管理')).toBeInTheDocument()
+    // 缺省组只平铺菜单项：其 li 不在任何分组容器内。
+    expect(screen.getByText('订阅管理').closest('.ant-menu-item-group')).toBeNull()
+    expect(screen.getByText('录制状态').closest('.ant-menu-item-group')).toBeNull()
+    // 有标题的组：其项位于分组容器内。
+    expect(screen.getByText('数据集').closest('.ant-menu-item-group')).not.toBeNull()
+    // 恰有一个分组标题容器。
+    expect(document.querySelectorAll('.ant-menu-item-group')).toHaveLength(1)
   })
 })
