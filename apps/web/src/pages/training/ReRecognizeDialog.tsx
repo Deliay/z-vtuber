@@ -1,4 +1,5 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useState } from 'react'
+import { Alert, Button, Form, Input, Modal, Select } from 'antd'
 import {
   apiErrorMessage,
   listTrainingModels,
@@ -43,16 +44,6 @@ export interface ReRecognizeDialogProps {
 }
 
 const TIME_INVALID = '时间输入无效'
-
-const inputStyle: CSSProperties = {
-  width: '100%',
-  boxSizing: 'border-box',
-  padding: '0.5rem',
-  backgroundColor: '#334155',
-  color: '#e2e8f0',
-  border: '1px solid #475569',
-  borderRadius: '0.25rem',
-}
 
 /**
  * 单条「重新识别」对话框：选择已启用模型 → 识别回填「文本」框（可继续微调）
@@ -150,87 +141,48 @@ export function ReRecognizeDialog({
   }
 
   return (
-    <div
-      className="re-recognize-overlay"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000,
-      }}
-      onClick={() => {
-        if (!busy) onClose()
-      }}
+    <Modal
+      title="重新识别"
+      open
+      onCancel={onClose}
+      mask={{ closable: false }}
+      destroyOnHidden
+      footer={[
+        <Button key="recognize" type="primary" loading={recognizing} disabled={!modelId || busy} onClick={handleRecognize}>
+          识别
+        </Button>,
+        <Button key="save" loading={saving} disabled={busy} onClick={handleSave}>
+          保存
+        </Button>,
+        <Button key="cancel" disabled={busy} onClick={onClose}>
+          取消
+        </Button>,
+      ]}
     >
-      <div
-        role="dialog"
-        aria-label="重新识别"
-        aria-modal="true"
-        className="re-recognize-dialog"
-        style={{
-          backgroundColor: '#1e293b',
-          color: '#e2e8f0',
-          padding: '1.5rem',
-          borderRadius: '0.5rem',
-          minWidth: '400px',
-          maxWidth: '90vw',
-          maxHeight: '90vh',
-          overflow: 'auto',
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h3>重新识别</h3>
+      <Form layout="vertical">
+        <Form.Item label="识别模型">
+          <Select
+            aria-label="识别模型"
+            value={modelId || undefined}
+            placeholder="请选择识别模型"
+            onChange={setModelId}
+            options={models.map((model) => ({ value: model.id as string, label: model.slug as string }))}
+          />
+        </Form.Item>
+        <Form.Item label="文本">
+          <Input.TextArea
+            aria-label="文本"
+            rows={5}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+        </Form.Item>
+      </Form>
 
-        <label htmlFor="re-recognize-model">识别模型</label>
-        <select
-          id="re-recognize-model"
-          aria-label="识别模型"
-          style={inputStyle}
-          value={modelId}
-          onChange={(event) => setModelId(event.target.value)}
-        >
-          <option value="">请选择识别模型</option>
-          {models.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.slug}
-            </option>
-          ))}
-        </select>
-
-        {models.length === 0 && (
-          <div style={{ color: '#94a3b8' }}>请先在模型设置中配置模型与能力</div>
-        )}
-
-        <label htmlFor="re-recognize-text">文本</label>
-        <textarea
-          id="re-recognize-text"
-          aria-label="文本"
-          rows={5}
-          style={{ ...inputStyle, resize: 'vertical' }}
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-        />
-
-        {error && <div role="alert">{error}</div>}
-
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-          <button onClick={() => void handleRecognize()} disabled={!modelId || busy}>
-            {recognizing ? '识别中...' : '识别'}
-          </button>
-          <button onClick={() => void handleSave()} disabled={busy}>
-            {saving ? '保存中...' : '保存'}
-          </button>
-          <button onClick={onClose} disabled={busy}>
-            取消
-          </button>
-        </div>
-      </div>
-    </div>
+      {models.length === 0 && (
+        <Alert type="info" showIcon title="请先在模型设置中配置模型与能力" />
+      )}
+      {error && <Alert type="error" showIcon title={error} />}
+    </Modal>
   )
 }

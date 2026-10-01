@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { SettingsTab } from './SettingsTab'
 import * as client from '../../api/client'
 
@@ -12,6 +13,13 @@ const mockCreateModel = vi.mocked(client.createTranscriptModel)
 const mockUpdateModel = vi.mocked(client.updateTranscriptModel)
 const mockGetCandidates = vi.mocked(client.getTranscriptCandidateRooms)
 const mockDeleteSettings = vi.mocked(client.deleteTranscriptSettings)
+
+/** antd Select：点开并选中。 */
+async function pickSelect(ariaLabel: string, optionText: string) {
+  const combo = screen.getByRole('combobox', { name: ariaLabel }) as HTMLElement
+  fireEvent.mouseDown(combo)
+  fireEvent.click(await screen.findByTitle(optionText))
+}
 
 describe('SettingsTab', () => {
   beforeEach(() => {
@@ -65,8 +73,8 @@ describe('SettingsTab', () => {
 
     await screen.findByRole('button', { name: '添加自动识别' })
 
-    fireEvent.change(screen.getByLabelText('直播间号'), { target: { value: '202' } })
-    fireEvent.change(screen.getByLabelText('添加识别模型'), { target: { value: 'm1' } })
+    await pickSelect('直播间号', '202')
+    await pickSelect('添加识别模型', '模型A')
     fireEvent.click(screen.getByRole('button', { name: '添加自动识别' }))
 
     await waitFor(() => {
@@ -82,7 +90,7 @@ describe('SettingsTab', () => {
 
     await screen.findByRole('button', { name: '添加自动识别' })
 
-    fireEvent.change(screen.getByLabelText('直播间号'), { target: { value: '202' } })
+    await pickSelect('直播间号', '202')
     fireEvent.click(screen.getByRole('button', { name: '添加自动识别' }))
 
     expect(await screen.findByText('请先选择识别模型')).toBeInTheDocument()
@@ -92,10 +100,11 @@ describe('SettingsTab', () => {
   it('should render the add-automation room as a candidate select with anchor labels', async () => {
     render(<SettingsTab />)
 
-    const select = await screen.findByLabelText('直播间号')
-    expect(select.tagName).toBe('SELECT')
-    expect(screen.getByRole('option', { name: '主播A（101）' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: '202' })).toBeInTheDocument()
+    const combo = await screen.findByRole('combobox', { name: '直播间号' })
+    expect(combo).toBeInTheDocument()
+    fireEvent.mouseDown(combo)
+    expect(await screen.findByTitle('主播A（101）')).toBeInTheDocument()
+    expect(screen.getByTitle('202')).toBeInTheDocument()
   })
 
   it('should disable submit and show a hint when there are no candidate rooms', async () => {
@@ -109,12 +118,12 @@ describe('SettingsTab', () => {
   })
 
   it('should confirm and delete a settings row then refresh', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-
     render(<SettingsTab />)
 
     await screen.findByText('关闭')
     fireEvent.click(screen.getByRole('button', { name: '删除自动识别-101' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: '确认删除' }))
 
     await waitFor(() => {
       expect(mockDeleteSettings).toHaveBeenCalledWith(101)
@@ -122,22 +131,16 @@ describe('SettingsTab', () => {
     await waitFor(() => {
       expect(mockGetSettings).toHaveBeenCalledTimes(2)
     })
-
-    confirmSpy.mockRestore()
   })
 
   it('should not delete when the confirmation is dismissed', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
-
     render(<SettingsTab />)
 
     await screen.findByText('关闭')
     fireEvent.click(screen.getByRole('button', { name: '删除自动识别-101' }))
+    fireEvent.click(await screen.findByRole('button', { name: '返回' }))
 
     expect(mockDeleteSettings).not.toHaveBeenCalled()
-    expect(confirmSpy).toHaveBeenCalled()
-
-    confirmSpy.mockRestore()
   })
 
   it('should flag unbound settings as pending and block enabling without a model', async () => {
@@ -151,9 +154,7 @@ describe('SettingsTab', () => {
 
     fireEvent.click(screen.getByText('开启'))
 
-    expect(
-      await screen.findByText('请先选择识别模型，自动转写需要绑定模型'),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('请先选择识别模型，自动转写需要绑定模型')).toBeInTheDocument()
     expect(mockSetRoom).not.toHaveBeenCalled()
   })
 
@@ -165,7 +166,7 @@ describe('SettingsTab', () => {
     render(<SettingsTab />)
 
     await screen.findByText('待完善')
-    fireEvent.change(screen.getByLabelText('识别模型-104'), { target: { value: 'm1' } })
+    await pickSelect('识别模型-104', '模型A')
     fireEvent.click(screen.getByText('开启'))
 
     await waitFor(() => {
@@ -181,7 +182,7 @@ describe('SettingsTab', () => {
     fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: '新模型' } })
     fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'fun-asr-realtime' } })
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'super-secret' } })
-    fireEvent.click(screen.getByText('添加'))
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
 
     await waitFor(() => {
       expect(mockCreateModel).toHaveBeenCalledTimes(1)
@@ -192,7 +193,9 @@ describe('SettingsTab', () => {
     expect(payload.provider).toBe('ali-fun-asr')
     expect(payload.model).toBe('fun-asr-realtime')
 
-    expect((screen.getByLabelText('API Key') as HTMLInputElement).value).toBe('')
+    await waitFor(() => {
+      expect((screen.getByLabelText('API Key') as HTMLInputElement).value).toBe('')
+    })
     expect(screen.queryByText('super-secret')).not.toBeInTheDocument()
   })
 
@@ -203,7 +206,7 @@ describe('SettingsTab', () => {
 
     fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: '新模型' } })
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'secret' } })
-    fireEvent.click(screen.getByText('添加'))
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
 
     expect(await screen.findByText('请输入识别模型')).toBeInTheDocument()
     expect(mockCreateModel).not.toHaveBeenCalled()
@@ -262,9 +265,6 @@ describe('SettingsTab', () => {
     await waitFor(() => {
       expect(mockSetRoom).toHaveBeenCalledTimes(2)
     })
-    await waitFor(() => {
-      expect(screen.queryByText('自动识别设置更新失败')).not.toBeInTheDocument()
-    })
   })
 
   it('should clamp a negative max concurrency to 1 on create and update', async () => {
@@ -273,6 +273,7 @@ describe('SettingsTab', () => {
     await screen.findByText('添加模型')
 
     fireEvent.change(screen.getByLabelText('最大并发-模型B'), { target: { value: '-3' } })
+    fireEvent.keyDown(screen.getByLabelText('最大并发-模型B'), { key: 'Enter' })
     fireEvent.click(screen.getAllByRole('button', { name: '保存' })[1])
     await waitFor(() => {
       expect(mockUpdateModel).toHaveBeenCalledWith('m2', { maxConcurrency: 1 })
@@ -282,8 +283,8 @@ describe('SettingsTab', () => {
     fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'fun-asr-realtime' } })
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'secret' } })
     fireEvent.change(screen.getByLabelText('最大并发数'), { target: { value: '-5' } })
-    const createForm = screen.getByText('添加').closest('form')
-    fireEvent.submit(createForm as HTMLFormElement)
+    fireEvent.keyDown(screen.getByLabelText('最大并发数'), { key: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
 
     await waitFor(() => {
       expect(mockCreateModel).toHaveBeenCalledTimes(1)

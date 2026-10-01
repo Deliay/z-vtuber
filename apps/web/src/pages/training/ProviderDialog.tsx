@@ -1,4 +1,5 @@
-import { useState, type CSSProperties } from 'react'
+import { useState } from 'react'
+import { Alert, Form, Input, Modal, Select } from 'antd'
 import {
   apiErrorMessage,
   createTrainingProvider,
@@ -14,23 +15,6 @@ export interface ProviderDialogProps {
   onClose: () => void
   /** 保存成功后回调（用于刷新列表）。 */
   onSaved: () => void
-}
-
-const inputStyle: CSSProperties = {
-  width: '100%',
-  boxSizing: 'border-box',
-  padding: '0.5rem',
-  backgroundColor: '#334155',
-  color: '#e2e8f0',
-  border: '1px solid #475569',
-  borderRadius: '0.25rem',
-}
-
-const fieldStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.25rem',
-  marginBottom: '0.75rem',
 }
 
 /**
@@ -78,108 +62,52 @@ export function ProviderDialog({ provider, onClose, onSaved }: ProviderDialogPro
   }
 
   return (
-    <div
-      className="provider-dialog-overlay"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000,
-      }}
-      onClick={() => {
-        if (!busy) onClose()
-      }}
+    <Modal
+      title={editing ? '编辑 Provider' : '新增 Provider'}
+      open
+      onOk={handleSave}
+      onCancel={onClose}
+      confirmLoading={busy}
+      okText="保存"
+      cancelText="取消"
+      mask={{ closable: false }}
+      destroyOnHidden
     >
-      <div
-        role="dialog"
-        aria-label={editing ? '编辑 Provider' : '新增 Provider'}
-        aria-modal="true"
-        className="provider-dialog"
-        style={{
-          backgroundColor: '#1e293b',
-          color: '#e2e8f0',
-          padding: '1.5rem',
-          borderRadius: '0.5rem',
-          minWidth: '400px',
-          maxWidth: '90vw',
-          maxHeight: '90vh',
-          overflow: 'auto',
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h3>{editing ? '编辑 Provider' : '新增 Provider'}</h3>
-
-        <label htmlFor="provider-name" style={fieldStyle}>
-          名称
-          <input
-            id="provider-name"
-            aria-label="名称"
-            style={inputStyle}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-
-        <label htmlFor="provider-type" style={fieldStyle}>
-          模型类型
-          <select
-            id="provider-type"
+      <Form layout="vertical">
+        <Form.Item label="名称">
+          <Input aria-label="名称" value={name} onChange={(e) => setName(e.target.value)} />
+        </Form.Item>
+        <Form.Item label="模型类型">
+          <Select
             aria-label="模型类型"
-            style={inputStyle}
             value={type}
-            onChange={(event) => setType(event.target.value)}
-          >
-            <option value="openai">OpenAI</option>
-            <option value="claude">Claude</option>
-          </select>
-        </label>
-
-        <label htmlFor="provider-endpoint" style={fieldStyle}>
-          Endpoint
-          <input
-            id="provider-endpoint"
+            onChange={setType}
+            options={[
+              { value: 'openai', label: 'OpenAI' },
+              { value: 'claude', label: 'Claude' },
+            ]}
+          />
+        </Form.Item>
+        <Form.Item label="Endpoint">
+          <Input
             aria-label="Endpoint"
-            style={inputStyle}
             value={endpoint}
-            onChange={(event) => setEndpoint(event.target.value)}
+            onChange={(e) => setEndpoint(e.target.value)}
           />
-        </label>
-
-        <label htmlFor="provider-api-key" style={fieldStyle}>
-          API key
-          <input
-            id="provider-api-key"
+        </Form.Item>
+        <Form.Item
+          label="API key"
+          extra={editing ? 'API key 留空表示不修改，保存后不会回显' : undefined}
+        >
+          <Input.Password
             aria-label="API key"
-            type="password"
-            style={inputStyle}
             value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
+            onChange={(e) => setApiKey(e.target.value)}
           />
-        </label>
+        </Form.Item>
+      </Form>
 
-        {editing && (
-          <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
-            API key 留空表示不修改，保存后不会回显
-          </div>
-        )}
-
-        {error && <div role="alert">{error}</div>}
-
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-          <button onClick={() => void handleSave()} disabled={busy}>
-            保存
-          </button>
-          <button onClick={onClose} disabled={busy}>
-            取消
-          </button>
-        </div>
-      </div>
-    </div>
+      {error && <Alert type="error" showIcon title={error} />}
+    </Modal>
   )
 }

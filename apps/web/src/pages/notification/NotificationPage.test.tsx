@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { screen, waitFor, fireEvent, within } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { NotificationPage } from './NotificationPage'
 import * as client from '../../api/client'
 
@@ -10,10 +11,11 @@ describe('NotificationPage', () => {
     vi.clearAllMocks()
   })
 
-  it('should render loading state initially', () => {
+  it('should render the loading state initially', () => {
     vi.mocked(client.listNotificationBindings).mockReturnValue(new Promise(() => {}))
     render(<NotificationPage />)
-    expect(screen.getByText('加载中...')).toBeInTheDocument()
+    expect(screen.getByText('通知管理')).toBeInTheDocument()
+    expect(document.querySelector('.ant-spin')).toBeInTheDocument()
   })
 
   it('should render empty state when no bindings', async () => {
@@ -71,6 +73,7 @@ describe('NotificationPage', () => {
     await waitFor(() => {
       expect(screen.getByText('服务不可用')).toBeInTheDocument()
     })
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
   })
 
   it('should open create modal with event type select', async () => {
@@ -81,11 +84,12 @@ describe('NotificationPage', () => {
       expect(screen.getByText('暂无通知绑定')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText('新增绑定'))
+    fireEvent.click(screen.getAllByText('新增绑定')[0])
 
-    expect(screen.getByText('选择群')).toBeInTheDocument()
-    expect(screen.getByText('bilibili帐号失效通知')).toBeInTheDocument()
-    expect(screen.getByText('微博帐号失效通知')).toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog', { name: '新增绑定' })
+    expect(within(dialog).getByText('通知类型')).toBeInTheDocument()
+    expect(within(dialog).getByText('选择群')).toBeInTheDocument()
+    expect(within(dialog).getByText('bilibili帐号失效通知')).toBeInTheDocument()
   })
 
   it('should submit the selected eventType when creating a binding', async () => {
@@ -106,17 +110,21 @@ describe('NotificationPage', () => {
       expect(screen.getByText('暂无通知绑定')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText('新增绑定'))
+    fireEvent.click(screen.getAllByText('新增绑定')[0])
 
+    const dialog = await screen.findByRole('dialog', { name: '新增绑定' })
     await waitFor(() => {
-      expect(screen.getByText('运维群（123456）')).toBeInTheDocument()
+      expect(within(dialog).getAllByRole('combobox').length).toBeGreaterThanOrEqual(2)
     })
 
-    const selects = screen.getAllByRole('combobox')
-    fireEvent.change(selects[0], { target: { value: 'weibo_cookie_invalid' } })
-    fireEvent.change(selects[1], { target: { value: '123456' } })
+    const combos = within(dialog).getAllByRole('combobox')
+    fireEvent.mouseDown(combos[0])
+    fireEvent.click(await screen.findByTitle('微博帐号失效通知'))
 
-    fireEvent.click(screen.getByText('创建'))
+    fireEvent.mouseDown(combos[1])
+    fireEvent.click(await screen.findByTitle('运维群（123456）'))
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建' }))
 
     await waitFor(() => {
       expect(client.createNotificationBinding).toHaveBeenCalledWith({
@@ -145,16 +153,17 @@ describe('NotificationPage', () => {
       expect(screen.getByText('暂无通知绑定')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText('新增绑定'))
+    fireEvent.click(screen.getAllByText('新增绑定')[0])
 
+    const dialog = await screen.findByRole('dialog', { name: '新增绑定' })
     await waitFor(() => {
-      expect(screen.getByText('运维群（123456）')).toBeInTheDocument()
+      expect(within(dialog).getAllByRole('combobox').length).toBeGreaterThanOrEqual(2)
     })
+    const combos = within(dialog).getAllByRole('combobox')
+    fireEvent.mouseDown(combos[1])
+    fireEvent.click(await screen.findByTitle('运维群（123456）'))
 
-    const selects = screen.getAllByRole('combobox')
-    fireEvent.change(selects[1], { target: { value: '123456' } })
-
-    fireEvent.click(screen.getByText('创建'))
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建' }))
 
     await waitFor(() => {
       expect(client.createNotificationBinding).toHaveBeenCalledWith({
@@ -165,7 +174,7 @@ describe('NotificationPage', () => {
     })
   })
 
-  it('should show delete confirmation', async () => {
+  it('should confirm before deleting a binding and delete it on confirm', async () => {
     vi.mocked(client.listNotificationBindings).mockResolvedValue([
       {
         id: '1',
@@ -175,14 +184,44 @@ describe('NotificationPage', () => {
         createdAt: '2024-01-01T00:00:00Z',
       },
     ])
+    vi.mocked(client.deleteNotificationBinding).mockResolvedValue(undefined)
+
     render(<NotificationPage />)
     await waitFor(() => {
       expect(screen.getByText('bilibili帐号失效通知')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText('删除'))
+    fireEvent.click(screen.getByRole('button', { name: '删除' }))
 
-    expect(screen.getByText('确认删除')).toBeInTheDocument()
-    expect(screen.getByText('返回')).toBeInTheDocument()
+    await screen.findAllByText('确认删除该通知绑定？')
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }))
+
+    await waitFor(() => {
+      expect(client.deleteNotificationBinding).toHaveBeenCalledWith('1')
+    })
+  })
+
+  it('should not delete when the confirmation is cancelled', async () => {
+    vi.mocked(client.listNotificationBindings).mockResolvedValue([
+      {
+        id: '1',
+        eventType: 'bilibili_cookie_invalid',
+        groupId: '123456',
+        groupName: '运维群',
+        createdAt: '2024-01-01T00:00:00Z',
+      },
+    ])
+
+    render(<NotificationPage />)
+    await waitFor(() => {
+      expect(screen.getByText('bilibili帐号失效通知')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '删除' }))
+
+    await screen.findAllByText('确认删除该通知绑定？')
+    fireEvent.click(screen.getByRole('button', { name: '返回' }))
+
+    expect(client.deleteNotificationBinding).not.toHaveBeenCalled()
   })
 })

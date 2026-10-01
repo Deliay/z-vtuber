@@ -1,10 +1,15 @@
 import { useState } from 'react'
+import { App as AntdApp, ConfigProvider } from 'antd'
+import zhCN from 'antd/locale/zh_CN'
 import { SubscriptionPage } from './pages/subscription/SubscriptionPage'
 import { CookiePage } from './pages/cookie/CookiePage'
 import { NotificationPage } from './pages/notification/NotificationPage'
 import { RecordingStatusPage } from './pages/recording/RecordingStatusPage'
 import { TranscriptsPage } from './pages/transcripts/TranscriptsPage'
 import { DatasetsPage } from './pages/training/DatasetsPage'
+import { AppShell, type AppShellMenuGroup } from './components/AppShell'
+import { MENU_ICONS } from './components/menuIcons'
+import { appTheme } from './theme'
 import './App.css'
 
 type PageKey =
@@ -45,6 +50,16 @@ const menuGroups: MenuGroup[] = [
 
 const menuItems: MenuItem[] = menuGroups.flatMap((group) => group.items)
 
+/** 把业务菜单结构与图标合并，交给 `AppShell` 渲染。 */
+const shellMenuGroups: AppShellMenuGroup[] = menuGroups.map((group) => ({
+  group: group.group,
+  items: group.items.map((item) => ({
+    key: item.key,
+    label: item.label,
+    icon: MENU_ICONS[item.key],
+  })),
+}))
+
 function App() {
   const [currentPage, setCurrentPage] = useState<PageKey>('subscriptions')
 
@@ -53,31 +68,21 @@ function App() {
     SubscriptionPage
 
   return (
-    <div className="app">
-      <nav className="sidebar">
-        <h1>Z.Vtuber 管理后台</h1>
-        <div className="menu">
-          {menuGroups.map((group) => (
-            <div className="menu-group" key={group.group ?? 'default'}>
-              {group.group && <div className="menu-group-label">{group.group}</div>}
-              {group.items.map((item) => (
-                <a
-                  key={item.key}
-                  className="menu-item"
-                  aria-current={currentPage === item.key ? 'page' : undefined}
-                  onClick={() => setCurrentPage(item.key)}
-                >
-                  {item.label}
-                </a>
-              ))}
-            </div>
-          ))}
-        </div>
-      </nav>
-      <main className="content">
-        <CurrentComponent />
-      </main>
-    </div>
+    <ConfigProvider
+      locale={zhCN}
+      theme={appTheme}
+      button={{ autoInsertSpace: false }}
+    >
+      <AntdApp>
+        <AppShell
+          menuGroups={shellMenuGroups}
+          currentPage={currentPage}
+          onSelect={(key) => setCurrentPage(key as PageKey)}
+        >
+          <CurrentComponent />
+        </AppShell>
+      </AntdApp>
+    </ConfigProvider>
   )
 }
 

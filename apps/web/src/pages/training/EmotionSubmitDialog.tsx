@@ -1,4 +1,5 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useState } from 'react'
+import { Alert, Button, Form, Modal, Select, Typography } from 'antd'
 import {
   apiErrorMessage,
   createEmotionTasks,
@@ -27,16 +28,6 @@ export interface EmotionSubmitDialogProps {
   onClose: () => void
   /** 提交成功回调（用于刷新列表与任务队列）。 */
   onSubmitted?: (result: EmotionSubmitResult) => void
-}
-
-const inputStyle: CSSProperties = {
-  width: '100%',
-  boxSizing: 'border-box',
-  padding: '0.5rem',
-  backgroundColor: '#334155',
-  color: '#e2e8f0',
-  border: '1px solid #475569',
-  borderRadius: '0.25rem',
 }
 
 /**
@@ -95,80 +86,46 @@ export function EmotionSubmitDialog({
   }
 
   return (
-    <div
-      className="emotion-submit-overlay"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000,
-      }}
-      onClick={() => {
-        if (!busy) onClose()
-      }}
+    <Modal
+      title="情绪识别"
+      open
+      onCancel={onClose}
+      mask={{ closable: false }}
+      destroyOnHidden
+      footer={[
+        <Button key="submit" type="primary" loading={busy} disabled={!modelId} onClick={handleSubmit}>
+          提交
+        </Button>,
+        <Button key="cancel" disabled={busy} onClick={onClose}>
+          取消
+        </Button>,
+      ]}
     >
-      <div
-        role="dialog"
-        aria-label="情绪识别"
-        aria-modal="true"
-        className="emotion-submit-dialog"
-        style={{
-          backgroundColor: '#1e293b',
-          color: '#e2e8f0',
-          padding: '1.5rem',
-          borderRadius: '0.5rem',
-          minWidth: '400px',
-          maxWidth: '90vw',
-          maxHeight: '90vh',
-          overflow: 'auto',
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h3>情绪识别</h3>
-        <div>已选择 {itemIds.length} 条数据</div>
+      <Typography.Text>已选择 {itemIds.length} 条数据</Typography.Text>
 
-        <label htmlFor="emotion-model">识别模型</label>
-        <select
-          id="emotion-model"
-          aria-label="情绪识别模型"
-          style={inputStyle}
-          value={modelId}
-          onChange={(event) => setModelId(event.target.value)}
-        >
-          <option value="">请选择识别模型</option>
-          {models.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.slug}
-            </option>
-          ))}
-        </select>
+      <Form layout="vertical" style={{ marginTop: 12 }}>
+        <Form.Item label="识别模型">
+          <Select
+            aria-label="情绪识别模型"
+            value={modelId || undefined}
+            placeholder="请选择识别模型"
+            onChange={setModelId}
+            options={models.map((model) => ({ value: model.id as string, label: model.slug as string }))}
+          />
+        </Form.Item>
+      </Form>
 
-        {models.length === 0 && (
-          <div style={{ color: '#94a3b8' }}>请先在模型设置中配置模型与能力</div>
-        )}
-
-        {error && <div role="alert">{error}</div>}
-        {result && (
-          <div role="status">
-            已提交 {result.created} 条，跳过 {result.skipped} 条
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-          <button onClick={() => void handleSubmit()} disabled={!modelId || busy}>
-            提交
-          </button>
-          <button onClick={onClose} disabled={busy}>
-            取消
-          </button>
-        </div>
-      </div>
-    </div>
+      {models.length === 0 && (
+        <Alert type="info" showIcon title="请先在模型设置中配置模型与能力" />
+      )}
+      {error && <Alert type="error" showIcon title={error} />}
+      {result && (
+        <Alert
+          type="success"
+          showIcon
+          title={`已提交 ${result.created} 条，跳过 ${result.skipped} 条`}
+        />
+      )}
+    </Modal>
   )
 }
