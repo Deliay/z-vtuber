@@ -66,6 +66,7 @@ public sealed class MongoDbFixture : IAsyncLifetime
         TrainingCollectionNames.TrainingModels,
         TrainingCollectionNames.TrainingEmotionTasks,
         TrainingCollectionNames.TrainingFeaturePoints,
+        TrainingCollectionNames.TrainingDatasetItemSegments,
     ];
 
     public async Task InitializeAsync()

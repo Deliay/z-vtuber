@@ -123,6 +123,7 @@ builder.Services.AddSingleton<TrainingMongoSetup>();
 builder.Services.AddSingleton<TranscriptMongoSetup>();
 builder.Services.AddSingleton<TrainingDatasetRepository>();
 builder.Services.AddSingleton<TrainingDatasetItemRepository>();
+builder.Services.AddSingleton<TrainingDatasetItemSegmentRepository>();
 builder.Services.AddSingleton<TrainingProviderRepository>();
 builder.Services.AddSingleton<TrainingModelRepository>();
 builder.Services.AddSingleton<TrainingEmotionTaskRepository>();
@@ -141,6 +142,7 @@ builder.Services.AddSingleton<IEmbeddingClient, LocalEmbeddingClient>();
 builder.Services.AddSingleton<IMilvusRestClient, MilvusRestClient>();
 builder.Services.AddSingleton<IVectorStore, MilvusVectorStore>();
 builder.Services.AddSingleton<VectorSyncService>();
+builder.Services.AddSingleton<SegmentSyncService>();
 builder.Services.AddSingleton<SynthesizeService>();
 
 builder.Services.AddControllers();

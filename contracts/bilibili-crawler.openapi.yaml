@@ -1574,7 +1574,7 @@ paths:
           description: 合成音频（audio/wav 二进制透传）
           headers:
             X-Speaker-Audio-Key:
-              description: 命中的音色参考条目 audioKey
+              description: 命中的音色参考条目 audioKey（拼接路径为逗号分隔多值，按拼接顺序；回退路径为单值）
               schema:
                 type: string
             X-Emo-Audio-Key:
@@ -1624,6 +1624,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TrainingVectorsRebuildResult"
+        "404":
+          description: 数据集不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+  /api/training/datasets/{datasetId}/segments/rebuild:
+    post:
+      summary: 重建数据集候选短句拼音反向索引（代理训练服务）
+      description: 代理 training 服务，body 原样透传；返回 rebuilt 候选短句总数。
+      operationId: rebuildTrainingDatasetSegments
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+      responses:
+        "200":
+          description: 重建结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingSegmentsRebuildResult"
         "404":
           description: 数据集不存在
           content:
@@ -3170,6 +3192,12 @@ components:
       required: [updated]
       properties:
         updated:
+          type: integer
+    TrainingSegmentsRebuildResult:
+      type: object
+      required: [rebuilt]
+      properties:
+        rebuilt:
           type: integer
     TrainingEmotionTaskCreateRequest:
       type: object

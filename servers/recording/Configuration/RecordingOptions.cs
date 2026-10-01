@@ -56,6 +56,14 @@ public sealed class RecordingOptions
     [Range(1, 86_400_000)]
     public int AudioClipMaxDurationMs { get; set; } = 300000;
 
+    /// <summary>多片段合并请求的片段数上限，超限 400 <c>too many items</c>。</summary>
+    [Range(1, 100)]
+    public int AudioMergeMaxItems { get; set; } = 16;
+
+    /// <summary>多片段合并请求的总时长上限（毫秒），超限 400 <c>total duration too long</c>。</summary>
+    [Range(1, 86_400_000)]
+    public int AudioMergeMaxTotalDurationMs { get; set; } = 600000;
+
     /// <summary>ffmpeg 可执行文件路径。</summary>
     [Required]
     public string FfmpegPath { get; set; } = "ffmpeg";

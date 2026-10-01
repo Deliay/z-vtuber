@@ -1074,6 +1074,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/datasets/{datasetId}/segments/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重建数据集候选短句拼音反向索引（代理训练服务）
+         * @description 代理 training 服务，body 原样透传；返回 rebuilt 候选短句总数。
+         */
+        post: operations["rebuildTrainingDatasetSegments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1772,6 +1792,9 @@ export interface components {
         };
         TrainingVectorsRebuildResult: {
             updated: number;
+        };
+        TrainingSegmentsRebuildResult: {
+            rebuilt: number;
         };
         TrainingEmotionTaskCreateRequest: {
             itemIds: string[];
@@ -4382,7 +4405,7 @@ export interface operations {
             /** @description 合成音频（audio/wav 二进制透传） */
             200: {
                 headers: {
-                    /** @description 命中的音色参考条目 audioKey */
+                    /** @description 命中的音色参考条目 audioKey（拼接路径为逗号分隔多值，按拼接顺序；回退路径为单值） */
                     "X-Speaker-Audio-Key"?: string;
                     /** @description 命中的情绪参考条目 audioKey（无情绪命中时缺省） */
                     "X-Emo-Audio-Key"?: string;
@@ -4449,6 +4472,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrainingVectorsRebuildResult"];
+                };
+            };
+            /** @description 数据集不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rebuildTrainingDatasetSegments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重建结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingSegmentsRebuildResult"];
                 };
             };
             /** @description 数据集不存在 */

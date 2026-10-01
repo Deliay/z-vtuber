@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Z.Vtuber.Training.Ai;
 using Z.Vtuber.Training.Configuration;
@@ -103,6 +105,82 @@ public sealed class RecordingAudioClient : IRecordingAudioClient
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "audio/mpeg";
             _logger.LogDebug(
                 "Fetched recording audio clip: roomId={RoomId} bytes={Bytes}", parsed.RoomId, bytes.Length);
+            return new AudioClip(bytes, contentType);
+        }
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    public async Task<AudioClip> MergeClipsAsync(
+        IReadOnlyList<AudioClipRequest> items, CancellationToken ct = default)
+    {
+        if (items.Count == 0)
+        {
+            throw new ArgumentException("items is empty");
+        }
+
+        // recording 合并端点要求每项 endMs 必填：空则按兜底时长补齐（与单片段取数同口径）。
+        var payload = new
+        {
+            items = items.Select(item => new
+            {
+                roomId = item.RoomId,
+                fileName = item.FileName,
+                startMs = item.StartMs,
+                endMs = item.EndMs ?? item.StartMs + _aiOptions.AudioClipDefaultDurationMs,
+            }).ToArray(),
+        };
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _aiOptions.RequestTimeoutSeconds)));
+
+        HttpResponseMessage response;
+        try
+        {
+            using var content = new StringContent(
+                JsonSerializer.Serialize(payload, JsonOptions), Encoding.UTF8, "application/json");
+            response = await _httpClient.PostAsync("api/recordings/audio/merge", content, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new AudioUnavailableException("recording audio merge request timed out");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new AudioUnavailableException($"recording audio merge request failed: {ex.Message}");
+        }
+
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new AudioUnavailableException(
+                    $"recording audio merge returned {(int)response.StatusCode}");
+            }
+
+            byte[] bytes;
+            try
+            {
+                bytes = await response.Content.ReadAsByteArrayAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw new AudioUnavailableException("recording audio merge read timed out");
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new AudioUnavailableException($"recording audio merge read failed: {ex.Message}");
+            }
+
+            if (bytes.LongLength > _aiOptions.MaxAudioBytes)
+            {
+                throw new AudioTooLargeException(
+                    $"merged recording audio exceeds max size {_aiOptions.MaxAudioBytes} bytes");
+            }
+
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "audio/mpeg";
+            _logger.LogDebug(
+                "Merged recording audio clips: items={Items} bytes={Bytes}", items.Count, bytes.Length);
             return new AudioClip(bytes, contentType);
         }
     }

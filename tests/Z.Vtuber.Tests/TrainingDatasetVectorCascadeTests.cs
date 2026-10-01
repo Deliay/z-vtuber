@@ -7,6 +7,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Contracts;
 using Z.Vtuber.Training.Controllers;
+using Z.Vtuber.Training.Synthesis;
 using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Tests;
@@ -60,14 +61,35 @@ public class TrainingDatasetVectorCascadeTests(MongoDbFixture mongo, MilvusFixtu
         return record;
     }
 
-    private TrainingDatasetItemsController CreateController(VectorSyncService sync) =>
+    private TrainingDatasetItemsController CreateController(
+        VectorSyncService sync, SegmentSyncService? segments = null) =>
         new(Datasets, Items, new StubTranscriptClient(),
-            NullLogger<TrainingDatasetItemsController>.Instance, sync)
+            NullLogger<TrainingDatasetItemsController>.Instance, sync, segments)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
 
     // ---- 控制器级：级联范围收敛为实际被 Mongo 删除的条目 ----
+
+    [Fact]
+    public async Task BatchDelete_CascadesSegmentsOfDeletedItems()
+    {
+        var dataset = await SeedDatasetAsync("A");
+        var item = await SeedItemAsync(dataset, "a-key", "你好，世界");
+        var segmentRepo = new TrainingDatasetItemSegmentRepository(mongo.Database);
+        var segmentSync = new SegmentSyncService(
+            Items, segmentRepo, NullLogger<SegmentSyncService>.Instance);
+        await segmentSync.SyncItemAsync(item);
+        Assert.Equal(2, (await segmentRepo.ListByDatasetAsync(dataset)).Count);
+
+        var store = new RecordingVectorStore();
+        var sync = new VectorSyncService(Items, store, new FakeEmbeddingClient(), NullLogger<VectorSyncService>.Instance);
+        var controller = CreateController(sync, segmentSync);
+
+        await controller.BatchDelete(dataset.ToString(), new TrainingDatasetBatchDeleteRequest([item.Id.ToString()]));
+
+        Assert.Empty(await segmentRepo.ListByDatasetAsync(dataset));
+    }
 
     [Fact]
     public async Task BatchDelete_CrossDatasetId_OnlyCascadesActuallyDeletedItems()

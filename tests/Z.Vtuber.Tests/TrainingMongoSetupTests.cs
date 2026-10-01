@@ -47,6 +47,13 @@ public class TrainingMongoSetupTests(MongoDbFixture fixture) : IClassFixture<Mon
         var featurePoints = await TestIndexHelpers.ListIndexNamesAsync(
             fixture.Database.GetCollection<TrainingFeaturePointRecord>(TrainingCollectionNames.TrainingFeaturePoints));
         Assert.Contains("Slug_1", featurePoints);
+
+        // 候选短句反向索引：按数据集加载 / 条目级替换
+        var segments = await TestIndexHelpers.ListIndexNamesAsync(
+            fixture.Database.GetCollection<TrainingDatasetItemSegmentRecord>(
+                TrainingCollectionNames.TrainingDatasetItemSegments));
+        Assert.Contains("DatasetId_1", segments);
+        Assert.Contains("DatasetId_1_ItemId_1", segments);
     }
 
     [Fact]
