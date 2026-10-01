@@ -22,8 +22,9 @@ public sealed class NoSpeakerReferenceException() : Exception("no speaker refere
 /// <summary>
 /// 音频生成编排：音色参考优先「断句 + 拼音相似度多命中 + 多音频拼接」——输入文本按 <c>[，。,.\s]</c> 断句后，
 /// 每条短句与数据集候选短句（<c>training_dataset_item_segments</c>）按音节级归一化编辑距离取最相似 1 条，
-/// 命中按数据 id 去重（输入句序优先、同分 itemId/SegmentIndex 升序）截断 <see cref="SynthesizeOptions.MergedReferenceLimit"/>
-/// 后经 recording 合并为拼接音源；无候选短句时回退既有字符相似单条路径。
+/// 命中按数据 id 去重（输入句序优先、同分 itemId/SegmentIndex 升序）后按条数上限（<see cref="SynthesizeOptions.MergedReferenceLimit"/>）
+/// 与总时长上限（<see cref="SynthesizeOptions.MergedReferenceMaxTotalDurationMs"/>，与 recording 侧同口径）截断，
+/// 再经 recording 合并为拼接音源；无候选短句时回退既有字符相似单条路径。
 /// 情绪参考按 <see cref="EmotionMode"/> 取值——<see cref="EmotionMode.None"/>（默认）不传、
 /// <see cref="EmotionMode.Llm"/> 用可用模型生成情感向量后经 Milvus 检索 top-1、
 /// <see cref="EmotionMode.Dataset"/> 沿音色命中条目取首个带 <c>Extensions.emotion</c> 者为参考（best-effort → 中性），
@@ -38,6 +39,7 @@ public sealed class SynthesizeService(
     IVectorStore store,
     ITtsClient tts,
     SynthesizeOptions synthesizeOptions,
+    AiOptions aiOptions,
     ILogger<SynthesizeService> logger)
 {
     public async Task<SynthesizeResult> SynthesizeAsync(
@@ -81,7 +83,8 @@ public sealed class SynthesizeService(
     /// <summary>
     /// 拼音短句匹配：断句 → 各句拼音音节序列 → 对全部候选短句计算音节级相似度取最相似 1 条
     /// （同分 itemId 升序、SegmentIndex 升序）→ 按 ItemId 去重（输入句序优先）→ 回读条目 → 过滤不可解析音频
-    /// → 截断 <see cref="SynthesizeOptions.MergedReferenceLimit"/> → 合并拼接。无候选/无命中返回 null（回退字符相似）。
+    /// → 按条数（<see cref="SynthesizeOptions.MergedReferenceLimit"/>）与总时长（<see cref="SynthesizeOptions.MergedReferenceMaxTotalDurationMs"/>）截断
+    /// → 合并拼接。无候选/无命中返回 null（回退字符相似）。
     /// </summary>
     private async Task<SpeakerOutcome?> TryResolvePinyinSpeakerAsync(
         ObjectId datasetId, string text, CancellationToken ct)
@@ -152,9 +155,11 @@ public sealed class SynthesizeService(
             }
         }
 
-        // 回读条目（Mongo 事实源）→ 过滤音频不可解析者 → 截断拼接条数上限。
+        // 回读条目（Mongo 事实源）→ 过滤音频不可解析者 → 按条数上限与总时长上限截断拼接。
+        // 总时长与 recording 侧 AudioMergeMaxTotalDurationMs 同口径，避免合并请求被 400 后静默降级为单片段。
         var requests = new List<AudioClipRequest>(deduped.Count);
         var usable = new List<TrainingDatasetItemRecord>(deduped.Count);
+        var totalDurationMs = 0L;
         foreach (var segment in deduped)
         {
             if (requests.Count >= synthesizeOptions.MergedReferenceLimit)
@@ -176,8 +181,21 @@ public sealed class SynthesizeService(
                 continue;
             }
 
+            // endMs 为空按 Ai:AudioClipDefaultDurationMs 兜底（与取数/合并客户端同口径）。
+            var durationMs = (item.EndMs ?? item.StartMs + aiOptions.AudioClipDefaultDurationMs) - item.StartMs;
+            if (durationMs <= 0)
+            {
+                continue;
+            }
+
+            if (totalDurationMs + durationMs > synthesizeOptions.MergedReferenceMaxTotalDurationMs)
+            {
+                break;
+            }
+
             usable.Add(item);
             requests.Add(new AudioClipRequest(parsed.RoomId, parsed.File, item.StartMs, item.EndMs));
+            totalDurationMs += durationMs;
         }
 
         if (requests.Count == 0)
@@ -472,7 +490,7 @@ public sealed class SynthesizeService(
         return (speaker, datasetEmotion);
     }
 
-    private static bool IsBetterTieBreak(
+    internal static bool IsBetterTieBreak(
         TrainingDatasetItemSegmentRecord candidate, TrainingDatasetItemSegmentRecord current) =>
         candidate.ItemId < current.ItemId
         || (candidate.ItemId == current.ItemId && candidate.SegmentIndex < current.SegmentIndex);

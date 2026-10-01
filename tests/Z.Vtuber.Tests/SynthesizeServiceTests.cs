@@ -95,7 +95,8 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
 
     private SynthesizeService Create(
         InMemoryVectorStore store, StubAudioClient audio,
-        StubTtsClient tts, IChatModelClientFactory factory, SynthesizeOptions? options = null) =>
+        StubTtsClient tts, IChatModelClientFactory factory, SynthesizeOptions? options = null,
+        AiOptions? aiOptions = null) =>
         new(
             Items,
             SegmentRepository,
@@ -105,6 +106,7 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
             store,
             tts,
             options ?? new SynthesizeOptions(),
+            aiOptions ?? new AiOptions(),
             NullLogger<SynthesizeService>.Instance);
 
     [Fact]

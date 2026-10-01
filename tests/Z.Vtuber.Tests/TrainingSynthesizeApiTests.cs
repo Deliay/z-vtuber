@@ -57,6 +57,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var synthesize = new SynthesizeService(
             Items, SegmentRepository, Providers, new ApiStubChatFactory(), audio, store, tts,
             synthesizeOptions ?? new SynthesizeOptions(),
+            new AiOptions(),
             NullLogger<SynthesizeService>.Instance);
         var vectors = new VectorSyncService(Items, store, embedding, NullLogger<VectorSyncService>.Instance);
         var controller = new TrainingSynthesizeController(

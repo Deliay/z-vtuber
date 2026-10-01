@@ -172,6 +172,12 @@ public sealed class RecordingAudioClient : IRecordingAudioClient
                 throw new AudioUnavailableException($"recording audio merge read failed: {ex.Message}");
             }
 
+            if (bytes.LongLength > _aiOptions.MaxAudioBytes)
+            {
+                throw new AudioTooLargeException(
+                    $"merged recording audio exceeds max size {_aiOptions.MaxAudioBytes} bytes");
+            }
+
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "audio/mpeg";
             _logger.LogDebug(
                 "Merged recording audio clips: items={Items} bytes={Bytes}", items.Count, bytes.Length);
