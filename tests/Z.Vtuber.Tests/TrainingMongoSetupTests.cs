@@ -43,6 +43,17 @@ public class TrainingMongoSetupTests(MongoDbFixture fixture) : IClassFixture<Mon
         Assert.Contains("ItemId_1", emotionTasks);
         // 返工：条目活跃任务部分唯一索引（并发重复提交幂等兜底）
         Assert.Contains("ItemId_1_Active", emotionTasks);
+
+        var featurePoints = await TestIndexHelpers.ListIndexNamesAsync(
+            fixture.Database.GetCollection<TrainingFeaturePointRecord>(TrainingCollectionNames.TrainingFeaturePoints));
+        Assert.Contains("Slug_1", featurePoints);
+
+        // 候选短句反向索引：按数据集加载 / 条目级替换
+        var segments = await TestIndexHelpers.ListIndexNamesAsync(
+            fixture.Database.GetCollection<TrainingDatasetItemSegmentRecord>(
+                TrainingCollectionNames.TrainingDatasetItemSegments));
+        Assert.Contains("DatasetId_1", segments);
+        Assert.Contains("DatasetId_1_ItemId_1", segments);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Z.Vtuber.Common.Contracts;
 using Z.Vtuber.Common.Persistence.Entities;
 
 namespace Z.Vtuber.Common.Persistence;
@@ -13,9 +14,16 @@ public sealed class TrainingModelRepository(IMongoDatabase database)
     private readonly IMongoCollection<TrainingModelRecord> _collection =
         database.GetCollection<TrainingModelRecord>(TrainingCollectionNames.TrainingModels);
 
-    /// <summary>列举模型，CreatedAt 升序；<paramref name="enabled"/> 非空则按启用状态过滤。</summary>
+    /// <summary>
+    /// 列举模型，CreatedAt 升序；<paramref name="enabled"/> 非空则按启用状态过滤；
+    /// <paramref name="input"/>/<paramref name="output"/> 非空则要求模型对应侧能力**覆盖**该集合
+    /// （模型量级数十条，加载后内存判定；空能力模型不匹配任何非空要求）。
+    /// </summary>
     public async Task<List<TrainingModelRecord>> ListAsync(
-        bool? enabled = null, CancellationToken ct = default)
+        bool? enabled = null,
+        IReadOnlyList<string>? input = null,
+        IReadOnlyList<string>? output = null,
+        CancellationToken ct = default)
     {
         var filter = Builders<TrainingModelRecord>.Filter.Empty;
         if (enabled.HasValue)
@@ -23,9 +31,21 @@ public sealed class TrainingModelRepository(IMongoDatabase database)
             filter &= Builders<TrainingModelRecord>.Filter.Eq(m => m.Enabled, enabled.Value);
         }
 
-        return await _collection.Find(filter)
+        var list = await _collection.Find(filter)
             .SortBy(m => m.CreatedAt)
             .ToListAsync(ct);
+
+        if ((input is null || input.Count == 0) && (output is null || output.Count == 0))
+        {
+            return list;
+        }
+
+        var requiredInput = input ?? Array.Empty<string>();
+        var requiredOutput = output ?? Array.Empty<string>();
+        return list
+            .Where(m => TrainingModelCapabilities.Matches(m.InputCapabilities, requiredInput)
+                && TrainingModelCapabilities.Matches(m.OutputCapabilities, requiredOutput))
+            .ToList();
     }
 
     /// <summary>按 id 读取；不存在返回 null。</summary>

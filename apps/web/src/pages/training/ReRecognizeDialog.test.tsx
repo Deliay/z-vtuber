@@ -13,12 +13,14 @@ vi.mock('../../api/client', async (importOriginal) => {
   return {
     ...actual,
     listTrainingModels: vi.fn(),
+    resolveFeaturePointModel: vi.fn(),
     recognizeTrainingDatasetItem: vi.fn(),
     updateTrainingDatasetItem: vi.fn(),
   }
 })
 
 const mockListModels = vi.mocked(client.listTrainingModels)
+const mockResolve = vi.mocked(client.resolveFeaturePointModel)
 const mockRecognize = vi.mocked(client.recognizeTrainingDatasetItem)
 const mockUpdateItem = vi.mocked(client.updateTrainingDatasetItem)
 
@@ -29,6 +31,8 @@ const model: TrainingModel = {
   model: 'gpt-4o',
   slug: 'openai-prod/gpt-4o',
   enabled: true,
+  inputCapabilities: ['audio', 'text'],
+  outputCapabilities: ['text'],
   createdAt: '2026-09-27T00:00:00Z',
   updatedAt: '2026-09-27T00:00:00Z',
 }
@@ -79,6 +83,13 @@ describe('ReRecognizeDialog', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     mockListModels.mockResolvedValue([model])
+    // 缺省无解析结果，避免影响既有用例的「手动选择」路径。
+    mockResolve.mockResolvedValue({
+      slug: 'dataset-clean',
+      modelId: null,
+      modelSlug: null,
+      source: 'none',
+    })
     mockRecognize.mockResolvedValue({ text: '识别后的文本' })
     mockUpdateItem.mockResolvedValue(updatedItem)
   })
@@ -90,22 +101,58 @@ describe('ReRecognizeDialog', () => {
     expect(dialog).toBeInTheDocument()
   })
 
-  it('should list the enabled models by slug', async () => {
+  it('should list the enabled models by slug and filter candidates by feature point capability', async () => {
     renderDialog()
 
     await waitFor(() => {
-      expect(mockListModels).toHaveBeenCalledWith(true)
+      expect(mockListModels).toHaveBeenCalledWith(true, 'audio,text', 'text')
+    })
+    // 加载即完成 dataset-clean 功能点自动登记与解析
+    expect(mockResolve).toHaveBeenCalledWith('dataset-clean', {
+      name: '数据清洗',
+      inputCapabilities: ['audio', 'text'],
+      outputCapabilities: ['text'],
     })
     fireEvent.mouseDown(screen.getByRole('combobox', { name: '识别模型' }))
     expect(await screen.findByTitle('openai-prod/gpt-4o')).toBeInTheDocument()
   })
 
-  it('should hint to configure models first and disable recognize when there are none', async () => {
+  it('should default-select the resolved model and still allow a temporary override', async () => {
+    const model2: TrainingModel = {
+      ...model,
+      id: 'm2',
+      model: 'gpt-4o-mini',
+      slug: 'openai-prod/gpt-4o-mini',
+    }
+    mockListModels.mockResolvedValue([model, model2])
+    mockResolve.mockResolvedValue({
+      slug: 'dataset-clean',
+      modelId: 'm1',
+      modelSlug: 'openai-prod/gpt-4o',
+      source: 'specified',
+    })
+    renderDialog()
+
+    // antd Select 关闭态显示所选 slug：解析结果被默认选中。
+    await screen.findByText('openai-prod/gpt-4o')
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '识别' })).toBeEnabled()
+    })
+
+    // 允许临时改选（解析结果只是默认，不强制锁定）：改选后以改选模型识别。
+    await pickSelect('openai-prod/gpt-4o-mini')
+    fireEvent.click(screen.getByRole('button', { name: '识别' }))
+    await waitFor(() => {
+      expect(mockRecognize).toHaveBeenCalledWith('d1', 'i1', 'm2')
+    })
+  })
+
+  it('should hint to configure models and capabilities first and disable recognize when there are none', async () => {
     mockListModels.mockResolvedValue([])
 
     renderDialog()
 
-    expect(await screen.findByText('请先在模型设置中配置')).toBeInTheDocument()
+    expect(await screen.findByText('请先在模型设置中配置模型与能力')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '识别' })).toBeDisabled()
   })
 

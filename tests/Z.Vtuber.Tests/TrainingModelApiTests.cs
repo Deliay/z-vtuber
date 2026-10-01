@@ -85,17 +85,17 @@ public class TrainingModelApiTests(MongoDbFixture fixture) : IClassFixture<Mongo
         var enabled = await SeedModelAsync(provider.Id, "gpt-4o", createdAt: baseTime);
         await SeedModelAsync(provider.Id, "gpt-4o-mini", enabled: false, createdAt: baseTime.AddMinutes(1));
 
-        var all = PayloadOf(await CreateController().List(null));
+        var all = PayloadOf(await CreateController().List(null, null, null));
         Assert.Equal(2, all.Items.Count);
         Assert.Equal($"{provider.Name}/{enabled.Model}", all.Items[0].Slug);
         Assert.Equal("openai-prod/gpt-4o", all.Items[0].Slug);
         Assert.Equal(provider.Id.ToString(), all.Items[0].ProviderId);
         Assert.Equal("openai-prod", all.Items[0].ProviderName);
 
-        var enabledOnly = PayloadOf(await CreateController().List(true));
+        var enabledOnly = PayloadOf(await CreateController().List(true, null, null));
         Assert.Equal("openai-prod/gpt-4o", Assert.Single(enabledOnly.Items).Slug);
 
-        var disabledOnly = PayloadOf(await CreateController().List(false));
+        var disabledOnly = PayloadOf(await CreateController().List(false, null, null));
         Assert.Equal("openai-prod/gpt-4o-mini", Assert.Single(disabledOnly.Items).Slug);
     }
 
@@ -104,7 +104,7 @@ public class TrainingModelApiTests(MongoDbFixture fixture) : IClassFixture<Mongo
     {
         var orphan = await SeedModelAsync(ObjectId.GenerateNewId(), "orphan-model");
 
-        var list = PayloadOf(await CreateController().List(null));
+        var list = PayloadOf(await CreateController().List(null, null, null));
 
         var dto = Assert.Single(list.Items);
         Assert.Equal(orphan.Id.ToString(), dto.Id);

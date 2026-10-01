@@ -95,6 +95,22 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
     public Task<IActionResult> DeleteModel(string modelId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Delete, $"api/training/models/{Uri.EscapeDataString(modelId)}", ct);
 
+    [HttpGet("training/feature-points")]
+    public Task<IActionResult> ListFeaturePoints(CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Get, "api/training/feature-points", ct);
+
+    [HttpPost("training/feature-points/{slug}/model/resolve")]
+    public Task<IActionResult> ResolveFeaturePointModel(string slug, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/feature-points/{Uri.EscapeDataString(slug)}/model/resolve", ct);
+
+    [HttpPut("training/feature-points/{slug}/model")]
+    public Task<IActionResult> SetFeaturePointModel(string slug, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Put, $"api/training/feature-points/{Uri.EscapeDataString(slug)}/model", ct);
+
+    [HttpDelete("training/feature-points/{slug}/model")]
+    public Task<IActionResult> ClearFeaturePointModel(string slug, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Delete, $"api/training/feature-points/{Uri.EscapeDataString(slug)}/model", ct);
+
     [HttpPost("training/datasets/{datasetId}/items/{itemId}/recognize")]
     public Task<IActionResult> RecognizeItem(string datasetId, string itemId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/items/{Uri.EscapeDataString(itemId)}/recognize", ct);
@@ -120,6 +136,10 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
     [HttpPost("training/datasets/{datasetId}/vectors/rebuild")]
     public Task<IActionResult> RebuildDatasetVectors(string datasetId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/vectors/rebuild", ct);
+
+    [HttpPost("training/datasets/{datasetId}/segments/rebuild")]
+    public Task<IActionResult> RebuildDatasetSegments(string datasetId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/segments/rebuild", ct);
 
     private async Task<IActionResult> ForwardAsync(HttpMethod method, string upstreamPath, CancellationToken ct)
     {

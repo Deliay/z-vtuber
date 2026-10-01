@@ -83,6 +83,10 @@ public class TrainingRecognizeTests(MongoDbFixture fixture) : IClassFixture<Mong
                 ? Task.FromResult(Clip)
                 : Task.FromException<AudioClip>(Throw);
         }
+
+        public Task<AudioClip> MergeClipsAsync(
+            IReadOnlyList<AudioClipRequest> items, CancellationToken ct = default) =>
+            throw new NotSupportedException("recognize does not merge audio");
     }
 
     private sealed class RecognizeStubChatClient : IChatModelClient

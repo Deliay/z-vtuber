@@ -4,10 +4,18 @@ import {
   apiErrorMessage,
   createEmotionTasks,
   listTrainingModels,
+  resolveFeaturePointModel,
 } from '../../api/client'
 import type { components } from '../../api/schema-training'
 
 type TrainingModel = components['schemas']['TrainingModel']
+type TrainingModelCapability = components['schemas']['TrainingModelCapability']
+
+/** 输入语音识别情绪功能点的标识与能力要求。 */
+const FEATURE_POINT_SLUG = 'emotion-from-audio'
+const FEATURE_POINT_NAME = '输入语音识别情绪'
+const INPUT_CAPABILITIES: TrainingModelCapability[] = ['audio', 'text']
+const OUTPUT_CAPABILITIES: TrainingModelCapability[] = ['text']
 
 export interface EmotionSubmitResult {
   created: number
@@ -39,9 +47,20 @@ export function EmotionSubmitDialog({
 
   useEffect(() => {
     let active = true
-    listTrainingModels(true)
-      .then((list) => {
-        if (active) setModels(list)
+    // resolve 完成功能点自动登记并取回解析结果；候选按功能点能力过滤且仅取启用者。
+    Promise.all([
+      resolveFeaturePointModel(FEATURE_POINT_SLUG, {
+        name: FEATURE_POINT_NAME,
+        inputCapabilities: INPUT_CAPABILITIES,
+        outputCapabilities: OUTPUT_CAPABILITIES,
+      }),
+      listTrainingModels(true, INPUT_CAPABILITIES.join(','), OUTPUT_CAPABILITIES.join(',')),
+    ])
+      .then(([resolved, list]) => {
+        if (!active) return
+        setModels(list)
+        // 默认选中解析结果（specified 优先、default 兜底）；用户仍可临时改选。
+        if (resolved.modelId) setModelId(resolved.modelId)
       })
       .catch((err) => {
         if (active) setError(apiErrorMessage(err, '加载模型失败'))
@@ -96,7 +115,9 @@ export function EmotionSubmitDialog({
         </Form.Item>
       </Form>
 
-      {models.length === 0 && <Alert type="info" showIcon title="请先在模型设置中配置" />}
+      {models.length === 0 && (
+        <Alert type="info" showIcon title="请先在模型设置中配置模型与能力" />
+      )}
       {error && <Alert type="error" showIcon title={error} />}
       {result && (
         <Alert
