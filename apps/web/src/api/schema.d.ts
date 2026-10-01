@@ -1094,6 +1094,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/images/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 绘图生成（代理训练服务）
+         * @description 代理 training 服务，multipart/form-data 请求体（text + image + 可选 modelId）与 Content-Type（含 boundary）原样透传；成功返回 image/png 二进制（Content-Type 与响应体透传）， 错误码（400/404/409/502）与错误体透传，上游不可达 502 training service unavailable。
+         */
+        post: operations["generateTrainingImage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1788,6 +1808,12 @@ export interface components {
         TrainingSynthesizeRequest: {
             text: string;
             lang?: string | null;
+            modelId?: string | null;
+        };
+        TrainingImageGenerateRequest: {
+            text: string;
+            /** Format: binary */
+            image: string;
             modelId?: string | null;
         };
         TrainingVectorsRebuildResult: {
@@ -4528,6 +4554,66 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    generateTrainingImage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["TrainingImageGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description 生成的图片二进制（image/png 透传） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                };
+            };
+            /** @description 请求非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 模型不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description 无可用图片模型 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达（或上游模型服务不可用/输出非法） */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
             };
         };
     };

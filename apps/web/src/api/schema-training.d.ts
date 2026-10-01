@@ -480,6 +480,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/images/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 绘图生成（文本 + 图片 → 图片）
+         * @description 以 multipart/form-data 输入 text（必填，trim 后非空）+ image（图片文件，必填， image/png / image/jpeg / image/webp，≤ Image:MaxImageBytes 默认 10MB）+ modelId（可选）。 所用模型须满足「输入能力覆盖 text,image、输出能力含 image」：显式 modelId 优先 （非法/不存在 404 model not found、停用 400 model disabled、能力不符 400 model does not support image input/output），缺省按功能点 image-generate 解析 （指定模型优先 → 默认首候选），无可用模型 409 no image model available。 调用 OpenAI-like POST {endpoint}/images/edits（multipart model/prompt/image → data[0].b64_json）， 成功返回图片二进制，失败统一 {"error": "..."}；输入校验失败不发起上游调用。
+         */
+        post: operations["generateTrainingImage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -793,6 +813,17 @@ export interface components {
             /** @description 语种 ZH/EN/JA/ES/AR（大小写不敏感），缺省 Tts:DefaultLang（默认 ZH） */
             lang?: string | null;
             /** @description 生成情感向量所用可用模型 id；显式指定优先，缺省按功能点 emotion-from-text 解析（指定优先 → 默认选择 → 无则降级中性） */
+            modelId?: string | null;
+        };
+        TrainingImageGenerateRequest: {
+            /** @description 绘图提示文本（trim 后非空） */
+            text: string;
+            /**
+             * Format: binary
+             * @description 参考图片（image/png / image/jpeg / image/webp，≤ Image:MaxImageBytes 默认 10MB）
+             */
+            image: string;
+            /** @description 指定模型 id；缺省按功能点 image-generate 解析（指定优先 → 默认首候选） */
             modelId?: string | null;
         };
         TrainingVectorsRebuildResult: {
@@ -2044,6 +2075,66 @@ export interface operations {
             };
             /** @description {"error": "dataset not found"} */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    generateTrainingImage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["TrainingImageGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description 生成的图片二进制（Content-Type 缺省 image/png，随上游结果） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                };
+            };
+            /** @description {"error": "text is required"/"image is required"/"unsupported image type"/"image too large"/"model disabled"/"model does not support image input"/"model does not support image output"} */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description {"error": "model not found"}（显式 modelId 非法/不存在） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description {"error": "no image model available"}（缺省解析无任何可用模型） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description {"error": "model service unavailable"/"invalid model output"} */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

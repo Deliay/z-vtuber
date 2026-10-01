@@ -1654,6 +1654,52 @@ paths:
                 $ref: "#/components/schemas/TrainingErrorResponse"
         "502":
           description: training 服务不可达
+  /api/training/images/generate:
+    post:
+      summary: 绘图生成（代理训练服务）
+      description: >-
+        代理 training 服务，multipart/form-data 请求体（text + image + 可选 modelId）与
+        Content-Type（含 boundary）原样透传；成功返回 image/png 二进制（Content-Type 与响应体透传），
+        错误码（400/404/409/502）与错误体透传，上游不可达 502 training service unavailable。
+      operationId: generateTrainingImage
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/TrainingImageGenerateRequest"
+      responses:
+        "200":
+          description: 生成的图片二进制（image/png 透传）
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: 请求非法
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "404":
+          description: 模型不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "409":
+          description: 无可用图片模型
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达（或上游模型服务不可用/输出非法）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
 components:
   parameters:
     TrainingDatasetId:
@@ -3184,6 +3230,18 @@ components:
         lang:
           type: string
           nullable: true
+        modelId:
+          type: string
+          nullable: true
+    TrainingImageGenerateRequest:
+      type: object
+      required: [text, image]
+      properties:
+        text:
+          type: string
+        image:
+          type: string
+          format: binary
         modelId:
           type: string
           nullable: true
