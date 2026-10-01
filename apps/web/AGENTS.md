@@ -4,6 +4,7 @@
 
 - 语言：TypeScript
 - 框架：React 19
+- UI 组件库：Ant Design v6（`antd@^6.6` + `@ant-design/icons@^6`，不升级到 v7）
 - 构建工具：Vite
 - 测试框架：Vitest + React Testing Library
 
@@ -74,8 +75,14 @@ src/
 ├── utils/
 │   └── format.ts          # 共用格式化（formatBytes 人类可读大小 / formatDateTime yyyy-mm-dd-HH-mm / formatPosition ms → m:ss 片段时间定位 / parsePosition `m:ss`、`m:ss.S` → 毫秒，非法返回 null）
 ├── test/
-│   └── setup.ts           # 测试配置文件
-├── App.tsx                # 主应用组件（布局+路由）
+│   ├── setup.ts           # 测试配置文件（jsdom 补齐 matchMedia/ResizeObserver/scrollTo）
+│   └── render.tsx         # 页面测试统一渲染入口 renderWithProviders（zhCN + 主题 + antd App 上下文）
+├── components/
+│   ├── AppShell.tsx       # 应用外壳（antd Layout + Menu）与菜单图标
+│   ├── menuIcons.tsx      # 菜单图标常量
+│   └── PageHeader.tsx     # 页面标题区（标题 + 描述 + 右侧 extra）
+├── theme.ts               # 暗色 Design Token 唯一入口（ConfigProvider 注入）
+├── App.tsx                # 主应用组件（ConfigProvider(zhCN, appTheme) + antd App + AppShell + 路由）
 ├── App.test.tsx           # 主应用组件测试
 ├── App.css                # 全局样式
 └── main.tsx               # 应用入口
@@ -101,6 +108,17 @@ src/
 
 - `api/client.ts` 另提供 `updateTranscriptTaskOffset(taskId, offsetMs)`（PUT `/transcripts/task/{taskId}/offset`，body `{offsetMs}`，400 抛 `ApiError{status, serverMessage}`）与 URL 构造器 `recordingAudioClipUrl(roomId, fileName, startMs, endMs)`（试听片段 `/api/b/live/{roomId}/recordings/{file}/audio`）与 `transcriptSubtitleUrl(taskId, format)`（字幕下载 `/api/transcripts/task/{taskId}/subtitle?format=srt|ass`），均 `encodeURIComponent` + `URLSearchParams`；训练端点封装 `listTrainingDatasets(type)`、`createTrainingDataset`、`renameTrainingDataset`、`deleteTrainingDataset`、`listTrainingDatasetItems(datasetId, {audioType?, source?})`、`importTrainingDatasetItems(datasetId, {taskId})`、`updateTrainingDatasetItem(datasetId, itemId, patch)`（`endMs: null` 必须序列化为显式 JSON `null` 以置空，缺失字段不改）、`batchDeleteTrainingDatasetItems(datasetId, itemIds)`，以及 URL 构造器 `trainingAudioClipUrl(audioUri, startMs, endMs)`（解析 `b/live/{roomId}/recordings/{file}` 复用 `recordingAudioClipUrl`；`endMs` 空取 `startMs + 300000` 预览上限；uri 空或不可解析返回 `null`），以及错误文案函数 `apiErrorMessage(error, fallback)`——解析 `serverMessage` 中的 `{"error":"..."}` 取出错误码并映射为可读中文（未收录的错误码原样展示，无消息回退 fallback）与 `apiErrorCodeText(code)`（仅有错误码字符串时如任务 `error` 字段复用同一映射）；数据集选择器/列表/导入对话框/任务队列的错误提示统一走它（`serverMessage` 本身保持原始报文，既有调用方按原文解析不受影响）
 - 参考：`docs/engineering/common-rules.md`
+
+## UI 规范
+
+- 全站统一使用 Ant Design v6：`Table`/`Form`/`Modal`/`Tabs`/`Select`/`Tag`/`Progress`/`Typography`/`Empty`/`Spin`/`Alert` 等，不新增手工 UI 原语。
+- 主题唯一入口 `src/theme.ts`，经 `App.tsx` 的 `ConfigProvider` 注入；页面内不写死颜色/间距。
+- 应用外壳 `src/components/AppShell.tsx`（`Layout` + `Menu`）与 `PageHeader.tsx`。
+- 反馈走 `App.useApp()` 的 `message`；危险操作走 `App.useApp()` 的 `modal.confirm`（禁止 `window.confirm` 与静态 `message.xxx`）。
+- 三态：`Spin`/`Table loading`、`Empty`（带引导）、`Alert`（带重试）；提交中 `Button loading` 防重复。
+- 禁止新增「野生」内联 `style` 大对象；仅保留 antd 布局必要 style（margin/固定宽度等）。
+- 页面测试统一用 `src/test/render.tsx` 的 `renderWithProviders`（中文 locale + 主题 + antd `App`）。
+- 详见 `docs/engineering/frontend-rules.md` 的「UI / 样式规范」。
 
 ## 常用命令
 
