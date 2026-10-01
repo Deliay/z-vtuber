@@ -573,4 +573,149 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
         Assert.Equal(0, chat.Calls);
         Assert.Equal(0.7, Assert.Single(tts.Requests).Emotion!.Emotion.Calm, 3);
     }
+
+    [Fact]
+    public async Task PinyinMatch_NoneMode_SkipsEmotion_NoChatCall()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var item = await SeedItemAsync(
+            datasetId,
+            "你好",
+            audioUri: "b/live/100/recordings/a.flv",
+            emotion: new EmotionResult(5, "开心", 0.9, 0, 0, 0, 0, 0, 0, 0));
+        await SegmentSync.SyncItemAsync(item);
+        var audio = new StubAudioClient();
+        var tts = new StubTtsClient();
+        var chat = new StubChatClient();
+        var (_, model) = await SeedProviderAsync();
+
+        // 拼音路径 + none：完全跳过情绪参考与模型解析，不传情绪。
+        var result = await Create(new InMemoryVectorStore(), audio, tts, new StubChatFactory(chat))
+            .SynthesizeAsync(datasetId, "你好", "ZH", model, EmotionMode.None);
+
+        Assert.Equal(item.AudioKey, Assert.Single(result.SpeakerAudioKeys));
+        Assert.Null(result.EmoAudioKey);
+        Assert.Equal(0, chat.Calls);
+        Assert.Null(Assert.Single(tts.Requests).Emotion);
+        Assert.Single(audio.MergeRequests);
+    }
+
+    [Fact]
+    public async Task PinyinMatch_LlmMode_UsesChatModelForEmotion()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var speaker = await SeedItemAsync(datasetId, "你好", audioUri: "b/live/100/recordings/a.flv");
+        var emoItem = await SeedItemAsync(
+            datasetId, "生气", emotion: new EmotionResult(8, "生气", 0, 0.6, 0, 0, 0, 0, 0, 0));
+        await SegmentSync.SyncItemAsync(speaker);
+
+        var store = new InMemoryVectorStore();
+        store.SeedEmotion(datasetId, emoItem.Id, emoItem.AudioKey, [0f, 0.5f, 0f, 0f, 0f, 0f, 0f, 0f]);
+        var audio = new StubAudioClient();
+        audio.Clips[emoItem.AudioUri] = new AudioClip([2, 2], "audio/mpeg");
+        var tts = new StubTtsClient();
+        var chat = new StubChatClient();
+        var (_, model) = await SeedProviderAsync();
+
+        // 拼音路径 + llm：音色走拼接，情绪经大模型生成向量 + 八维检索 top-1。
+        var result = await Create(store, audio, tts, new StubChatFactory(chat))
+            .SynthesizeAsync(datasetId, "你好", "ZH", model, EmotionMode.Llm);
+
+        Assert.Equal(speaker.AudioKey, Assert.Single(result.SpeakerAudioKeys));
+        Assert.Equal(emoItem.AudioKey, result.EmoAudioKey);
+        Assert.Equal(1, chat.Calls);
+        Assert.Equal(0.6, Assert.Single(tts.Requests).Emotion!.Emotion.Angry, 3);
+    }
+
+    [Fact]
+    public async Task PinyinMatch_EqualScore_TieBreaksByItemIdAscending_Deterministically()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        // 两条候选拼音均为 ni hao、与输入「你好」同分（1.0）：同分按 itemId 升序稳定取先。
+        var a = await SeedItemAsync(datasetId, "你好", audioUri: "b/live/100/recordings/a.flv");
+        var b = await SeedItemAsync(datasetId, "你好", audioUri: "b/live/100/recordings/b.flv");
+        await SegmentSync.SyncItemAsync(a);
+        await SegmentSync.SyncItemAsync(b);
+        var expected = a.Id < b.Id ? a : b;
+
+        var audio = new StubAudioClient();
+        var tts = new StubTtsClient();
+        var (_, model) = await SeedProviderAsync();
+        var service = Create(new InMemoryVectorStore(), audio, tts, new StubChatFactory(new StubChatClient()));
+
+        // 同一数据集 + 同一文本重复调用：命中集合与拼接顺序必须一致。
+        for (var i = 0; i < 5; i++)
+        {
+            var result = await service.SynthesizeAsync(datasetId, "你好", "ZH", model);
+            Assert.Equal([expected.AudioKey], result.SpeakerAudioKeys);
+        }
+    }
+
+    [Fact]
+    public async Task PinyinMatch_EqualScoreSameItem_TieBreaksBySegmentIndex_Deterministic()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        // 单条目含两条同音短句（SegmentIndex 0/1，同分）：同分且同 itemId 时按 SegmentIndex 升序稳定取先。
+        var item = await SeedItemAsync(datasetId, "你好，你好", audioUri: "b/live/100/recordings/a.flv");
+        await SegmentSync.SyncItemAsync(item);
+
+        var audio = new StubAudioClient();
+        var tts = new StubTtsClient();
+        var (_, model) = await SeedProviderAsync();
+        var service = Create(new InMemoryVectorStore(), audio, tts, new StubChatFactory(new StubChatClient()));
+
+        for (var i = 0; i < 5; i++)
+        {
+            var result = await service.SynthesizeAsync(datasetId, "你好", "ZH", model);
+            Assert.Equal([item.AudioKey], result.SpeakerAudioKeys);
+        }
+    }
+
+    [Fact]
+    public async Task PinyinMatch_TruncatesByTotalDurationLimit()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var first = await SeedItemAsync(datasetId, "你好", audioUri: "b/live/100/recordings/a.flv");
+        var second = await SeedItemAsync(datasetId, "世界", audioUri: "b/live/100/recordings/b.flv");
+        var third = await SeedItemAsync(datasetId, "再见", audioUri: "b/live/100/recordings/c.flv");
+        await SegmentSync.SyncItemAsync(first);
+        await SegmentSync.SyncItemAsync(second);
+        await SegmentSync.SyncItemAsync(third);
+
+        var audio = new StubAudioClient();
+        var tts = new StubTtsClient();
+        var (_, model) = await SeedProviderAsync();
+        // 每条 1000ms（SeedItemAsync EndMs=1000）；总时长上限 2500ms → 仅拼接前 2 条。
+        var options = new SynthesizeOptions { MergedReferenceMaxTotalDurationMs = 2_500 };
+
+        var result = await Create(
+                new InMemoryVectorStore(), audio, tts, new StubChatFactory(new StubChatClient()), options)
+            .SynthesizeAsync(datasetId, "你好，世界，再见。", "ZH", model);
+
+        Assert.Equal([first.AudioKey, second.AudioKey], result.SpeakerAudioKeys);
+        var merge = Assert.Single(audio.MergeRequests);
+        Assert.Equal(["a.flv", "b.flv"], merge.Select(m => m.FileName));
+    }
+
+    [Fact]
+    public void TieBreak_PrefersLowerItemId_ThenLowerSegmentIndex()
+    {
+        var low = new TrainingDatasetItemSegmentRecord
+        {
+            ItemId = ObjectId.Parse("000000000000000000000001"), SegmentIndex = 5,
+        };
+        var high = new TrainingDatasetItemSegmentRecord
+        {
+            ItemId = ObjectId.Parse("000000000000000000000002"), SegmentIndex = 0,
+        };
+        var sameItemEarlier = new TrainingDatasetItemSegmentRecord
+        {
+            ItemId = low.ItemId, SegmentIndex = 4,
+        };
+
+        Assert.True(SynthesizeService.IsBetterTieBreak(low, high));
+        Assert.False(SynthesizeService.IsBetterTieBreak(high, low));
+        Assert.True(SynthesizeService.IsBetterTieBreak(sameItemEarlier, low));
+        Assert.False(SynthesizeService.IsBetterTieBreak(low, sameItemEarlier));
+    }
 }

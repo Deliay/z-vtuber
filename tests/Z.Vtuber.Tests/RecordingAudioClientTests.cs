@@ -202,4 +202,17 @@ public class RecordingAudioClientTests
         await Assert.ThrowsAsync<AudioUnavailableException>(
             () => client.MergeClipsAsync([new AudioClipRequest(1, "a.flv", 0, 1000)]));
     }
+
+    [Fact]
+    public async Task MergeClips_BodyOverMaxBytes_ThrowsAudioTooLarge()
+    {
+        var handler = new RecordingAudioStubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[10]) },
+        };
+        var client = CreateClient(handler, new AiOptions { MaxAudioBytes = 4 });
+
+        await Assert.ThrowsAsync<AudioTooLargeException>(
+            () => client.MergeClipsAsync([new AudioClipRequest(1, "a.flv", 0, 1000)]));
+    }
 }
