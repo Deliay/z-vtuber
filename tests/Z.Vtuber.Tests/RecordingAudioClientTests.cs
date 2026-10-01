@@ -17,11 +17,15 @@ public class RecordingAudioClientTests
     {
         public Func<HttpRequestMessage, HttpResponseMessage>? Handler { get; set; }
         public List<Uri> Requests { get; } = [];
+        public List<string> Bodies { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Requests.Add(request.RequestUri!);
+            Bodies.Add(request.Content is null
+                ? string.Empty
+                : request.Content.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult());
             var response = Handler?.Invoke(request)
                 ?? new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
             return Task.FromResult(response);
@@ -136,5 +140,79 @@ public class RecordingAudioClientTests
         var client = CreateClient(handler);
 
         await Assert.ThrowsAsync<ArgumentException>(() => client.GetClipAsync(audioUri, 0, 1000));
+    }
+
+    [Fact]
+    public async Task MergeClips_PostsMergePathWithResolvedRange()
+    {
+        var handler = new RecordingAudioStubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([7, 8]) },
+        };
+        var client = CreateClient(handler, new AiOptions { AudioClipDefaultDurationMs = 500 });
+
+        var clip = await client.MergeClipsAsync(
+        [
+            new AudioClipRequest(123, "a.flv", 1000, 2000),
+            new AudioClipRequest(123, "b.flv", 0, null),
+        ]);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/api/recordings/audio/merge", request.PathAndQuery);
+        Assert.Equal(new byte[] { 7, 8 }, clip.Bytes);
+        Assert.Equal("audio/mpeg", clip.ContentType);
+
+        var body = Assert.Single(handler.Bodies);
+        Assert.Contains("\"roomId\":123", body);
+        Assert.Contains("\"fileName\":\"a.flv\"", body);
+        Assert.Contains("\"endMs\":2000", body);
+        Assert.Contains("\"endMs\":500", body);
+    }
+
+    [Fact]
+    public async Task MergeClips_EmptyItems_ThrowsArgument()
+    {
+        var client = CreateClient(new RecordingAudioStubHandler());
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.MergeClipsAsync([]));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task MergeClips_NonSuccess_ThrowsAudioUnavailable(HttpStatusCode status)
+    {
+        var handler = new RecordingAudioStubHandler { Handler = _ => new HttpResponseMessage(status) };
+        var client = CreateClient(handler);
+
+        await Assert.ThrowsAsync<AudioUnavailableException>(
+            () => client.MergeClipsAsync([new AudioClipRequest(1, "a.flv", 0, 1000)]));
+    }
+
+    [Fact]
+    public async Task MergeClips_TransportFailure_ThrowsAudioUnavailable()
+    {
+        var handler = new RecordingAudioStubHandler
+        {
+            Handler = _ => throw new HttpRequestException("connection refused"),
+        };
+        var client = CreateClient(handler);
+
+        await Assert.ThrowsAsync<AudioUnavailableException>(
+            () => client.MergeClipsAsync([new AudioClipRequest(1, "a.flv", 0, 1000)]));
+    }
+
+    [Fact]
+    public async Task MergeClips_BodyOverMaxBytes_ThrowsAudioTooLarge()
+    {
+        var handler = new RecordingAudioStubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[10]) },
+        };
+        var client = CreateClient(handler, new AiOptions { MaxAudioBytes = 4 });
+
+        await Assert.ThrowsAsync<AudioTooLargeException>(
+            () => client.MergeClipsAsync([new AudioClipRequest(1, "a.flv", 0, 1000)]));
     }
 }

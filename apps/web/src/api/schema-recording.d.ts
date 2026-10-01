@@ -135,10 +135,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/recordings/audio/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 多片段音频合并（服务间内部能力）
+         * @description 按请求顺序抽取多段录播音频并 ffmpeg 单进程 concat 合并输出单个 mp3（单声道 44.1kHz 96kbps； 未探测到 mp3 编码能力时降级 wav，语义不变），流式返回不落盘。 供 training synthesize 将断句拼音匹配命中的多条参考拼接为 speaker_prompt；录制中文件返回 400。
+         */
+        post: operations["mergeRecordingAudioClips"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        RecordingAudioMergeRequest: {
+            /** @description 按顺序合并的片段，1 ~ Recording:AudioMergeMaxItems（默认 16） */
+            items: components["schemas"]["RecordingAudioMergeItem"][];
+        };
+        RecordingAudioMergeItem: {
+            /** Format: int64 */
+            roomId: number;
+            /** @description 录播文件名（仅允许平文件名，禁止路径分隔符与穿越） */
+            fileName: string;
+            /**
+             * Format: int64
+             * @description 片段起点（毫秒）
+             */
+            startMs: number;
+            /**
+             * Format: int64
+             * @description 片段终点（毫秒，必须大于 startMs；单段 ≤ Recording:AudioClipMaxDurationMs，总时长 ≤ Recording:AudioMergeMaxTotalDurationMs）
+             */
+            endMs: number;
+        };
         RecordingStatus: {
             /** Format: int64 */
             roomId?: number;
@@ -494,6 +534,66 @@ export interface operations {
                 content: {
                     "application/json": {
                         /** @example audio clip failed */
+                        error: string;
+                    };
+                };
+            };
+        };
+    };
+    mergeRecordingAudioClips: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordingAudioMergeRequest"];
+            };
+        };
+        responses: {
+            /** @description 合并音频（mp3；无 mp3 编码能力时降级 wav，语义不变） */
+            200: {
+                headers: {
+                    /** @description 固定 no-store，合并每次现算不缓存 */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
+                    "audio/wav": string;
+                };
+            };
+            /** @description {"error": "items is required"/"too many items"/"invalid time range"/"total duration too long"/"recording in progress"} */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
+                };
+            };
+            /** @description {"error": "file not found"}（任一文件不存在/非法文件名） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
+                };
+            };
+            /** @description {"error": "audio merge failed"}（ffmpeg 合并失败） */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
                         error: string;
                     };
                 };

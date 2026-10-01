@@ -9,6 +9,7 @@ using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Contracts;
+using Z.Vtuber.Training.Synthesis;
 using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Training.Controllers;
@@ -24,7 +25,8 @@ public sealed class TrainingDatasetItemsController(
     TrainingDatasetItemRepository items,
     ITranscriptApiClient transcript,
     ILogger<TrainingDatasetItemsController>? logger = null,
-    VectorSyncService? vectors = null) : ControllerBase
+    VectorSyncService? vectors = null,
+    SegmentSyncService? segments = null) : ControllerBase
 {
     private readonly ILogger<TrainingDatasetItemsController> _logger =
         logger ?? NullLogger<TrainingDatasetItemsController>.Instance;
@@ -96,9 +98,9 @@ public sealed class TrainingDatasetItemsController(
                 segment.Start, segment.End, segment.Text, now))
             .ToList();
 
-        // 记录导入前该 source 已有条目的 AudioKey：导入后只对**新增**条目做增量向量同步，
+        // 记录导入前该 source 已有条目的 AudioKey：导入后只对**新增**条目做增量派生同步（向量/候选短句），
         // 避免部分失败重导时把整批已导入条目逐条重新 embedding（浪费，且直接放大代理超时风险）。
-        var existingAudioKeys = vectors is null
+        var existingAudioKeys = vectors is null && segments is null
             ? null
             : (await items.ListAsync(id, source: taskId, ct: ct))
                 .Select(i => i.AudioKey)
@@ -110,13 +112,21 @@ public sealed class TrainingDatasetItemsController(
             "training dataset import: datasetId={DatasetId} taskId={TaskId} imported={Imported} skipped={Skipped}",
             datasetId, taskId, imported, skipped);
 
-        // 增量同步 Milvus（best-effort，失败 Warn 不阻断导入；vectors/rebuild 兜底）。
-        if (imported > 0 && vectors is not null && existingAudioKeys is not null)
+        // 增量同步派生索引（best-effort，失败 Warn 不阻断导入；vectors/rebuild、segments/rebuild 兜底）。
+        if (imported > 0 && existingAudioKeys is not null)
         {
             var sourceItems = await items.ListAsync(id, source: taskId, ct: ct);
             foreach (var record in sourceItems.Where(r => !existingAudioKeys.Contains(r.AudioKey)))
             {
-                await vectors.SyncItemAsync(record, ct);
+                if (vectors is not null)
+                {
+                    await vectors.SyncItemAsync(record, ct);
+                }
+
+                if (segments is not null)
+                {
+                    await segments.SyncItemAsync(record, ct);
+                }
             }
         }
 
@@ -209,10 +219,15 @@ public sealed class TrainingDatasetItemsController(
             return NotFound(new ErrorResponse("item not found"));
         }
 
-        // text 变更 → 增量同步文本向量（best-effort）。
+        // text 变更 → 增量同步文本向量与候选短句（best-effort）。
         if (textKind == JsonValueKind.String && vectors is not null)
         {
             await vectors.SyncItemAsync(updated, ct);
+        }
+
+        if (textKind == JsonValueKind.String && segments is not null)
+        {
+            await segments.SyncItemAsync(updated, ct);
         }
 
         return Ok(TrainingMapping.ToItemDto(updated));
@@ -247,6 +262,12 @@ public sealed class TrainingDatasetItemsController(
         if (deletedIds.Count > 0 && vectors is not null)
         {
             await vectors.DeleteItemsAsync(id, deletedIds, ct);
+        }
+
+        // 条目删除后级联清理候选短句（best-effort）。
+        if (deletedIds.Count > 0 && segments is not null)
+        {
+            await segments.DeleteItemsAsync(id, deletedIds, ct);
         }
 
         return Ok(new TrainingDatasetBatchDeleteResultDto(deletedIds.Count));

@@ -110,6 +110,25 @@ public sealed class TrainingMongoSetup(IMongoDatabase database, ILogger<Training
                 }),
             cancellationToken: ct);
 
+        // training_dataset_item_segments：(DatasetId) 按数据集加载/清空/级联；(DatasetId, ItemId) 条目级替换/删除。
+        // 匹配为内存相似度计算（非等值检索），故不建 Pinyin 等值索引。
+        var segments = Database.GetCollection<TrainingDatasetItemSegmentRecord>(
+            TrainingCollectionNames.TrainingDatasetItemSegments);
+        var datasetSegmentKeys = Builders<TrainingDatasetItemSegmentRecord>.IndexKeys
+            .Ascending(s => s.DatasetId);
+        await segments.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingDatasetItemSegmentRecord>(
+                datasetSegmentKeys, new CreateIndexOptions { Name = "DatasetId_1" }),
+            cancellationToken: ct);
+
+        var datasetItemSegmentKeys = Builders<TrainingDatasetItemSegmentRecord>.IndexKeys
+            .Ascending(s => s.DatasetId)
+            .Ascending(s => s.ItemId);
+        await segments.Indexes.CreateOneAsync(
+            new CreateIndexModel<TrainingDatasetItemSegmentRecord>(
+                datasetItemSegmentKeys, new CreateIndexOptions { Name = "DatasetId_1_ItemId_1" }),
+            cancellationToken: ct);
+
         Logger.LogInformation("Ensured training collection indexes.");
     }
 }

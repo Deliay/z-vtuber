@@ -228,6 +228,15 @@ internal sealed class StubAudioClient : IRecordingAudioClient
 
     public List<string> RequestedUris { get; } = [];
 
+    /// <summary>合并请求记录（按调用顺序）。</summary>
+    public List<IReadOnlyList<AudioClipRequest>> MergeRequests { get; } = [];
+
+    /// <summary>合并结果（默认固定两字节）；为 null 时返回默认。</summary>
+    public AudioClip? MergeResult { get; set; } = new([9, 9], "audio/mpeg");
+
+    /// <summary>合并抛出的异常（模拟合并不可用）。</summary>
+    public Exception? MergeThrow { get; set; }
+
     public Task<AudioClip> GetClipAsync(
         string audioUri, long startMs, long? endMs, CancellationToken ct = default)
     {
@@ -238,6 +247,18 @@ internal sealed class StubAudioClient : IRecordingAudioClient
         }
 
         return Task.FromResult(clip);
+    }
+
+    public Task<AudioClip> MergeClipsAsync(
+        IReadOnlyList<AudioClipRequest> items, CancellationToken ct = default)
+    {
+        MergeRequests.Add(items);
+        if (MergeThrow is not null)
+        {
+            return Task.FromException<AudioClip>(MergeThrow);
+        }
+
+        return Task.FromResult(MergeResult ?? new AudioClip([9, 9], "audio/mpeg"));
     }
 }
 
