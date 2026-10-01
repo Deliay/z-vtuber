@@ -3039,10 +3039,12 @@ components:
           nullable: true
         inputCapabilities:
           type: array
+          minItems: 1
           items:
             $ref: "#/components/schemas/TrainingModelCapability"
         outputCapabilities:
           type: array
+          minItems: 1
           items:
             $ref: "#/components/schemas/TrainingModelCapability"
     TrainingFeaturePointSetModelRequest:

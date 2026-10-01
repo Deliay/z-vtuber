@@ -1344,10 +1344,12 @@ components:
           description: 功能点名称（缺省以 slug 展示）
         inputCapabilities:
           type: array
+          minItems: 1
           items:
             $ref: "#/components/schemas/TrainingModelCapability"
         outputCapabilities:
           type: array
+          minItems: 1
           items:
             $ref: "#/components/schemas/TrainingModelCapability"
     TrainingFeaturePointSetModelRequest:
