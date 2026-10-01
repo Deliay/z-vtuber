@@ -133,4 +133,24 @@ public class TrainingSynthesizeProxyTests
         Assert.Equal("/api/training/datasets/ds1/vectors/rebuild", handler.Requests[0]);
         Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
     }
+
+    [Fact]
+    public async Task RebuildSegments_ForwardsPost()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"rebuilt":5}""", Encoding.UTF8, "application/json"),
+            },
+        };
+        var controller = CreateController(new HttpClient(handler));
+
+        var result = await controller.RebuildDatasetSegments("ds1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/datasets/ds1/segments/rebuild", handler.Requests[0]);
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+    }
 }

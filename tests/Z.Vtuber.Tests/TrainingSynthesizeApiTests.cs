@@ -29,6 +29,8 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
 
     private TrainingDatasetItemRepository Items => new(fixture.Database);
 
+    private TrainingDatasetItemSegmentRepository SegmentRepository => new(fixture.Database);
+
     private TrainingProviderRepository Providers => new(fixture.Database);
 
     private TrainingModelRepository Models => new(fixture.Database);
@@ -53,7 +55,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         StubTtsClient tts, TtsOptions? ttsOptions = null, SynthesizeOptions? synthesizeOptions = null)
     {
         var synthesize = new SynthesizeService(
-            Items, Providers, new ApiStubChatFactory(), audio, store, tts,
+            Items, SegmentRepository, Providers, new ApiStubChatFactory(), audio, store, tts,
             synthesizeOptions ?? new SynthesizeOptions(),
             NullLogger<SynthesizeService>.Instance);
         var vectors = new VectorSyncService(Items, store, embedding, NullLogger<VectorSyncService>.Instance);
@@ -78,7 +80,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     }
 
     private async Task<TrainingDatasetItemRecord> SeedItemAsync(
-        ObjectId datasetId, string text, EmotionResult? emotion = null)
+        ObjectId datasetId, string text, string? audioUri = null, EmotionResult? emotion = null)
     {
         var now = DateTime.UtcNow;
         var item = new TrainingDatasetItemRecord
@@ -86,7 +88,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
             DatasetId = datasetId,
             AudioType = "transcript",
             Source = "task",
-            AudioUri = $"b/live/{Guid.NewGuid():N}/recordings/{Guid.NewGuid():N}.flv",
+            AudioUri = audioUri ?? $"b/live/{Guid.NewGuid():N}/recordings/{Guid.NewGuid():N}.flv",
             AudioKey = $"k-{Guid.NewGuid():N}",
             StartMs = 0,
             EndMs = 1000,
@@ -458,6 +460,32 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var objectResult = Assert.IsAssignableFrom<ObjectResult>(result.Result);
         Assert.Equal(StatusCodes.Status502BadGateway, objectResult.StatusCode);
         Assert.Equal("embedding service unavailable", Assert.IsType<ErrorResponse>(objectResult.Value).Error);
+    }
+
+    // ===== 拼音短句匹配：segments/rebuild 后 synthesize 多命中拼接（假 recording/假 TTS + 真 Mongo）=====
+
+    [Fact]
+    public async Task Synthesize_PinyinSegmentsRebuild_EndToEnd_MergesMultipleHits()
+    {
+        var datasetId = await SeedDatasetAsync();
+        var first = await SeedItemAsync(datasetId, "你好", audioUri: "b/live/100/recordings/a.flv");
+        var second = await SeedItemAsync(datasetId, "世界", audioUri: "b/live/100/recordings/b.flv");
+
+        var segmentSync = new SegmentSyncService(
+            Items, SegmentRepository, NullLogger<SegmentSyncService>.Instance);
+        await segmentSync.RebuildAsync(datasetId);
+
+        var audio = new StubAudioClient();
+        var tts = new StubTtsClient { Bytes = [7, 7] };
+        var controller = Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), audio, tts);
+
+        var result = await controller.Synthesize(
+            datasetId.ToString(), new TrainingSynthesizeRequest("你好，世界。", null, null));
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal([7, 7], file.FileContents);
+        Assert.Equal($"{first.AudioKey},{second.AudioKey}", Header(controller, "X-Speaker-Audio-Key"));
+        Assert.Single(audio.MergeRequests);
     }
 
     // ===== 真 Milvus 链路（Testcontainers milvusdb/milvus）：rebuild 重建 + 字符相似 top-1 命中 speaker =====
