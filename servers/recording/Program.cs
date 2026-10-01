@@ -44,6 +44,7 @@ builder.Services.AddSingleton<RecordingStatusReporter>();
 // 试听链路：音频片段抽取（启动时探测 mp3 编码能力，缺失降级 wav）
 builder.Services.AddSingleton(new Mp3EncoderSupport());
 builder.Services.AddSingleton<IAudioClipExtractor, AudioClipExtractor>();
+builder.Services.AddSingleton<IAudioClipMerger, AudioClipMerger>();
 
 builder.Services.AddHttpClient<IBiliLiveApi, BiliLiveApiClient>(client =>
 {

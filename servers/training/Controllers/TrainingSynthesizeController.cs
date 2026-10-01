@@ -37,7 +37,7 @@ public sealed class TrainingSynthesizeController(
 
     /// <summary>
     /// 音频生成：dataset（404）→ text（400）→ lang（400）→ emotionMode（400）→（llm）model（404/400）校验 →
-    /// <see cref="SynthesizeService"/>（字符相似音色匹配/参考取数/TTS）→ 200 <c>audio/wav</c> +
+    /// <see cref="SynthesizeService"/>（拼音断句多命中拼接/无候选回退字符相似/参考取数/TTS）→ 200 <c>audio/wav</c> +
     /// <c>X-Speaker-Audio-Key</c>/<c>X-Emo-Audio-Key</c> 命中头。query <c>emotionMode</c> 缺省 <c>none</c>
     /// （不传情绪参考）；<c>llm</c> 用大模型生成情绪参考；<c>dataset</c> 与 <c>none</c> 均跳过模型解析
     /// （<c>dataset</c> 用音色命中条目自身情绪）。
@@ -88,9 +88,9 @@ public sealed class TrainingSynthesizeController(
         try
         {
             var result = await synthesize.SynthesizeAsync(datasetObjectId, text, lang, model, mode, ct);
-            if (!string.IsNullOrEmpty(result.SpeakerAudioKey))
+            if (result.SpeakerAudioKeys.Count > 0)
             {
-                Response.Headers["X-Speaker-Audio-Key"] = result.SpeakerAudioKey;
+                Response.Headers["X-Speaker-Audio-Key"] = string.Join(',', result.SpeakerAudioKeys);
             }
 
             if (!string.IsNullOrEmpty(result.EmoAudioKey))

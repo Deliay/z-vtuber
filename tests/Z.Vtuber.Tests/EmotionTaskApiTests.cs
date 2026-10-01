@@ -67,6 +67,10 @@ public class EmotionTaskApiTests(MongoDbFixture fixture) : IClassFixture<MongoDb
         public Task<AudioClip> GetClipAsync(
             string audioUri, long startMs, long? endMs, CancellationToken ct = default) =>
             throw new NotSupportedException("emotion submission does not fetch audio");
+
+        public Task<AudioClip> MergeClipsAsync(
+            IReadOnlyList<AudioClipRequest> items, CancellationToken ct = default) =>
+            throw new NotSupportedException("emotion submission does not merge audio");
     }
 
     private sealed class EmotionTaskStubChatFactory : IChatModelClientFactory
