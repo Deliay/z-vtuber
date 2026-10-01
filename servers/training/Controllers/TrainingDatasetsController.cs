@@ -7,6 +7,7 @@ using MongoDB.Driver;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Training.Contracts;
+using Z.Vtuber.Training.Synthesis;
 using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Training.Controllers;
@@ -21,7 +22,8 @@ public sealed class TrainingDatasetsController(
     TrainingDatasetRepository datasets,
     TrainingDatasetItemRepository items,
     ILogger<TrainingDatasetsController>? logger = null,
-    VectorSyncService? vectors = null) : ControllerBase
+    VectorSyncService? vectors = null,
+    SegmentSyncService? segments = null) : ControllerBase
 {
     /// <summary>本期唯一合法数据集类型（预留其他模态）。</summary>
     internal const string AudioType = "audio";
@@ -153,6 +155,12 @@ public sealed class TrainingDatasetsController(
         if (vectors is not null)
         {
             await vectors.DeleteDatasetAsync(id, ct);
+        }
+
+        // 级联清候选短句反向索引（best-effort）。
+        if (segments is not null)
+        {
+            await segments.DeleteDatasetAsync(id, ct);
         }
 
         _logger.LogInformation("training dataset deleted: datasetId={DatasetId}", id);

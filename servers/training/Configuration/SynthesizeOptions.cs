@@ -15,4 +15,8 @@ public sealed class SynthesizeOptions
     /// <summary>参考音频候选数上限（音色/情绪逐候选兜底）。</summary>
     [Range(1, 1000)]
     public int ReferenceCandidateLimit { get; set; } = 16;
+
+    /// <summary>参与拼接的数据条数上限（拼音短句多命中按数据去重后截断）。</summary>
+    [Range(1, 1000)]
+    public int MergedReferenceLimit { get; set; } = 8;
 }
