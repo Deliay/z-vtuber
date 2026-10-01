@@ -205,5 +205,6 @@ flowchart LR
 ## 六、相关文档
 
 - 技术提案：[[20261001-proposal-training-synthesize-pinyin-match]]（docs/engineering/proposals/20261001-proposal-training-synthesize-pinyin-match.md）
+- 实现 Plan：`docs/engineering/plans/20261001-plan-training-synthesize-pinyin-match.md`
 - 关联 PRD：[[20260929-training-audio-synthesize-prd]]（docs/product/draft/20260929-training-audio-synthesize-prd.md）
 - 关联提案：[[20261001-proposal-training-synthesize-char-match]]（docs/engineering/proposals/20261001-proposal-training-synthesize-char-match.md）
