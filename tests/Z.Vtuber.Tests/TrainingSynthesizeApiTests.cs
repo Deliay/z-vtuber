@@ -9,6 +9,7 @@ using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Configuration;
 using Z.Vtuber.Training.Contracts;
 using Z.Vtuber.Training.Controllers;
+using Z.Vtuber.Training.FeaturePoints;
 using Z.Vtuber.Training.Synthesis;
 using Z.Vtuber.Training.Vectors;
 
@@ -60,10 +61,12 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
             new AiOptions(),
             NullLogger<SynthesizeService>.Instance);
         var vectors = new VectorSyncService(Items, store, embedding, NullLogger<VectorSyncService>.Instance);
+        var resolver = new TrainingModelResolver(
+            new TrainingFeaturePointRepository(fixture.Database), Models, Providers);
         var controller = new TrainingSynthesizeController(
             Datasets, Models, synthesize, vectors,
             Microsoft.Extensions.Options.Options.Create(ttsOptions ?? new TtsOptions()).Value,
-            synthesizeOptions ?? new SynthesizeOptions(),
+            resolver,
             NullLogger<TrainingSynthesizeController>.Instance);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         controller.HttpContext.Response.Body = new MemoryStream();

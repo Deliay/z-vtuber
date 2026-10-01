@@ -243,7 +243,7 @@ export interface paths {
         };
         /**
          * 查询模型列表
-         * @description 每项含服务端拼好的 slug（{providerName}/{model}）。
+         * @description 每项含服务端拼好的 slug（{providerName}/{model}）。input/output 为逗号分隔的所需能力， 模型对应侧能力须**覆盖**该集合才返回；两者缺省时行为与既有一致。
          */
         get: operations["listTrainingModels"];
         put?: never;
@@ -271,6 +271,70 @@ export interface paths {
         post?: never;
         /** 删除模型 */
         delete: operations["deleteTrainingModel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/feature-points": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询功能点列表
+         * @description Slug 升序。每项实时计算 specifiedModelAvailable（已指定但指定模型不可用 = 被删除/停用/能力不匹配时为 false）与 defaultModelId/defaultModelSlug （未设置或指定不可用时的默认选择：可用模型中 CreatedAt 最早者）。
+         */
+        get: operations["listTrainingFeaturePoints"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/feature-points/{slug}/model/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 功能点请求模型（自动登记）
+         * @description 以 slug upsert 登记（首次插入 registeredAt；再次请求以最新 name/能力要求更新 updatedAt） 后解析模型：指定模型可用 → specified；否则默认选择（可用模型中 CreatedAt 最早者）→ default （指定存在但不可用同样回 default）；无候选 → none。
+         */
+        post: operations["resolveTrainingFeaturePointModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/feature-points/{slug}/model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 指定功能点模型
+         * @description 仅允许指定该功能点的可用模型（启用 + 能力匹配），否则 400 model not qualified。
+         */
+        put: operations["setTrainingFeaturePointModel"];
+        post?: never;
+        /**
+         * 取消指定（恢复未设置）
+         * @description 置空指定模型，恢复默认选择口径；未登记功能点 404。
+         */
+        delete: operations["clearTrainingFeaturePointModel"];
         options?: never;
         head?: never;
         patch?: never;
@@ -551,6 +615,11 @@ export interface components {
             endpoint?: string;
             apiKey?: string;
         };
+        /**
+         * @description 模型能力（语音/视频/文本/图片）
+         * @enum {string}
+         */
+        TrainingModelCapability: "audio" | "video" | "text" | "image";
         TrainingModel: {
             id: string;
             providerId: string;
@@ -562,6 +631,10 @@ export interface components {
             slug: string;
             /** @description 是否启用（默认 true） */
             enabled: boolean;
+            /** @description 输入能力（audio/video/text/image 子集）；空 = 未声明，不进入任何功能点可用模型 */
+            inputCapabilities: components["schemas"]["TrainingModelCapability"][];
+            /** @description 输出能力（audio/video/text/image 子集）；空 = 未声明 */
+            outputCapabilities: components["schemas"]["TrainingModelCapability"][];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -573,11 +646,19 @@ export interface components {
         TrainingModelCreateRequest: {
             providerId: string;
             model: string;
+            /** @description 输入能力（可选，缺省空数组 = 未声明） */
+            inputCapabilities?: components["schemas"]["TrainingModelCapability"][] | null;
+            /** @description 输出能力（可选，缺省空数组 = 未声明） */
+            outputCapabilities?: components["schemas"]["TrainingModelCapability"][] | null;
         };
-        /** @description 缺失字段不变 */
+        /** @description 缺失字段不变；能力传空数组即清空、缺省不改 */
         TrainingModelUpdateRequest: {
             model?: string;
             enabled?: boolean;
+            /** @description 输入能力（缺省不改，空数组清空） */
+            inputCapabilities?: components["schemas"]["TrainingModelCapability"][] | null;
+            /** @description 输出能力（缺省不改，空数组清空） */
+            outputCapabilities?: components["schemas"]["TrainingModelCapability"][] | null;
         };
         TrainingModelDiscoverResult: {
             models: components["schemas"]["TrainingDiscoveredModel"][];
@@ -591,6 +672,55 @@ export interface components {
         TrainingModelImportResult: {
             imported: number;
             skipped: number;
+        };
+        TrainingFeaturePoint: {
+            /** @description 功能点标识（功能点自行声明，唯一） */
+            slug: string;
+            /** @description 功能点名称（请求未传则回落 slug） */
+            name: string;
+            /** @description 功能点所需输入能力 */
+            inputCapabilities: components["schemas"]["TrainingModelCapability"][];
+            /** @description 功能点所需输出能力 */
+            outputCapabilities: components["schemas"]["TrainingModelCapability"][];
+            /** @description 指定模型 id；null = 未设置 */
+            specifiedModelId: string | null;
+            /** @description 指定模型 slug */
+            specifiedModelSlug: string | null;
+            /** @description 指定模型是否当前可用（被删除/停用/能力不匹配为 false） */
+            specifiedModelAvailable: boolean;
+            /** @description 默认选择（可用模型中 CreatedAt 最早者）id */
+            defaultModelId: string | null;
+            /** @description 默认选择模型 slug */
+            defaultModelSlug: string | null;
+            /**
+             * Format: date-time
+             * @description 首次登记时间
+             */
+            registeredAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TrainingFeaturePointList: {
+            /** @description 按 slug 升序 */
+            items: components["schemas"]["TrainingFeaturePoint"][];
+        };
+        TrainingFeaturePointModel: {
+            slug: string;
+            /** @description 解析出的模型 id；无可用模型为 null */
+            modelId: string | null;
+            /** @description 解析出的模型 slug */
+            modelSlug: string | null;
+            /** @description specified（指定可用）| default（回退默认）| none（无可用模型） */
+            source: string;
+        };
+        TrainingFeaturePointResolveRequest: {
+            /** @description 功能点名称（缺省以 slug 展示） */
+            name?: string | null;
+            inputCapabilities: components["schemas"]["TrainingModelCapability"][];
+            outputCapabilities: components["schemas"]["TrainingModelCapability"][];
+        };
+        TrainingFeaturePointSetModelRequest: {
+            modelId: string;
         };
         /** @description 结构化情绪数据（十字段固定结构） */
         EmotionResult: {
@@ -662,7 +792,7 @@ export interface components {
             text: string;
             /** @description 语种 ZH/EN/JA/ES/AR（大小写不敏感），缺省 Tts:DefaultLang（默认 ZH） */
             lang?: string | null;
-            /** @description 生成情感向量所用可用模型 id（Models 管理配置）；缺省 Synthesize:DefaultEmotionModelId，再缺省首个启用模型 */
+            /** @description 生成情感向量所用可用模型 id；显式指定优先，缺省按功能点 emotion-from-text 解析（指定优先 → 默认选择 → 无则降级中性） */
             modelId?: string | null;
         };
         TrainingVectorsRebuildResult: {
@@ -702,6 +832,12 @@ export interface components {
         EmotionTaskId: string;
         /** @description 按启用状态过滤 */
         TrainingModelEnabledQuery: boolean;
+        /** @description 逗号分隔的所需输入能力（如 audio,text）；模型输入能力须覆盖该集合 */
+        TrainingModelInputQuery: string;
+        /** @description 逗号分隔的所需输出能力；模型输出能力须覆盖该集合 */
+        TrainingModelOutputQuery: string;
+        /** @description 功能点标识（trim 后非空 ≤ 128） */
+        FeaturePointSlug: string;
         /** @description 按数据集过滤 */
         EmotionDatasetIdQuery: string;
         /** @description 按任务状态过滤 pending/running/done/failed */
@@ -1306,6 +1442,10 @@ export interface operations {
             query?: {
                 /** @description 按启用状态过滤 */
                 enabled?: components["parameters"]["TrainingModelEnabledQuery"];
+                /** @description 逗号分隔的所需输入能力（如 audio,text）；模型输入能力须覆盖该集合 */
+                input?: components["parameters"]["TrainingModelInputQuery"];
+                /** @description 逗号分隔的所需输出能力；模型输出能力须覆盖该集合 */
+                output?: components["parameters"]["TrainingModelOutputQuery"];
             };
             header?: never;
             path?: never;
@@ -1346,7 +1486,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingModel"];
                 };
             };
-            /** @description {"error": "model is required"/"model too long"} */
+            /** @description {"error": "model is required"/"model too long"/"unsupported capability"} */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1400,7 +1540,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingModel"];
                 };
             };
-            /** @description {"error": "model is required"/"model too long"} */
+            /** @description {"error": "model is required"/"model too long"/"unsupported capability"} */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1449,6 +1589,139 @@ export interface operations {
                 content?: never;
             };
             /** @description {"error": "model not found"} */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listTrainingFeaturePoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 功能点列表（Slug 升序） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingFeaturePointList"];
+                };
+            };
+        };
+    };
+    resolveTrainingFeaturePointModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 功能点标识（trim 后非空 ≤ 128） */
+                slug: components["parameters"]["FeaturePointSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingFeaturePointResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description 解析结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingFeaturePointModel"];
+                };
+            };
+            /** @description {"error": "unsupported capability"/"inputCapabilities is required"/"outputCapabilities is required"/"feature point slug is required"/"feature point slug too long"} */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setTrainingFeaturePointModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 功能点标识（trim 后非空 ≤ 128） */
+                slug: components["parameters"]["FeaturePointSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingFeaturePointSetModelRequest"];
+            };
+        };
+        responses: {
+            /** @description 指定成功（返回功能点详情） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingFeaturePoint"];
+                };
+            };
+            /** @description {"error": "model not qualified"/"modelId is required"} */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description {"error": "feature point not found"/"model not found"} */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    clearTrainingFeaturePointModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 功能点标识（trim 后非空 ≤ 128） */
+                slug: components["parameters"]["FeaturePointSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已取消指定（返回功能点详情） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingFeaturePoint"];
+                };
+            };
+            /** @description {"error": "feature point not found"} */
             404: {
                 headers: {
                     [name: string]: unknown;

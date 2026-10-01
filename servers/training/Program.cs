@@ -6,6 +6,7 @@ using Z.Vtuber.Training.Ai;
 using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Configuration;
 using Z.Vtuber.Training.Emotion;
+using Z.Vtuber.Training.FeaturePoints;
 using Z.Vtuber.Training.Synthesis;
 using Z.Vtuber.Training.Vectors;
 
@@ -126,6 +127,8 @@ builder.Services.AddSingleton<TrainingDatasetItemSegmentRepository>();
 builder.Services.AddSingleton<TrainingProviderRepository>();
 builder.Services.AddSingleton<TrainingModelRepository>();
 builder.Services.AddSingleton<TrainingEmotionTaskRepository>();
+builder.Services.AddSingleton<TrainingFeaturePointRepository>();
+builder.Services.AddSingleton<ITrainingModelResolver, TrainingModelResolver>();
 
 builder.Services.AddSingleton<IChatModelClientFactory, ChatModelClientFactory>();
 builder.Services.AddSingleton<IModelDiscoveryClient, ModelDiscoveryClient>();
@@ -146,11 +149,22 @@ builder.Services.AddControllers();
 
 var app = builder.Build();
 
+// Synthesize:DefaultEmotionModelId 本期移除（由功能点 emotion-from-text 的「指定模型」承接）：
+// 残留配置非空则 Warn 一次并忽略，不影响启动。
+var legacyEmotionModelId = builder.Configuration[
+    $"{SynthesizeOptions.SectionName}:DefaultEmotionModelId"];
+if (!string.IsNullOrWhiteSpace(legacyEmotionModelId))
+{
+    app.Logger.LogWarning(
+        "Synthesize:DefaultEmotionModelId is ignored (removed); configure the emotion-from-text feature point model instead.");
+}
+
 using (var scope = app.Services.CreateScope())
 {
     var training = scope.ServiceProvider.GetRequiredService<TrainingMongoSetup>();
     var transcript = scope.ServiceProvider.GetRequiredService<TranscriptMongoSetup>();
     await training.EnsureIndexesAsync();
+    await training.BackfillModelCapabilitiesAsync();
     await transcript.EnsureIndexesAsync();
 
     // Milvus 集合/索引幂等建立（best-effort：Milvus 暂不可用不阻断服务启动，可由 vectors/rebuild 兜底）

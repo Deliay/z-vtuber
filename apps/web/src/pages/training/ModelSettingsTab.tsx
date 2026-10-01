@@ -11,10 +11,61 @@ import {
   updateTrainingModel,
 } from '../../api/client'
 import { ProviderDialog } from './ProviderDialog'
+import { FeaturePointPanel } from './FeaturePointPanel'
 import type { components } from '../../api/schema-training'
 
 type TrainingProvider = components['schemas']['TrainingProvider']
 type TrainingModel = components['schemas']['TrainingModel']
+type TrainingModelCapability = components['schemas']['TrainingModelCapability']
+
+const CAPABILITIES: TrainingModelCapability[] = ['audio', 'video', 'text', 'image']
+
+const CAPABILITY_LABELS: Record<TrainingModelCapability, string> = {
+  audio: '语音',
+  video: '视频',
+  text: '文本',
+  image: '图片',
+}
+
+/** 能力集合 → 中文标签（空集合显示「未设置」）。 */
+function capabilityLabels(capabilities: string[]): string {
+  if (capabilities.length === 0) return '未设置'
+  return capabilities.map((cap) => CAPABILITY_LABELS[cap as TrainingModelCapability] ?? cap).join('、')
+}
+
+/** 四值能力勾选组（输入/输出共用）。 */
+function CapabilityCheckboxes({
+  legend,
+  selected,
+  onChange,
+}: {
+  legend: string
+  selected: TrainingModelCapability[]
+  onChange: (next: TrainingModelCapability[]) => void
+}) {
+  return (
+    <fieldset style={{ border: '1px solid #475569', borderRadius: '0.25rem', margin: '0 0 0.5rem' }}>
+      <legend>{legend}</legend>
+      {CAPABILITIES.map((cap) => (
+        <label key={cap} style={{ marginRight: '0.75rem' }}>
+          <input
+            type="checkbox"
+            aria-label={`${legend} ${CAPABILITY_LABELS[cap]}`}
+            checked={selected.includes(cap)}
+            onChange={() =>
+              onChange(
+                selected.includes(cap)
+                  ? selected.filter((value) => value !== cap)
+                  : [...selected, cap],
+              )
+            }
+          />
+          {CAPABILITY_LABELS[cap]}
+        </label>
+      ))}
+    </fieldset>
+  )
+}
 
 const inputStyle: CSSProperties = {
   padding: '0.5rem',
@@ -74,9 +125,17 @@ export function ModelSettingsTab() {
   const [manualOpen, setManualOpen] = useState(false)
   const [manualProviderId, setManualProviderId] = useState('')
   const [manualModel, setManualModel] = useState('')
+  const [manualInputCapabilities, setManualInputCapabilities] = useState<TrainingModelCapability[]>([])
+  const [manualOutputCapabilities, setManualOutputCapabilities] = useState<TrainingModelCapability[]>([])
   const [manualError, setManualError] = useState('')
   /** 手动添加模型进行中（防双击重复提交；请求途中忽略遮罩关闭）。 */
   const [manualSubmitting, setManualSubmitting] = useState(false)
+
+  const [capabilityTarget, setCapabilityTarget] = useState<TrainingModel | null>(null)
+  const [capabilityInput, setCapabilityInput] = useState<TrainingModelCapability[]>([])
+  const [capabilityOutput, setCapabilityOutput] = useState<TrainingModelCapability[]>([])
+  const [capabilityError, setCapabilityError] = useState('')
+  const [capabilitySubmitting, setCapabilitySubmitting] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -183,16 +242,49 @@ export function ModelSettingsTab() {
     }
     setManualSubmitting(true)
     try {
-      await createTrainingModel({ providerId: manualProviderId, model: manualModel.trim() })
+      await createTrainingModel({
+        providerId: manualProviderId,
+        model: manualModel.trim(),
+        inputCapabilities: manualInputCapabilities,
+        outputCapabilities: manualOutputCapabilities,
+      })
       setManualOpen(false)
       setManualModel('')
       setManualProviderId('')
+      setManualInputCapabilities([])
+      setManualOutputCapabilities([])
       setManualError('')
       await refresh()
     } catch (err) {
       setManualError(apiErrorMessage(err, '添加模型失败'))
     } finally {
       setManualSubmitting(false)
+    }
+  }
+
+  const openCapabilityEdit = (model: TrainingModel) => {
+    setCapabilityTarget(model)
+    setCapabilityInput(model.inputCapabilities)
+    setCapabilityOutput(model.outputCapabilities)
+    setCapabilityError('')
+  }
+
+  const handleSaveCapabilities = async () => {
+    if (!capabilityTarget || capabilitySubmitting) return
+    setCapabilitySubmitting(true)
+    setCapabilityError('')
+    try {
+      // 空数组表示清空能力，缺省才不改；此处始终显式提交两组能力。
+      await updateTrainingModel(capabilityTarget.id, {
+        inputCapabilities: capabilityInput,
+        outputCapabilities: capabilityOutput,
+      })
+      setCapabilityTarget(null)
+      await refresh()
+    } catch (err) {
+      setCapabilityError(apiErrorMessage(err, '保存能力失败'))
+    } finally {
+      setCapabilitySubmitting(false)
     }
   }
 
@@ -268,6 +360,8 @@ export function ModelSettingsTab() {
               <tr>
                 <th style={cellStyle}>slug</th>
                 <th style={cellStyle}>所属 Provider</th>
+                <th style={cellStyle}>输入能力</th>
+                <th style={cellStyle}>输出能力</th>
                 <th style={cellStyle}>启用</th>
                 <th style={cellStyle}>操作</th>
               </tr>
@@ -277,6 +371,20 @@ export function ModelSettingsTab() {
                 <tr key={model.id}>
                   <td style={cellStyle}>{model.slug}</td>
                   <td style={cellStyle}>{model.providerName}</td>
+                  <td style={cellStyle}>
+                    {model.inputCapabilities.length === 0 ? (
+                      <span style={{ color: '#94a3b8' }}>未设置</span>
+                    ) : (
+                      capabilityLabels(model.inputCapabilities)
+                    )}
+                  </td>
+                  <td style={cellStyle}>
+                    {model.outputCapabilities.length === 0 ? (
+                      <span style={{ color: '#94a3b8' }}>未设置</span>
+                    ) : (
+                      capabilityLabels(model.outputCapabilities)
+                    )}
+                  </td>
                   <td style={cellStyle}>{model.enabled ? '已启用' : '已停用'}</td>
                   <td style={cellStyle}>
                     <button
@@ -284,6 +392,13 @@ export function ModelSettingsTab() {
                       onClick={() => void handleToggleModel(model)}
                     >
                       {model.enabled ? '停用' : '启用'}
+                    </button>
+                    <button
+                      aria-label={`编辑能力 ${model.slug}`}
+                      onClick={() => openCapabilityEdit(model)}
+                      style={{ marginLeft: '0.5rem' }}
+                    >
+                      编辑能力
                     </button>
                     <button
                       aria-label={`删除 ${model.slug}`}
@@ -299,6 +414,8 @@ export function ModelSettingsTab() {
           </table>
         )}
       </section>
+
+      <FeaturePointPanel />
 
       {dialogOpen && (
         <ProviderDialog
@@ -419,6 +536,17 @@ export function ModelSettingsTab() {
               />
             </label>
 
+            <CapabilityCheckboxes
+              legend="输入能力"
+              selected={manualInputCapabilities}
+              onChange={setManualInputCapabilities}
+            />
+            <CapabilityCheckboxes
+              legend="输出能力"
+              selected={manualOutputCapabilities}
+              onChange={setManualOutputCapabilities}
+            />
+
             {manualError && <div role="alert">{manualError}</div>}
 
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
@@ -426,6 +554,53 @@ export function ModelSettingsTab() {
                 {manualSubmitting ? '添加中...' : '确认添加'}
               </button>
               <button onClick={() => setManualOpen(false)} disabled={manualSubmitting}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {capabilityTarget && (
+        <div
+          style={overlayStyle}
+          onClick={() => {
+            if (!capabilitySubmitting) setCapabilityTarget(null)
+          }}
+        >
+          <div
+            role="dialog"
+            aria-label={`编辑能力 ${capabilityTarget.slug}`}
+            aria-modal="true"
+            style={panelStyle}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3>编辑能力 - {capabilityTarget.slug}</h3>
+
+            <CapabilityCheckboxes
+              legend="输入能力"
+              selected={capabilityInput}
+              onChange={setCapabilityInput}
+            />
+            <CapabilityCheckboxes
+              legend="输出能力"
+              selected={capabilityOutput}
+              onChange={setCapabilityOutput}
+            />
+
+            {capabilityError && <div role="alert">{capabilityError}</div>}
+
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+              <button
+                onClick={() => void handleSaveCapabilities()}
+                disabled={capabilitySubmitting}
+              >
+                {capabilitySubmitting ? '保存中...' : '保存'}
+              </button>
+              <button
+                onClick={() => setCapabilityTarget(null)}
+                disabled={capabilitySubmitting}
+              >
                 取消
               </button>
             </div>

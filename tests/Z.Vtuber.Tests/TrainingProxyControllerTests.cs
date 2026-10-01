@@ -659,4 +659,82 @@ public class TrainingProxyControllerTests
             """{"error":"training service unavailable"}""",
             JsonSerializer.Serialize(status.Value));
     }
+
+    // ---- 功能点模型解析：4 条新镜像路由（含 slug 转义与状态透传）----
+
+    [Fact]
+    public async Task ListFeaturePoints_ForwardsGet()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"items":[]}""") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ListFeaturePoints(CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("GET", handler.Methods[0]);
+        Assert.Equal("/api/training/feature-points", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task ResolveFeaturePointModel_ForwardsPostBody_WithEscapedSlug()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"slug":"a/b","source":"none"}""") };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"inputCapabilities":["text"],"outputCapabilities":["text"]}""");
+
+        var result = await controller.ResolveFeaturePointModel("a/b", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/feature-points/a%2Fb/model/resolve", handler.Requests[0]);
+        Assert.Contains("inputCapabilities", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task SetFeaturePointModel_ForwardsPutBody()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"slug":"fp"}""") };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Put, """{"modelId":"m1"}""");
+
+        var result = await controller.SetFeaturePointModel("fp", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("PUT", handler.Methods[0]);
+        Assert.Equal("/api/training/feature-points/fp/model", handler.Requests[0]);
+        Assert.Contains("m1", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task ClearFeaturePointModel_ForwardsDelete()
+    {
+        var handler = new StubHandler { Handler = _ => Json(HttpStatusCode.OK, """{"slug":"fp"}""") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ClearFeaturePointModel("fp", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("DELETE", handler.Methods[0]);
+        Assert.Equal("/api/training/feature-points/fp/model", handler.Requests[0]);
+        Assert.Null(handler.ContentTypes[0]);
+    }
+
+    [Fact]
+    public async Task ResolveFeaturePointModel_Upstream400_Passthrough()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.BadRequest, """{"error":"unsupported capability"}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        PrepareBody(controller, HttpMethods.Post, """{"inputCapabilities":["bogus"],"outputCapabilities":[]}""");
+
+        var result = await controller.ResolveFeaturePointModel("fp", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, controller.Response.StatusCode);
+        Assert.Contains("unsupported capability", await ReadBodyAsync(controller.HttpContext));
+    }
 }

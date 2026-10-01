@@ -16,6 +16,7 @@ vi.mock('../../api/client', async (importOriginal) => {
     importTrainingDatasetItems: vi.fn(),
     listTrainingProviders: vi.fn(),
     listTrainingModels: vi.fn(),
+    listTrainingFeaturePoints: vi.fn(),
     listEmotionTasks: vi.fn(),
   }
 })
@@ -28,6 +29,7 @@ const mockListItems = vi.mocked(client.listTrainingDatasetItems)
 const mockListTasks = vi.mocked(client.listTranscriptTasks)
 const mockListProviders = vi.mocked(client.listTrainingProviders)
 const mockListModels = vi.mocked(client.listTrainingModels)
+const mockListFeaturePoints = vi.mocked(client.listTrainingFeaturePoints)
 const mockListEmotionTasks = vi.mocked(client.listEmotionTasks)
 
 type Dataset = Awaited<ReturnType<typeof client.listTrainingDatasets>>[number]
@@ -59,6 +61,7 @@ describe('DatasetsPage', () => {
     mockListTasks.mockResolvedValue([])
     mockListProviders.mockResolvedValue([])
     mockListModels.mockResolvedValue([])
+    mockListFeaturePoints.mockResolvedValue([])
     mockListEmotionTasks.mockResolvedValue({
       items: [],
       counts: { pending: 0, running: 0, done: 0, failed: 0 },

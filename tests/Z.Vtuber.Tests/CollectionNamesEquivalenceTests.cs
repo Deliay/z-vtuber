@@ -67,6 +67,7 @@ public class CollectionNamesEquivalenceTests
         Assert.Equal("training_providers", TrainingCollectionNames.TrainingProviders);
         Assert.Equal("training_models", TrainingCollectionNames.TrainingModels);
         Assert.Equal("training_emotion_tasks", TrainingCollectionNames.TrainingEmotionTasks);
+        Assert.Equal("training_feature_points", TrainingCollectionNames.TrainingFeaturePoints);
     }
 
     [Fact]
