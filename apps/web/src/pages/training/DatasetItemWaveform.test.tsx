@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { DatasetItemWaveform } from './DatasetItemWaveform'
 import { DatasetItemList } from './DatasetItemList'
 import type { WaveformLoader, WaveformLoadOptions } from './waveformLoader'
@@ -66,7 +67,7 @@ describe('DatasetItemWaveform', () => {
     )
     expect(options.startMs).toBe(1000)
     expect(options.endMs).toBe(2500)
-    expect(await screen.findByRole('button', { name: '播放' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /播放/ })).toBeInTheDocument()
   })
 
   it('should fall back to a 5 minute preview window when endMs is empty', async () => {
@@ -89,10 +90,10 @@ describe('DatasetItemWaveform', () => {
     // 就绪即自动播放（无需再点「播放」）
     await waitFor(() => expect(play).toHaveBeenCalledTimes(1))
 
-    fireEvent.click(await screen.findByRole('button', { name: '停止' }))
+    fireEvent.click(await screen.findByRole('button', { name: /停止/ }))
     expect(stop).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(screen.getByRole('button', { name: '播放' }))
+    fireEvent.click(screen.getByRole('button', { name: /播放/ }))
     expect(play).toHaveBeenCalledTimes(2)
   })
 
@@ -168,11 +169,11 @@ describe('DatasetItemWaveform', () => {
     expect(play).toHaveBeenCalledTimes(1)
 
     // 保留控件，点「播放」可重试
-    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '播放' }))
+    expect(screen.getByRole('button', { name: /停止/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /播放/ }))
 
     await waitFor(() => expect(play).toHaveBeenCalledTimes(2))
-    expect(screen.getByRole('button', { name: '播放' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /播放/ })).toBeInTheDocument()
     expect(
       await screen.findByText('音频暂不可用，请点击播放重试'),
     ).toBeInTheDocument()
@@ -185,7 +186,7 @@ describe('DatasetItemWaveform', () => {
 
     expect(await screen.findByText('音频不可用')).toBeInTheDocument()
     expect(screen.getByTestId('waveform-container')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '播放' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /播放/ })).not.toBeInTheDocument()
   })
 
   it('should degrade to 音频不可用 without loading when audioUri is empty', async () => {

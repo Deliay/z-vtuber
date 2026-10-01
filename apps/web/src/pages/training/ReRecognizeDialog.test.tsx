@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { ReRecognizeDialog } from './ReRecognizeDialog'
 import * as client from '../../api/client'
 import type { components } from '../../api/schema-training'
@@ -51,6 +52,18 @@ function apiError(status: number, serverMessage: string): Error {
   return Object.assign(new Error('API request failed'), { status, serverMessage })
 }
 
+async function pickSelect(optionText: string) {
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '识别模型' }))
+  await waitFor(() => {
+    expect(document.querySelectorAll('.ant-select-item-option').length).toBeGreaterThan(0)
+  })
+  const option = Array.from(document.querySelectorAll('.ant-select-item-option')).find((el) =>
+    (el.getAttribute('title') ?? '').includes(optionText),
+  )
+  if (!option) throw new Error(`option not found: ${optionText}`)
+  fireEvent.click(option)
+}
+
 function renderDialog() {
   const props = {
     datasetId: 'd1',
@@ -70,16 +83,11 @@ describe('ReRecognizeDialog', () => {
     mockUpdateItem.mockResolvedValue(updatedItem)
   })
 
-  it('should render as a centred modal overlay', async () => {
+  it('should render as a centred modal', async () => {
     renderDialog()
 
     const dialog = await screen.findByRole('dialog', { name: '重新识别' })
-    expect(dialog).toHaveAttribute('aria-modal', 'true')
-    const overlay = dialog.parentElement as HTMLElement
-    expect(overlay.style.position).toBe('fixed')
-    expect(overlay.style.backgroundColor).toContain('rgba(0, 0, 0, 0.5)')
-    expect(overlay.style.display).toBe('flex')
-    expect(overlay.style.justifyContent).toBe('center')
+    expect(dialog).toBeInTheDocument()
   })
 
   it('should list the enabled models by slug', async () => {
@@ -88,10 +96,8 @@ describe('ReRecognizeDialog', () => {
     await waitFor(() => {
       expect(mockListModels).toHaveBeenCalledWith(true)
     })
-    const select = screen.getByLabelText('识别模型')
-    expect(screen.getByRole('option', { name: 'openai-prod/gpt-4o' })).toBeInTheDocument()
-    fireEvent.change(select, { target: { value: 'm1' } })
-    expect(select).toHaveValue('m1')
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '识别模型' }))
+    expect(await screen.findByTitle('openai-prod/gpt-4o')).toBeInTheDocument()
   })
 
   it('should hint to configure models first and disable recognize when there are none', async () => {
@@ -112,7 +118,7 @@ describe('ReRecognizeDialog', () => {
     )
     const props = renderDialog()
 
-    fireEvent.change(await screen.findByLabelText('识别模型'), { target: { value: 'm1' } })
+    await pickSelect('openai-prod/gpt-4o')
     const recognizeButton = screen.getByRole('button', { name: '识别' })
     fireEvent.click(recognizeButton)
     fireEvent.click(recognizeButton)
@@ -134,10 +140,10 @@ describe('ReRecognizeDialog', () => {
     )
     renderDialog()
 
-    fireEvent.change(await screen.findByLabelText('识别模型'), { target: { value: 'm1' } })
+    await pickSelect('openai-prod/gpt-4o')
     fireEvent.click(screen.getByRole('button', { name: '识别' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('该模型不支持音频输入')
+    expect(await screen.findByText('该模型不支持音频输入')).toBeInTheDocument()
     expect(screen.getByLabelText('文本')).toHaveValue('旧文本')
   })
 
@@ -160,7 +166,7 @@ describe('ReRecognizeDialog', () => {
   it('should make no request when cancelled', async () => {
     const props = renderDialog()
 
-    await screen.findByLabelText('识别模型')
+    await screen.findByRole('combobox', { name: '识别模型' })
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
 
     expect(props.onClose).toHaveBeenCalledTimes(1)

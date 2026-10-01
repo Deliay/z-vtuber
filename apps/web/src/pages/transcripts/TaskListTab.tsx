@@ -1,5 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Alert,
+  App as AntdApp,
+  Button,
+  Card,
+  Empty,
+  Form,
+  InputNumber,
+  List,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from 'antd'
+import { ReloadOutlined } from '@ant-design/icons'
+import type { ColumnsType } from 'antd/es/table'
+import {
   listTranscriptTasks,
   getTranscriptTask,
   openTranscriptStream,
@@ -29,10 +46,10 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  PENDING: '#eab308',
-  RUNNING: '#22c55e',
-  DONE: '#38bdf8',
-  FAILED: '#f87171',
+  PENDING: 'gold',
+  RUNNING: 'green',
+  DONE: 'blue',
+  FAILED: 'red',
 }
 
 const STATUS_ORDER: Record<string, number> = {
@@ -40,14 +57,6 @@ const STATUS_ORDER: Record<string, number> = {
   PENDING: 1,
   FAILED: 2,
   DONE: 3,
-}
-
-const inputStyle: React.CSSProperties = {
-  padding: '0.5rem',
-  backgroundColor: '#334155',
-  color: '#e2e8f0',
-  border: '1px solid #475569',
-  borderRadius: '0.25rem',
 }
 
 /** 播放偏移合法范围 ±24h（秒），与契约 UpdateTranscriptTaskOffsetRequest 一致。 */
@@ -97,6 +106,7 @@ function parseExistingTaskId(error: unknown): string | undefined {
 }
 
 export function TaskListTab() {
+  const { message } = AntdApp.useApp()
   const [tasks, setTasks] = useState<TranscriptTask[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -106,8 +116,7 @@ export function TaskListTab() {
 
   const [enqueueRecordingId, setEnqueueRecordingId] = useState('')
   const [enqueueModelId, setEnqueueModelId] = useState('')
-  const [enqueueMessage, setEnqueueMessage] = useState<string | null>(null)
-  const [enqueueError, setEnqueueError] = useState<string | null>(null)
+  const [enqueuing, setEnqueuing] = useState(false)
 
   const [selectedRoomId, setSelectedRoomId] = useState('')
   const [roomView, setRoomView] = useState<RoomTranscriptView | null>(null)
@@ -184,9 +193,7 @@ export function TaskListTab() {
         const anchorName = recording.anchorName?.trim()
         options.push({
           roomId: recording.roomId,
-          label: anchorName
-            ? `${anchorName}（${recording.roomId}）`
-            : String(recording.roomId),
+          label: anchorName ? `${anchorName}（${recording.roomId}）` : String(recording.roomId),
         })
       }
     }
@@ -269,19 +276,16 @@ export function TaskListTab() {
     }
   }
 
-  const handleEnqueue = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setEnqueueMessage(null)
-    setEnqueueError(null)
-
+  const handleEnqueue = async () => {
     if (!enqueueRecordingId || !enqueueModelId) {
-      setEnqueueError('请选择录播场次与模型')
+      message.error('请选择录播场次与模型')
       return
     }
 
+    setEnqueuing(true)
     try {
       const result = await enqueueTranscript(enqueueRecordingId, enqueueModelId)
-      setEnqueueMessage(`已创建任务 ${result.taskId}`)
+      message.success(`已创建任务 ${result.taskId}`)
       await fetchTasks()
       if (selectedRoomId) {
         const view = await getRoomTranscripts(Number(selectedRoomId))
@@ -290,16 +294,18 @@ export function TaskListTab() {
     } catch (err) {
       const existingTaskId = parseExistingTaskId(err)
       if (existingTaskId) {
-        setEnqueueMessage(`已有任务 ${existingTaskId}`)
+        message.info(`已有任务 ${existingTaskId}`)
         return
       }
-      setEnqueueError('发起识别失败')
+      message.error('发起识别失败')
+    } finally {
+      setEnqueuing(false)
     }
   }
 
   const handleQueryRoom = async () => {
     if (!selectedRoomId) {
-      setRoomError('请选择主播')
+      message.error('请选择主播')
       return
     }
     try {
@@ -337,10 +343,7 @@ export function TaskListTab() {
 
     setOffsetSaving(true)
     try {
-      const updated = await updateTranscriptTaskOffset(
-        selectedTaskId,
-        Math.round(seconds * 1000),
-      )
+      const updated = await updateTranscriptTaskOffset(selectedTaskId, Math.round(seconds * 1000))
       setTasks((prev) =>
         prev.map((item) => (item.id === selectedTaskId ? { ...item, ...updated } : item)),
       )
@@ -357,155 +360,149 @@ export function TaskListTab() {
     }
   }
 
+  const taskColumns: ColumnsType<TranscriptTask> = [
+    {
+      title: '状态',
+      key: 'status',
+      width: 100,
+      render: (_value, task) => {
+        const status = task.status ?? 'PENDING'
+        return <Tag color={STATUS_COLORS[status] ?? 'default'}>{STATUS_LABELS[status] ?? status}</Tag>
+      },
+    },
+    {
+      title: '场次',
+      key: 'title',
+      ellipsis: true,
+      render: (_value, task) => task.title ?? task.recordingId ?? '-',
+    },
+    {
+      title: '模型',
+      key: 'model',
+      width: 160,
+      ellipsis: true,
+      render: (_value, task) => task.modelName ?? task.modelId ?? '-',
+    },
+    {
+      title: '进度',
+      key: 'position',
+      width: 100,
+      render: (_value, task) => formatPosition(task.position),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 120,
+      render: (_value, task) => (
+        <Button
+          size="small"
+          onClick={() => handleTaskAction(task.id)}
+          aria-label={
+            selectedTaskId === task.id
+              ? `刷新任务-${task.id ?? ''}`
+              : `查看任务-${task.id ?? ''}`
+          }
+        >
+          {selectedTaskId === task.id ? '刷新' : '查看'}
+        </Button>
+      ),
+    },
+  ]
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-        <h3 style={{ margin: 0 }}>任务列表</h3>
-        <button onClick={fetchTasks} style={{ padding: '0.25rem 0.75rem' }}>
+      <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
+        <Typography.Title level={5} style={{ margin: 0 }}>
+          任务列表
+        </Typography.Title>
+        <Button icon={<ReloadOutlined />} onClick={fetchTasks}>
           刷新
-        </button>
-      </div>
+        </Button>
+      </Space>
 
-      {loading && tasks.length === 0 ? (
-        <p>加载中...</p>
-      ) : error && tasks.length === 0 ? (
-        <p style={{ color: '#f87171' }}>{error}</p>
-      ) : tasks.length === 0 ? (
-        <p>暂无转写任务</p>
+      {error && tasks.length === 0 ? (
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          action={<Button onClick={fetchTasks}>重试</Button>}
+        />
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>状态</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>场次</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>模型</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>进度</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem' }}>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tasks.map((task) => {
-              const status = task.status ?? 'PENDING'
-              return (
-                <tr key={task.id}>
-                  <td style={{ padding: '0.5rem' }}>
-                    <span style={{ color: STATUS_COLORS[status] ?? '#e2e8f0' }}>
-                      {STATUS_LABELS[status] ?? status}
-                    </span>
-                  </td>
-                  <td style={{ padding: '0.5rem' }}>{task.title ?? task.recordingId ?? '-'}</td>
-                  <td style={{ padding: '0.5rem' }}>{task.modelName ?? task.modelId ?? '-'}</td>
-                  <td style={{ padding: '0.5rem' }}>{formatPosition(task.position)}</td>
-                  <td style={{ padding: '0.5rem' }}>
-                    <button
-                      onClick={() => handleTaskAction(task.id)}
-                      aria-label={
-                        selectedTaskId === task.id
-                          ? `刷新任务-${task.id ?? ''}`
-                          : `查看任务-${task.id ?? ''}`
-                      }
-                      style={{ padding: '0.25rem 0.5rem' }}
-                    >
-                      {selectedTaskId === task.id ? '刷新' : '查看'}
-                    </button>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+        <Table<TranscriptTask>
+          rowKey={(task) => task.id ?? ''}
+          columns={taskColumns}
+          dataSource={tasks}
+          loading={loading}
+          pagination={false}
+          locale={{ emptyText: <Empty description="暂无转写任务" /> }}
+        />
       )}
-
       {error && !loading && tasks.length > 0 && (
-        <p style={{ color: '#f87171', fontSize: '0.875rem' }}>任务刷新失败，展示的是上次结果</p>
+        <Typography.Text type="danger" style={{ display: 'block', marginTop: 8 }}>
+          任务刷新失败，展示的是上次结果
+        </Typography.Text>
       )}
 
       {selectedTaskId && selectedTask && (
-        <div style={{ marginTop: '1.5rem' }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <h3 style={{ margin: '0 0 0.5rem' }}>识别结果</h3>
-            <div
-              style={{
-                display: 'flex',
-                gap: '0.5rem',
-                alignItems: 'center',
-                marginBottom: '0.5rem',
-              }}
-            >
-              <label
-                htmlFor="transcript-offset"
-                style={{ color: '#94a3b8', fontSize: '0.875rem', marginBottom: 0 }}
-              >
-                播放偏移
-              </label>
-              <input
-                id="transcript-offset"
+        <Card size="small" style={{ marginTop: 24 }}>
+          <Space style={{ marginBottom: 8, width: '100%', justifyContent: 'space-between' }} wrap>
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              识别结果
+            </Typography.Title>
+            <Space wrap size={8}>
+              <Typography.Text type="secondary">播放偏移</Typography.Text>
+              <InputNumber
                 aria-label="播放偏移（秒）"
-                type="number"
                 step={0.1}
-                value={offsetDraft}
-                onChange={(event) => {
-                  setOffsetDraft(event.target.value)
+                value={offsetDraft === '' ? null : Number(offsetDraft)}
+                onChange={(value) => {
+                  setOffsetDraft(value === null || value === undefined ? '' : String(value))
                   setOffsetError(null)
                 }}
-                style={{ ...inputStyle, width: '6rem', padding: '0.25rem 0.5rem' }}
+                style={{ width: 96 }}
               />
-              <span style={{ color: '#64748b', fontSize: '0.875rem' }}>
-                秒（正值=识别提前需后移）
-              </span>
-              <button
+              <Typography.Text type="secondary">秒（正值=识别提前需后移）</Typography.Text>
+              <Button
                 onClick={handleSaveOffset}
                 aria-label="保存播放偏移"
-                disabled={offsetSaving}
-                style={{ padding: '0.25rem 0.5rem' }}
+                loading={offsetSaving}
               >
                 保存
-              </button>
+              </Button>
               {(['srt', 'ass'] as const).map((format) => {
                 const disabled = segments.length === 0
                 return (
-                  <a
+                  <Typography.Link
                     key={format}
                     href={transcriptSubtitleUrl(selectedTaskId, format)}
                     download
                     aria-disabled={disabled ? true : undefined}
                     title={disabled ? '暂无识别结果' : undefined}
-                    style={{
-                      padding: '0.25rem 0.5rem',
-                      color: disabled ? '#64748b' : '#38bdf8',
-                      textDecoration: 'none',
+                    style={disabled ? { color: '#64748b' } : undefined}
+                    onClick={(event) => {
+                      if (disabled) {
+                        event.preventDefault()
+                      }
                     }}
                   >
                     {format === 'srt' ? '下载 SRT' : '下载 ASS'}
-                  </a>
+                  </Typography.Link>
                 )
               })}
-              <button
-                onClick={() => setSelectedTaskId(null)}
-                aria-label="收起识别结果"
-                style={{ padding: '0.25rem 0.75rem' }}
-              >
+              <Button onClick={() => setSelectedTaskId(null)} aria-label="收起识别结果">
                 收起
-              </button>
-            </div>
-          </div>
+              </Button>
+            </Space>
+          </Space>
           {offsetError && (
-            <p role="alert" style={{ color: '#f87171', margin: '0 0 0.5rem' }}>
-              {offsetError}
-            </p>
+            <Alert type="error" showIcon message={offsetError} style={{ marginBottom: 8 }} />
           )}
           {segmentsLoading && segments.length === 0 ? (
-            <p>加载中...</p>
+            <Typography.Text type="secondary">加载中...</Typography.Text>
           ) : segmentsError && segments.length === 0 ? (
-            <p style={{ color: '#f87171' }}>{segmentsError}</p>
+            <Typography.Text type="danger">{segmentsError}</Typography.Text>
           ) : segments.length === 0 ? (
-            <p>暂无识别结果</p>
+            <Empty description="暂无识别结果" />
           ) : (
             <SegmentAudioPlayer
               task={selectedTask}
@@ -513,123 +510,119 @@ export function TaskListTab() {
               containerRef={segmentsContainerRef}
             />
           )}
-        </div>
+        </Card>
       )}
 
-      <section style={{ marginTop: '2rem' }}>
-        <h3>手动发起识别</h3>
-        <form
-          onSubmit={handleEnqueue}
-          style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}
-        >
-          <select
+      <Typography.Title level={5} style={{ marginTop: 32 }}>
+        手动发起识别
+      </Typography.Title>
+      <Form layout="inline" style={{ rowGap: 12 }}>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Select
             aria-label="录播场次"
-            value={enqueueRecordingId}
-            onChange={(e) => setEnqueueRecordingId(e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">选择录播场次</option>
-            {recordings.map((recording) => {
-              const startTime = recording.startedAt
-                ? formatDateTime(recording.startedAt)
-                : '-'
-              const endTime = recording.endedAt
-                ? formatDateTime(recording.endedAt)
-                : '进行中'
-              return (
-                <option key={recording.id} value={recording.id}>
-                  {`[${recording.anchorName ?? recording.roomId}][${formatBytes(recording.size)}] ${
-                    recording.title ?? recording.id
-                  } - ${startTime} - ${endTime}`}
-                </option>
-              )
+            placeholder="选择录播场次"
+            value={enqueueRecordingId || undefined}
+            onChange={setEnqueueRecordingId}
+            style={{ width: 360 }}
+            options={recordings.map((recording) => {
+              const startTime = recording.startedAt ? formatDateTime(recording.startedAt) : '-'
+              const endTime = recording.endedAt ? formatDateTime(recording.endedAt) : '进行中'
+              return {
+                value: recording.id as string,
+                label: `[${recording.anchorName ?? recording.roomId}][${formatBytes(
+                  recording.size,
+                )}] ${recording.title ?? recording.id} - ${startTime} - ${endTime}`,
+              }
             })}
-          </select>
-
-          <select
+          />
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Select
             aria-label="识别模型"
-            value={enqueueModelId}
-            onChange={(e) => setEnqueueModelId(e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">选择模型</option>
-            {enabledModels.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </select>
-
-          <button type="submit" style={{ padding: '0.5rem 1rem' }}>
+            placeholder="选择模型"
+            value={enqueueModelId || undefined}
+            onChange={setEnqueueModelId}
+            style={{ width: 180 }}
+            options={enabledModels.map((model) => ({
+              value: model.id as string,
+              label: model.name as string,
+            }))}
+          />
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Button type="primary" loading={enqueuing} onClick={handleEnqueue}>
             发起识别
-          </button>
-        </form>
-        {enqueueMessage && <p style={{ color: '#22c55e' }}>{enqueueMessage}</p>}
-        {enqueueError && <p style={{ color: '#f87171' }}>{enqueueError}</p>}
-      </section>
+          </Button>
+        </Form.Item>
+      </Form>
 
-      <section style={{ marginTop: '2rem' }}>
-        <h3>场次任务</h3>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-          <select
-            aria-label="主播"
-            value={selectedRoomId}
-            onChange={(e) => setSelectedRoomId(e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">选择主播</option>
-            {roomOptions.map((option) => (
-              <option key={option.roomId} value={String(option.roomId)}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <button onClick={handleQueryRoom} style={{ padding: '0.5rem 1rem' }}>
-            查询
-          </button>
+      <Typography.Title level={5} style={{ marginTop: 32 }}>
+        场次任务
+      </Typography.Title>
+      <Space style={{ marginBottom: 8 }} wrap>
+        <Select
+          aria-label="主播"
+          placeholder="选择主播"
+          value={selectedRoomId || undefined}
+          onChange={setSelectedRoomId}
+          style={{ width: 200 }}
+          options={roomOptions.map((option) => ({
+            value: String(option.roomId),
+            label: option.label,
+          }))}
+        />
+        <Button onClick={handleQueryRoom}>查询</Button>
+      </Space>
+      {roomError && <Alert type="error" showIcon message={roomError} style={{ marginBottom: 8 }} />}
+      {roomView && (
+        <div>
+          <Typography.Text type="secondary">
+            自动识别：{roomView.autoEnqueueEnabled ? '已开启' : '已关闭'}
+          </Typography.Text>
+          {roomView.items.length === 0 ? (
+            <Empty description="暂无场次" />
+          ) : (
+            roomView.items.map((item) => (
+              <Card
+                key={item.recordingId}
+                size="small"
+                title={item.title ?? item.recordingId}
+                style={{ marginBottom: 8 }}
+              >
+                {item.tasks.length === 0 ? (
+                  <Typography.Text type="secondary">暂无任务</Typography.Text>
+                ) : (
+                  <List
+                    size="small"
+                    dataSource={item.tasks}
+                    renderItem={(task) => (
+                      <List.Item
+                        actions={
+                          task.status === 'FAILED'
+                            ? [
+                                <Button
+                                  key="retry"
+                                  size="small"
+                                  onClick={() => handleRetry(task.taskId ?? '')}
+                                >
+                                  重试
+                                </Button>,
+                              ]
+                            : undefined
+                        }
+                      >
+                        {`${task.modelName ?? task.modelId} - ${
+                          STATUS_LABELS[task.status ?? ''] ?? task.status
+                        } - ${formatPosition(task.position)}`}
+                      </List.Item>
+                    )}
+                  />
+                )}
+              </Card>
+            ))
+          )}
         </div>
-        {roomError && <p style={{ color: '#f87171' }}>{roomError}</p>}
-        {roomView && (
-          <div>
-            <p style={{ color: '#94a3b8' }}>
-              自动识别：{roomView.autoEnqueueEnabled ? '已开启' : '已关闭'}
-            </p>
-            {roomView.items.length === 0 ? (
-              <p>暂无场次</p>
-            ) : (
-              roomView.items.map((item) => (
-                <div
-                  key={item.recordingId}
-                  style={{ border: '1px solid #334155', borderRadius: '0.25rem', padding: '0.5rem', marginBottom: '0.5rem' }}
-                >
-                  <div>{item.title ?? item.recordingId}</div>
-                  {item.tasks.length === 0 ? (
-                    <p style={{ margin: 0, color: '#94a3b8' }}>暂无任务</p>
-                  ) : (
-                    <ul style={{ margin: 0, paddingLeft: '1rem' }}>
-                      {item.tasks.map((task) => (
-                        <li key={task.taskId}>
-                          {task.modelName ?? task.modelId} -{' '}
-                          {STATUS_LABELS[task.status ?? ''] ?? task.status} -{' '}
-                          {formatPosition(task.position)}
-                          {task.status === 'FAILED' && (
-                            <button
-                              onClick={() => handleRetry(task.taskId ?? '')}
-                              style={{ marginLeft: '0.5rem', padding: '0.25rem 0.5rem' }}
-                            >
-                              重试
-                            </button>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        )}
-      </section>
+      )}
     </div>
   )
 }

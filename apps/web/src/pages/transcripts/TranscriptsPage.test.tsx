@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { screen, fireEvent } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { TranscriptsPage } from './TranscriptsPage'
 
 vi.mock('./TaskListTab', () => ({
@@ -18,7 +19,8 @@ describe('TranscriptsPage', () => {
     expect(screen.getByRole('tab', { name: '任务列表' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '设置' })).toBeInTheDocument()
     expect(screen.getByTestId('task-list-tab')).toBeInTheDocument()
-    expect(screen.queryByTestId('settings-tab')).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '任务列表' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '设置' })).toHaveAttribute('aria-selected', 'false')
   })
 
   it('should switch to the settings tab when clicked', () => {
@@ -27,8 +29,8 @@ describe('TranscriptsPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
 
     expect(screen.getByTestId('settings-tab')).toBeInTheDocument()
-    expect(screen.queryByTestId('task-list-tab')).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '设置' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByTestId('task-list-tab')).not.toBeVisible()
   })
 
   it('should switch back to the task list tab', () => {
@@ -37,7 +39,7 @@ describe('TranscriptsPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
     fireEvent.click(screen.getByRole('tab', { name: '任务列表' }))
 
-    expect(screen.getByTestId('task-list-tab')).toBeInTheDocument()
-    expect(screen.queryByTestId('settings-tab')).not.toBeInTheDocument()
+    expect(screen.getByTestId('task-list-tab')).toBeVisible()
+    expect(screen.queryByTestId('settings-tab')).not.toBeVisible()
   })
 })

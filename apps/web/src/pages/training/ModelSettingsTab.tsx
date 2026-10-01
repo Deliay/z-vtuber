@@ -1,4 +1,18 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  Alert,
+  App as AntdApp,
+  Button,
+  Checkbox,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Table,
+  Typography,
+} from 'antd'
+import type { TableColumnsType } from 'antd'
 import {
   apiErrorMessage,
   createTrainingModel,
@@ -16,45 +30,12 @@ import type { components } from '../../api/schema-training'
 type TrainingProvider = components['schemas']['TrainingProvider']
 type TrainingModel = components['schemas']['TrainingModel']
 
-const inputStyle: CSSProperties = {
-  padding: '0.5rem',
-  backgroundColor: '#334155',
-  color: '#e2e8f0',
-  border: '1px solid #475569',
-  borderRadius: '0.25rem',
-}
-
-const cellStyle: CSSProperties = { textAlign: 'left', padding: '0.5rem' }
-
-const overlayStyle: CSSProperties = {
-  position: 'fixed',
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  display: 'flex',
-  justifyContent: 'center',
-  alignItems: 'center',
-  zIndex: 1000,
-}
-
-const panelStyle: CSSProperties = {
-  backgroundColor: '#1e293b',
-  color: '#e2e8f0',
-  padding: '1.5rem',
-  borderRadius: '0.5rem',
-  minWidth: '400px',
-  maxWidth: '90vw',
-  maxHeight: '90vh',
-  overflow: 'auto',
-}
-
 /**
  * 模型设置：Providers 双表管理（新增/编辑/删除/获取模型导入）+ Models 管理
  * （slug 展示、手动添加、启停、删除）。API key 只进不出、永不回显。
  */
 export function ModelSettingsTab() {
+  const { message, modal } = AntdApp.useApp()
   const [providers, setProviders] = useState<TrainingProvider[]>([])
   const [models, setModels] = useState<TrainingModel[]>([])
   const [error, setError] = useState('')
@@ -106,18 +87,24 @@ export function ModelSettingsTab() {
     setDialogOpen(true)
   }
 
-  const handleDeleteProvider = async (provider: TrainingProvider) => {
+  const handleDeleteProvider = (provider: TrainingProvider) => {
     const childCount = models.filter((model) => model.providerId === provider.id).length
-    const confirmed = window.confirm(
-      `确认删除 Provider「${provider.name}」？其下 ${childCount} 个模型将一并删除，不可恢复。`,
-    )
-    if (!confirmed) return
-    try {
-      await deleteTrainingProvider(provider.id)
-      await refresh()
-    } catch (err) {
-      setError(apiErrorMessage(err, '删除 Provider 失败'))
-    }
+    modal.confirm({
+      title: `确认删除 Provider「${provider.name}」？`,
+      content: `其下 ${childCount} 个模型将一并删除，不可恢复。`,
+      okText: '确认删除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await deleteTrainingProvider(provider.id)
+          message.success('Provider 已删除')
+          await refresh()
+        } catch (err) {
+          setError(apiErrorMessage(err, '删除 Provider 失败'))
+        }
+      },
+    })
   }
 
   const handleDiscover = async (provider: TrainingProvider) => {
@@ -130,7 +117,7 @@ export function ModelSettingsTab() {
     setDiscoverBusy(true)
     try {
       const list = await discoverTrainingModels(provider.id)
-      setDiscovered(list.map((item) => item.model))
+      setDiscovered(list.map((item) => item.model as string))
     } catch (err) {
       // 保留服务端错误码（不可达 / 响应非法 / Provider 不存在 等需区分）。
       setDiscoverError(apiErrorMessage(err, '模型服务不可用'))
@@ -165,14 +152,22 @@ export function ModelSettingsTab() {
     }
   }
 
-  const handleDeleteModel = async (model: TrainingModel) => {
-    if (!window.confirm(`确认删除模型「${model.slug}」？`)) return
-    try {
-      await deleteTrainingModel(model.id)
-      await refresh()
-    } catch (err) {
-      setError(apiErrorMessage(err, '删除模型失败'))
-    }
+  const handleDeleteModel = (model: TrainingModel) => {
+    modal.confirm({
+      title: `确认删除模型「${model.slug}」？`,
+      okText: '确认删除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await deleteTrainingModel(model.id)
+          message.success('模型已删除')
+          await refresh()
+        } catch (err) {
+          setError(apiErrorMessage(err, '删除模型失败'))
+        }
+      },
+    })
   }
 
   const handleCreateModel = async () => {
@@ -188,6 +183,7 @@ export function ModelSettingsTab() {
       setManualModel('')
       setManualProviderId('')
       setManualError('')
+      message.success('模型已添加')
       await refresh()
     } catch (err) {
       setManualError(apiErrorMessage(err, '添加模型失败'))
@@ -196,109 +192,112 @@ export function ModelSettingsTab() {
     }
   }
 
+  const providerColumns: TableColumnsType<TrainingProvider> = [
+    { title: '名称', dataIndex: 'name' },
+    { title: '模型类型', dataIndex: 'type' },
+    { title: 'Endpoint', dataIndex: 'endpoint', ellipsis: true },
+    {
+      title: 'API key 状态',
+      key: 'apiKeySet',
+      width: 130,
+      render: (_value, provider) => (provider.apiKeySet ? '已配置' : '未配置'),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 280,
+      render: (_value, provider) => (
+        <Space size={8}>
+          <Button size="small" aria-label={`获取模型 ${provider.name}`} onClick={() => void handleDiscover(provider)}>
+            获取模型
+          </Button>
+          <Button size="small" aria-label={`编辑 ${provider.name}`} onClick={() => openEdit(provider)}>
+            编辑
+          </Button>
+          <Button size="small" danger aria-label={`删除 ${provider.name}`} onClick={() => handleDeleteProvider(provider)}>
+            删除
+          </Button>
+        </Space>
+      ),
+    },
+  ]
+
+  const modelColumns: TableColumnsType<TrainingModel> = [
+    { title: 'slug', dataIndex: 'slug' },
+    { title: '所属 Provider', dataIndex: 'providerName' },
+    {
+      title: '启用',
+      key: 'enabled',
+      width: 100,
+      render: (_value, model) => (model.enabled ? '已启用' : '已停用'),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 180,
+      render: (_value, model) => (
+        <Space size={8}>
+          <Button
+            size="small"
+            aria-label={`${model.enabled ? '停用' : '启用'} ${model.slug}`}
+            onClick={() => void handleToggleModel(model)}
+          >
+            {model.enabled ? '停用' : '启用'}
+          </Button>
+          <Button
+            size="small"
+            danger
+            aria-label={`删除 ${model.slug}`}
+            onClick={() => void handleDeleteModel(model)}
+          >
+            删除
+          </Button>
+        </Space>
+      ),
+    },
+  ]
+
   return (
     <div className="model-settings-tab">
-      {error && <div role="alert">{error}</div>}
+      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
 
-      <section style={{ marginBottom: '2rem' }}>
-        <h3>Providers</h3>
-        <button onClick={openCreate}>新增 Provider</button>
+      <Typography.Title level={4}>Providers</Typography.Title>
+      <Button onClick={openCreate} style={{ marginBottom: 12 }}>
+        新增 Provider
+      </Button>
 
-        {providers.length === 0 && <p>请先添加 Provider 并获取/添加模型</p>}
+      {providers.length === 0 && (
+        <Typography.Text type="secondary">请先添加 Provider 并获取/添加模型</Typography.Text>
+      )}
 
-        {providers.length > 0 && (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}>
-            <thead>
-              <tr>
-                <th style={cellStyle}>名称</th>
-                <th style={cellStyle}>模型类型</th>
-                <th style={cellStyle}>Endpoint</th>
-                <th style={cellStyle}>API key 状态</th>
-                <th style={cellStyle}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {providers.map((provider) => (
-                <tr key={provider.id}>
-                  <td style={cellStyle}>{provider.name}</td>
-                  <td style={cellStyle}>{provider.type}</td>
-                  <td style={cellStyle}>{provider.endpoint}</td>
-                  <td style={cellStyle}>{provider.apiKeySet ? '已配置' : '未配置'}</td>
-                  <td style={cellStyle}>
-                    <button
-                      aria-label={`获取模型 ${provider.name}`}
-                      onClick={() => void handleDiscover(provider)}
-                    >
-                      获取模型
-                    </button>
-                    <button
-                      aria-label={`编辑 ${provider.name}`}
-                      onClick={() => openEdit(provider)}
-                      style={{ marginLeft: '0.5rem' }}
-                    >
-                      编辑
-                    </button>
-                    <button
-                      aria-label={`删除 ${provider.name}`}
-                      onClick={() => void handleDeleteProvider(provider)}
-                      style={{ marginLeft: '0.5rem' }}
-                    >
-                      删除
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      {providers.length > 0 && (
+        <Table<TrainingProvider>
+          rowKey={(provider) => provider.id}
+          columns={providerColumns}
+          dataSource={providers}
+          pagination={false}
+          style={{ marginBottom: 24 }}
+        />
+      )}
 
-      <section>
-        <h3>Models</h3>
-        <button onClick={() => setManualOpen(true)}>手动添加模型</button>
+      <Typography.Title level={4}>Models</Typography.Title>
+      <Button onClick={() => setManualOpen(true)} style={{ marginBottom: 12 }}>
+        手动添加模型
+      </Button>
 
-        {/* Provider 已存在但尚无模型时同样给出引导（最常见的中间态）。 */}
-        {models.length === 0 && (
-          <p>暂无模型，请通过「获取模型」导入或手动添加</p>
-        )}
+      {/* Provider 已存在但尚无模型时同样给出引导（最常见的中间态）。 */}
+      {models.length === 0 && (
+        <Typography.Text type="secondary">暂无模型，请通过「获取模型」导入或手动添加</Typography.Text>
+      )}
 
-        {models.length > 0 && (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}>
-            <thead>
-              <tr>
-                <th style={cellStyle}>slug</th>
-                <th style={cellStyle}>所属 Provider</th>
-                <th style={cellStyle}>启用</th>
-                <th style={cellStyle}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {models.map((model) => (
-                <tr key={model.id}>
-                  <td style={cellStyle}>{model.slug}</td>
-                  <td style={cellStyle}>{model.providerName}</td>
-                  <td style={cellStyle}>{model.enabled ? '已启用' : '已停用'}</td>
-                  <td style={cellStyle}>
-                    <button
-                      aria-label={`${model.enabled ? '停用' : '启用'} ${model.slug}`}
-                      onClick={() => void handleToggleModel(model)}
-                    >
-                      {model.enabled ? '停用' : '启用'}
-                    </button>
-                    <button
-                      aria-label={`删除 ${model.slug}`}
-                      onClick={() => void handleDeleteModel(model)}
-                      style={{ marginLeft: '0.5rem' }}
-                    >
-                      删除
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      {models.length > 0 && (
+        <Table<TrainingModel>
+          rowKey={(model) => model.id}
+          columns={modelColumns}
+          dataSource={models}
+          pagination={false}
+        />
+      )}
 
       {dialogOpen && (
         <ProviderDialog
@@ -308,130 +307,97 @@ export function ModelSettingsTab() {
         />
       )}
 
-      {discoverTarget && (
-        <div
-          style={overlayStyle}
-          // 导入进行中忽略遮罩关闭，避免卸载弹窗丢失「已导入/跳过」结果反馈
-          onClick={() => {
-            if (!discoverImporting) setDiscoverTarget(null)
-          }}
-        >
-          <div
-            role="dialog"
-            aria-label={`获取模型 - ${discoverTarget.name}`}
-            aria-modal="true"
-            style={panelStyle}
-            onClick={(event) => event.stopPropagation()}
+      <Modal
+        title={`获取模型 - ${discoverTarget?.name ?? ''}`}
+        open={discoverTarget !== null}
+        onCancel={() => {
+          if (!discoverImporting) setDiscoverTarget(null)
+        }}
+        maskClosable={!discoverImporting}
+        destroyOnHidden
+        footer={[
+          <Button
+            key="import"
+            type="primary"
+            disabled={discoverSelected.length === 0 || discoverBusy}
+            loading={discoverImporting}
+            onClick={() => void handleImport()}
           >
-            <h3>获取模型 - {discoverTarget.name}</h3>
+            导入选中
+          </Button>,
+          <Button key="close" disabled={discoverImporting} onClick={() => setDiscoverTarget(null)}>
+            关闭
+          </Button>,
+        ]}
+      >
+        {discoverBusy && discovered.length === 0 && <Typography.Text type="secondary">加载中...</Typography.Text>}
+        {discoverError && <Alert type="error" showIcon message={discoverError} />}
 
-            {discoverBusy && discovered.length === 0 && <div>加载中...</div>}
-            {discoverError && <div role="alert">{discoverError}</div>}
-
-            {discovered.map((model) => (
-              <label key={model} style={{ display: 'block' }}>
-                <input
-                  type="checkbox"
-                  aria-label={`导入 ${model}`}
-                  checked={discoverSelected.includes(model)}
-                  onChange={() =>
-                    setDiscoverSelected((prev) =>
-                      prev.includes(model)
-                        ? prev.filter((value) => value !== model)
-                        : [...prev, model],
-                    )
-                  }
-                />
-                {model}
-              </label>
-            ))}
-
-            {!discoverBusy && !discoverError && discovered.length === 0 && (
-              <div style={{ color: '#94a3b8' }}>未获取到模型</div>
-            )}
-
-            {discoverResult && (
-              <div role="status">
-                已导入 {discoverResult.imported} 个，跳过 {discoverResult.skipped} 个
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-              <button
-                onClick={() => void handleImport()}
-                disabled={discoverSelected.length === 0 || discoverBusy}
-              >
-                导入选中
-              </button>
-              <button
-                onClick={() => setDiscoverTarget(null)}
-                disabled={discoverImporting}
-              >
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {manualOpen && (
-        <div
-          style={overlayStyle}
-          onClick={() => {
-            if (!manualSubmitting) setManualOpen(false)
-          }}
-        >
-          <div
-            role="dialog"
-            aria-label="手动添加模型"
-            aria-modal="true"
-            style={panelStyle}
-            onClick={(event) => event.stopPropagation()}
+        {discovered.length > 0 && (
+          <Checkbox.Group
+            value={discoverSelected}
+            onChange={(values) => setDiscoverSelected(values as string[])}
           >
-            <h3>手动添加模型</h3>
+            <Space direction="vertical">
+              {discovered.map((model) => (
+                <Checkbox key={model} value={model} aria-label={`导入 ${model}`}>
+                  {model}
+                </Checkbox>
+              ))}
+            </Space>
+          </Checkbox.Group>
+        )}
 
-            <label htmlFor="manual-provider" style={{ display: 'block', marginBottom: '0.5rem' }}>
-              所属 Provider
-              <select
-                id="manual-provider"
-                aria-label="所属 Provider"
-                style={{ ...inputStyle, display: 'block', width: '100%' }}
-                value={manualProviderId}
-                onChange={(event) => setManualProviderId(event.target.value)}
-              >
-                <option value="">请选择 Provider</option>
-                {providers.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+        {!discoverBusy && !discoverError && discovered.length === 0 && (
+          <Typography.Text type="secondary">未获取到模型</Typography.Text>
+        )}
 
-            <label htmlFor="manual-model" style={{ display: 'block', marginBottom: '0.5rem' }}>
-              模型名
-              <input
-                id="manual-model"
-                aria-label="模型名"
-                style={{ ...inputStyle, display: 'block', width: '100%' }}
-                value={manualModel}
-                onChange={(event) => setManualModel(event.target.value)}
-              />
-            </label>
+        {discoverResult && (
+          <Alert
+            type="success"
+            showIcon
+            message={`已导入 ${discoverResult.imported} 个，跳过 ${discoverResult.skipped} 个`}
+          />
+        )}
+      </Modal>
 
-            {manualError && <div role="alert">{manualError}</div>}
+      <Modal
+        title="手动添加模型"
+        open={manualOpen}
+        onCancel={() => {
+          if (!manualSubmitting) setManualOpen(false)
+        }}
+        maskClosable={!manualSubmitting}
+        destroyOnHidden
+        footer={[
+          <Button key="ok" type="primary" loading={manualSubmitting} onClick={() => void handleCreateModel()}>
+            {manualSubmitting ? '添加中...' : '确认添加'}
+          </Button>,
+          <Button key="cancel" disabled={manualSubmitting} onClick={() => setManualOpen(false)}>
+            取消
+          </Button>,
+        ]}
+      >
+        <Form layout="vertical">
+          <Form.Item label="所属 Provider">
+            <Select
+              aria-label="所属 Provider"
+              value={manualProviderId || undefined}
+              placeholder="请选择 Provider"
+              onChange={setManualProviderId}
+              options={providers.map((provider) => ({
+                value: provider.id,
+                label: provider.name as string,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item label="模型名">
+            <Input aria-label="模型名" value={manualModel} onChange={(e) => setManualModel(e.target.value)} />
+          </Form.Item>
+        </Form>
 
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-              <button onClick={() => void handleCreateModel()} disabled={manualSubmitting}>
-                {manualSubmitting ? '添加中...' : '确认添加'}
-              </button>
-              <button onClick={() => setManualOpen(false)} disabled={manualSubmitting}>
-                取消
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        {manualError && <Alert type="error" showIcon message={manualError} />}
+      </Modal>
     </div>
   )
 }

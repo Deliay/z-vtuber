@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, within, act } from '@testing-library/react'
+import { screen, fireEvent, within, act } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { SegmentAudioPlayer } from './SegmentAudioPlayer'
 import type { components } from '../../api/schema-recording-transcript'
 

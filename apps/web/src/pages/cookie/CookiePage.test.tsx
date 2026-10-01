@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { CookiePage } from './CookiePage'
 import * as client from '../../api/client'
 
@@ -234,8 +235,9 @@ describe('CookiePage', () => {
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('删除'))
+      fireEvent.click(screen.getByRole('button', { name: '删除' }))
     })
+    fireEvent.click(await screen.findByRole('button', { name: '确认删除' }))
 
     await waitFor(() => {
       expect(mockDeleteBilibili).toHaveBeenCalledWith('acc-1')
@@ -270,8 +272,9 @@ describe('CookiePage', () => {
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('删除'))
+      fireEvent.click(screen.getByRole('button', { name: '删除' }))
     })
+    fireEvent.click(await screen.findByRole('button', { name: '确认删除' }))
 
     await waitFor(() => {
       expect(mockDeleteWeibo).toHaveBeenCalledWith('w-1')

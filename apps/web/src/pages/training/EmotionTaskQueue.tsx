@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Alert, Button, Empty, Space, Table, Tag, Typography } from 'antd'
+import type { TableColumnsType } from 'antd'
 import { apiErrorCodeText, apiErrorMessage, listEmotionTasks, retryEmotionTask } from '../../api/client'
 import { formatDateTime } from '../../utils/format'
 import type { components } from '../../api/schema-training'
@@ -19,9 +21,14 @@ const STATUS_LABELS: Record<string, string> = {
   failed: '失败',
 }
 
-const EMPTY_COUNTS = { pending: 0, running: 0, done: 0, failed: 0 }
+const STATUS_TAGS: Record<string, string> = {
+  pending: 'gold',
+  running: 'blue',
+  done: 'green',
+  failed: 'red',
+}
 
-const cellStyle = { textAlign: 'left' as const, padding: '0.5rem' }
+const EMPTY_COUNTS = { pending: 0, running: 0, done: 0, failed: 0 }
 
 /** 轮询间隔（毫秒）。 */
 export const EMOTION_TASK_POLL_INTERVAL_MS = 10000
@@ -77,59 +84,65 @@ export function EmotionTaskQueue({ datasetId, reloadToken = 0 }: EmotionTaskQueu
     }
   }
 
+  const columns: TableColumnsType<TrainingEmotionTask> = [
+    { title: '条目', key: 'audioKey', render: (_v, task) => task.audioKey || task.itemId },
+    { title: '模型', dataIndex: 'modelSlug' },
+    {
+      title: '状态',
+      key: 'status',
+      width: 100,
+      render: (_v, task) => (
+        <Tag color={STATUS_TAGS[task.status] ?? 'default'}>
+          {STATUS_LABELS[task.status] ?? task.status}
+        </Tag>
+      ),
+    },
+    { title: '次数', dataIndex: 'attempts', width: 80 },
+    {
+      title: '错误',
+      key: 'error',
+      render: (_v, task) => (task.error ? apiErrorCodeText(task.error) : '-'),
+    },
+    { title: '时间', key: 'createdAt', render: (_v, task) => formatDateTime(task.createdAt) },
+    {
+      title: '操作',
+      key: 'action',
+      width: 100,
+      render: (_v, task) =>
+        task.status === 'failed' ? (
+          <Button
+            size="small"
+            aria-label={`重试 ${task.id}`}
+            loading={retryingIds.includes(task.id)}
+            disabled={retryingIds.includes(task.id)}
+            onClick={() => void handleRetry(task)}
+          >
+            重试
+          </Button>
+        ) : null,
+    },
+  ]
+
   return (
-    <div className="emotion-task-queue">
-      <h3>情绪任务队列</h3>
+    <div className="emotion-task-queue" style={{ marginTop: 24 }}>
+      <Typography.Title level={5}>情绪任务队列</Typography.Title>
 
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem' }}>
-        <span>待处理 {counts.pending}</span>
-        <span>执行中 {counts.running}</span>
-        <span>已完成 {counts.done}</span>
-        <span>失败 {counts.failed}</span>
-      </div>
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Tag>待处理 {counts.pending}</Tag>
+        <Tag color="blue">执行中 {counts.running}</Tag>
+        <Tag color="green">已完成 {counts.done}</Tag>
+        <Tag color="red">失败 {counts.failed}</Tag>
+      </Space>
 
-      {error && <div role="alert">{error}</div>}
+      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
 
-      {tasks.length === 0 ? (
-        <div>暂无情绪识别任务</div>
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={cellStyle}>条目</th>
-              <th style={cellStyle}>模型</th>
-              <th style={cellStyle}>状态</th>
-              <th style={cellStyle}>次数</th>
-              <th style={cellStyle}>错误</th>
-              <th style={cellStyle}>时间</th>
-              <th style={cellStyle}>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tasks.map((task) => (
-              <tr key={task.id}>
-                <td style={cellStyle}>{task.audioKey || task.itemId}</td>
-                <td style={cellStyle}>{task.modelSlug}</td>
-                <td style={cellStyle}>{STATUS_LABELS[task.status] ?? task.status}</td>
-                <td style={cellStyle}>{task.attempts}</td>
-                <td style={cellStyle}>{task.error ? apiErrorCodeText(task.error) : '-'}</td>
-                <td style={cellStyle}>{formatDateTime(task.createdAt)}</td>
-                <td style={cellStyle}>
-                  {task.status === 'failed' && (
-                    <button
-                      aria-label={`重试 ${task.id}`}
-                      onClick={() => void handleRetry(task)}
-                      disabled={retryingIds.includes(task.id)}
-                    >
-                      重试
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <Table<TrainingEmotionTask>
+        rowKey={(task) => task.id}
+        columns={columns}
+        dataSource={tasks}
+        pagination={false}
+        locale={{ emptyText: <Empty description="暂无情绪识别任务" /> }}
+      />
     </div>
   )
 }

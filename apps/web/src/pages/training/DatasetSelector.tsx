@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Alert, App as AntdApp, Button, Input, Select, Space, Typography } from 'antd'
 import {
   apiErrorMessage,
   createTrainingDataset,
@@ -30,6 +31,7 @@ function errorMessage(error: unknown): string {
  * 首次加载自动选中第一个数据集；删除后选中项回退到剩余第一个（无剩余则清空）。
  */
 export function DatasetSelector({ selectedId, onSelect }: DatasetSelectorProps) {
+  const { modal } = AntdApp.useApp()
   const [datasets, setDatasets] = useState<TrainingDataset[]>([])
   const [mode, setMode] = useState<EditMode>('idle')
   const [name, setName] = useState('')
@@ -79,10 +81,7 @@ export function DatasetSelector({ selectedId, onSelect }: DatasetSelectorProps) 
 
   const handleCreate = async () => {
     try {
-      const created = await createTrainingDataset({
-        name: name.trim(),
-        type: DATASET_TYPE,
-      })
+      const created = await createTrainingDataset({ name: name.trim(), type: DATASET_TYPE })
       await reload()
       cancelEdit()
       onSelect(created.id)
@@ -101,68 +100,79 @@ export function DatasetSelector({ selectedId, onSelect }: DatasetSelectorProps) 
     }
   }
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     const target = datasets.find((dataset) => dataset.id === selectedId)
     if (!target) return
 
-    const confirmed = window.confirm(
-      `确认删除数据集「${target.name}」？该数据集及其全部音频数据将一并清除，不可恢复。`,
-    )
-    if (!confirmed) return
-
-    try {
-      await deleteTrainingDataset(target.id)
-      const list = await reload()
-      setError('')
-      onSelect(list.length > 0 ? list[0].id : '')
-    } catch (err) {
-      setError(errorMessage(err))
-    }
+    modal.confirm({
+      title: `确认删除数据集「${target.name}」？`,
+      content: '该数据集及其全部音频数据将一并清除，不可恢复。',
+      okText: '确认删除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await deleteTrainingDataset(target.id)
+          const list = await reload()
+          setError('')
+          onSelect(list.length > 0 ? list[0].id : '')
+        } catch (err) {
+          setError(errorMessage(err))
+        }
+      },
+    })
   }
 
   return (
     <div className="dataset-selector">
-      <label htmlFor="dataset-select">数据集</label>
-      <select
-        id="dataset-select"
-        value={selectedId}
-        onChange={(event) => onSelect(event.target.value)}
-      >
-        <option value="">（未选择）</option>
-        {datasets.map((dataset) => (
-          <option key={dataset.id} value={dataset.id}>
-            {dataset.name}
-          </option>
-        ))}
-      </select>
-
-      <button onClick={() => startEdit('create')}>新建数据集</button>
-      <button onClick={() => startEdit('rename')} disabled={!selectedId}>
-        重命名数据集
-      </button>
-      <button onClick={handleDelete} disabled={!selectedId}>
-        删除数据集
-      </button>
+      <Space wrap align="center">
+        <Typography.Text>数据集</Typography.Text>
+        <Select
+          id="dataset-select"
+          aria-label="数据集"
+          value={selectedId || undefined}
+          placeholder="（未选择）"
+          style={{ width: 220 }}
+          onChange={(value) => onSelect(value)}
+          options={[
+            { value: '', label: '（未选择）' },
+            ...datasets.map((dataset) => ({ value: dataset.id, label: dataset.name })),
+          ]}
+        />
+        <Button onClick={() => startEdit('create')}>新建数据集</Button>
+        <Button onClick={() => startEdit('rename')} disabled={!selectedId}>
+          重命名数据集
+        </Button>
+        <Button danger onClick={handleDelete} disabled={!selectedId}>
+          删除数据集
+        </Button>
+      </Space>
 
       {mode !== 'idle' && (
-        <span className="dataset-name-editor">
-          <label htmlFor="dataset-name">数据集名字</label>
-          <input
+        <Space wrap align="center" style={{ marginTop: 12 }}>
+          <Typography.Text>数据集名字</Typography.Text>
+          <Input
             id="dataset-name"
+            aria-label="数据集名字"
             value={name}
+            style={{ width: 200 }}
             onChange={(event) => setName(event.target.value)}
           />
-          <button onClick={mode === 'create' ? handleCreate : handleRename}>
+          <Button type="primary" onClick={mode === 'create' ? handleCreate : handleRename}>
             确认
-          </button>
-          <button onClick={cancelEdit}>取消</button>
-        </span>
+          </Button>
+          <Button onClick={cancelEdit}>取消</Button>
+        </Space>
       )}
 
       {error && (
-        <div role="alert" className="dataset-error">
-          {error}
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          style={{ marginTop: 12 }}
+          role="alert"
+        />
       )}
     </div>
   )

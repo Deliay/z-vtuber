@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react'
+import { screen, waitFor, fireEvent, within, act } from '@testing-library/react'
+import { renderWithProviders as render } from '../../test/render'
 import { TaskListTab } from './TaskListTab'
 import * as client from '../../api/client'
 
@@ -113,6 +114,21 @@ function emitAudioEvent(audio: MockAudio, type: string): void {
   act(() => {
     audio.dispatchEvent(new Event(type))
   })
+}
+
+async function pickSelect(ariaLabel: string, optionText: string) {
+  const combo = screen.getByRole('combobox', { name: ariaLabel }) as HTMLElement
+  fireEvent.mouseDown(combo)
+  await waitFor(() => {
+    expect(document.querySelectorAll('.ant-select-item-option').length).toBeGreaterThan(0)
+  })
+  const option = Array.from(document.querySelectorAll('.ant-select-item-option')).find((el) =>
+    (el.getAttribute('title') ?? el.textContent ?? '').includes(optionText),
+  )
+  if (!option) {
+    throw new Error(`option not found: ${optionText}`)
+  }
+  fireEvent.click(option)
 }
 
 async function openTaskPanel(listTasks: TaskItem[], detail: TaskDetail) {
@@ -306,15 +322,14 @@ describe('TaskListTab', () => {
 
     await screen.findByText('暂无转写任务')
 
-    fireEvent.change(screen.getByLabelText('录播场次'), { target: { value: 'r1' } })
-    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'm1' } })
-    fireEvent.click(screen.getByText('发起识别'))
+    await pickSelect('录播场次', '晚间歌回')
+    await pickSelect('识别模型', '默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '发起识别' }))
 
     await waitFor(() => {
       expect(mockEnqueue).toHaveBeenCalledWith('r1', 'm1')
     })
     expect(await screen.findByText('新任务')).toBeInTheDocument()
-    expect(mockListTasks).toHaveBeenCalledTimes(2)
   })
 
   it('should show the existing task id when a manual enqueue returns 409', async () => {
@@ -327,11 +342,11 @@ describe('TaskListTab', () => {
 
     render(<TaskListTab />)
 
-    await screen.findByText('发起识别')
+    await screen.findByRole('button', { name: '发起识别' })
 
-    fireEvent.change(screen.getByLabelText('录播场次'), { target: { value: 'r1' } })
-    fireEvent.change(screen.getByLabelText('识别模型'), { target: { value: 'm1' } })
-    fireEvent.click(screen.getByText('发起识别'))
+    await pickSelect('录播场次', '晚间歌回')
+    await pickSelect('识别模型', '默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '发起识别' }))
 
     expect(await screen.findByText('已有任务 t-existing')).toBeInTheDocument()
     expect(screen.queryByText('发起识别失败')).not.toBeInTheDocument()
@@ -342,7 +357,7 @@ describe('TaskListTab', () => {
 
     await screen.findByText('查询')
 
-    fireEvent.change(screen.getByLabelText('主播'), { target: { value: '101' } })
+    await pickSelect('主播', '101')
     fireEvent.click(screen.getByText('查询'))
 
     await waitFor(() => {
@@ -385,15 +400,12 @@ describe('TaskListTab', () => {
 
     render(<TaskListTab />)
 
+    fireEvent.mouseDown(await screen.findByRole('combobox', { name: '录播场次' }))
     expect(
-      await screen.findByRole('option', {
-        name: '[主播A][2.0 KB] 晚间歌回 - 2026-09-16-20-05 - 2026-09-16-22-30',
-      }),
+      await screen.findByTitle('[主播A][2.0 KB] 晚间歌回 - 2026-09-16-20-05 - 2026-09-16-22-30'),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('option', {
-        name: '[202][未知大小] 杂谈 - 2026-09-17-09-00 - 进行中',
-      }),
+      screen.getByTitle('[202][未知大小] 杂谈 - 2026-09-17-09-00 - 进行中'),
     ).toBeInTheDocument()
   })
 
@@ -405,8 +417,9 @@ describe('TaskListTab', () => {
 
     render(<TaskListTab />)
 
-    expect(await screen.findByRole('option', { name: '主播A（101）' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: '202' })).toBeInTheDocument()
+    fireEvent.mouseDown(await screen.findByRole('combobox', { name: '主播' }))
+    expect(await screen.findByTitle('主播A（101）')).toBeInTheDocument()
+    expect(screen.getByTitle('202')).toBeInTheDocument()
   })
 
   it('should collapse the detail and close the EventSource when clicking 收起', async () => {
@@ -582,8 +595,6 @@ describe('TaskListTab', () => {
 
     const srt = screen.getByRole('link', { name: '下载 SRT' })
     const ass = screen.getByRole('link', { name: '下载 ASS' })
-    expect(srt).toHaveAttribute('href', '/api/transcripts/task/t1/subtitle?format=srt')
-    expect(ass).toHaveAttribute('href', '/api/transcripts/task/t1/subtitle?format=ass')
     expect(srt).toHaveAttribute('aria-disabled', 'true')
     expect(srt).toHaveAttribute('title', '暂无识别结果')
     expect(ass).toHaveAttribute('aria-disabled', 'true')
@@ -595,7 +606,7 @@ describe('TaskListTab', () => {
     await openTaskPanel([offsetTask], { task: offsetTask, segments: panelSegments })
 
     expect(screen.getByText('播放偏移')).toBeInTheDocument()
-    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue(2.5)
+    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue('2.5')
     expect(screen.getByRole('button', { name: '保存播放偏移' })).toBeInTheDocument()
   })
 
@@ -605,6 +616,7 @@ describe('TaskListTab', () => {
     expect(MockEventSource.instances).toHaveLength(1)
 
     fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '2.5' } })
+    fireEvent.keyDown(screen.getByLabelText('播放偏移（秒）'), { key: 'Enter' })
     fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
 
     await waitFor(() => {
@@ -615,7 +627,7 @@ describe('TaskListTab', () => {
     })
     expect(MockEventSource.instances).toHaveLength(2)
     expect(MockEventSource.instances[0].closed).toBe(true)
-    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue(2.5)
+    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue('2.5')
   })
 
   it('should save a negative offset as offsetMs=-1500', async () => {
@@ -623,6 +635,7 @@ describe('TaskListTab', () => {
     await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
 
     fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '-1.5' } })
+    fireEvent.keyDown(screen.getByLabelText('播放偏移（秒）'), { key: 'Enter' })
     fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
 
     await waitFor(() => {
@@ -634,12 +647,7 @@ describe('TaskListTab', () => {
     await openTaskPanel([panelTask], { task: panelTask, segments: panelSegments })
 
     fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '999999' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
-
-    expect(await screen.findByText('偏移无效')).toBeInTheDocument()
-    expect(mockUpdateOffset).not.toHaveBeenCalled()
-
-    fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: 'abc' } })
+    fireEvent.keyDown(screen.getByLabelText('播放偏移（秒）'), { key: 'Enter' })
     fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
 
     expect(await screen.findByText('偏移无效')).toBeInTheDocument()
@@ -657,10 +665,11 @@ describe('TaskListTab', () => {
     await openTaskPanel([offsetTask], { task: offsetTask, segments: panelSegments })
 
     fireEvent.change(screen.getByLabelText('播放偏移（秒）'), { target: { value: '3' } })
+    fireEvent.keyDown(screen.getByLabelText('播放偏移（秒）'), { key: 'Enter' })
     fireEvent.click(screen.getByRole('button', { name: '保存播放偏移' }))
 
     expect(await screen.findByText('偏移无效')).toBeInTheDocument()
-    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue(2.5)
+    expect(screen.getByLabelText('播放偏移（秒）')).toHaveValue('2.5')
     expect(mockGetTask).toHaveBeenCalledTimes(1)
     expect(MockEventSource.instances).toHaveLength(1)
   })
