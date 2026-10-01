@@ -145,7 +145,9 @@ public sealed record TrainingVectorsRebuildResultDto(
 
 /// <summary>候选短句反向索引重建结果：重建的候选短句总数。</summary>
 public sealed record TrainingSegmentsRebuildResultDto(
-    [property: JsonPropertyName("rebuilt")] long Rebuilt);/// <summary>结构化情绪数据（十字段固定结构）。</summary>
+    [property: JsonPropertyName("rebuilt")] long Rebuilt);
+
+/// <summary>结构化情绪数据（十字段固定结构）。</summary>
 public sealed record EmotionResult(
     [property: JsonPropertyName("emotionControlWeight")] double EmotionControlWeight,
     [property: JsonPropertyName("emotionDescription")] string EmotionDescription,
