@@ -16,6 +16,7 @@ vi.mock('../../api/client', async (importOriginal) => {
     updateTrainingDatasetItem: vi.fn(),
     batchDeleteTrainingDatasetItems: vi.fn(),
     listTrainingModels: vi.fn(),
+    resolveFeaturePointModel: vi.fn(),
     recognizeTrainingDatasetItem: vi.fn(),
     createEmotionTasks: vi.fn(),
   }
@@ -25,6 +26,7 @@ const mockListItems = vi.mocked(client.listTrainingDatasetItems)
 const mockUpdateItem = vi.mocked(client.updateTrainingDatasetItem)
 const mockBatchDelete = vi.mocked(client.batchDeleteTrainingDatasetItems)
 const mockListModels = vi.mocked(client.listTrainingModels)
+const mockResolveFeaturePoint = vi.mocked(client.resolveFeaturePointModel)
 const mockRecognize = vi.mocked(client.recognizeTrainingDatasetItem)
 const mockCreateEmotionTasks = vi.mocked(client.createEmotionTasks)
 
@@ -77,6 +79,8 @@ const model: TrainingModel = {
   model: 'gpt-4o',
   slug: 'openai-prod/gpt-4o',
   enabled: true,
+  inputCapabilities: ['audio', 'text'],
+  outputCapabilities: ['text'],
   createdAt: '2026-09-27T00:00:00Z',
   updatedAt: '2026-09-27T00:00:00Z',
 }
@@ -131,6 +135,12 @@ describe('DatasetItemList', () => {
     }))
     mockBatchDelete.mockResolvedValue({ deleted: 2 })
     mockListModels.mockResolvedValue([model])
+    mockResolveFeaturePoint.mockResolvedValue({
+      slug: 'dataset-clean',
+      modelId: null,
+      modelSlug: null,
+      source: 'none',
+    })
     mockCreateEmotionTasks.mockResolvedValue({ created: 1, skipped: 0 })
   })
 
@@ -598,7 +608,7 @@ describe('DatasetItemList', () => {
 
     expect(await screen.findByRole('dialog', { name: '重新识别' })).toBeInTheDocument()
     await waitFor(() => {
-      expect(mockListModels).toHaveBeenCalledWith(true)
+      expect(mockListModels).toHaveBeenCalledWith(true, 'audio,text', 'text')
     })
   })
 

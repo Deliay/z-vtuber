@@ -43,6 +43,9 @@ type TrainingModelUpdateRequest = trainingComponents['schemas']['TrainingModelUp
 type TrainingDiscoveredModel = trainingComponents['schemas']['TrainingDiscoveredModel']
 type TrainingEmotionTask = trainingComponents['schemas']['TrainingEmotionTask']
 type TrainingEmotionTaskList = trainingComponents['schemas']['TrainingEmotionTaskList']
+type TrainingModelCapability = trainingComponents['schemas']['TrainingModelCapability']
+type TrainingFeaturePoint = trainingComponents['schemas']['TrainingFeaturePoint']
+type TrainingFeaturePointModel = trainingComponents['schemas']['TrainingFeaturePointModel']
 
 interface ApiError extends Error {
   status?: number
@@ -89,6 +92,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   'emotion task failed': '情绪识别失败',
   'item text is empty': '条目文本为空，无法识别',
   'max attempts exceeded': '已超过最大重试次数，无法自动重试',
+  'unsupported capability': '不支持的能力',
+  'model not qualified': '该模型不满足功能点能力要求',
+  'feature point not found': '功能点不存在',
+  'feature point slug is required': '功能点标识不能为空',
+  'feature point slug too long': '功能点标识过长',
 }
 
 /**
@@ -729,14 +737,66 @@ export async function importTrainingModels(
   )
 }
 
-export async function listTrainingModels(enabled?: boolean): Promise<TrainingModel[]> {
+export async function listTrainingModels(
+  enabled?: boolean,
+  input?: string,
+  output?: string,
+): Promise<TrainingModel[]> {
   const query = new URLSearchParams()
   if (enabled !== undefined) query.set('enabled', String(enabled))
+  if (input) query.set('input', input)
+  if (output) query.set('output', output)
   const qs = query.toString()
   const data = await request<trainingComponents['schemas']['TrainingModelList']>(
     `/training/models${qs ? `?${qs}` : ''}`,
   )
   return data.items ?? []
+}
+
+export async function listTrainingFeaturePoints(): Promise<TrainingFeaturePoint[]> {
+  const data = await request<trainingComponents['schemas']['TrainingFeaturePointList']>(
+    '/training/feature-points',
+  )
+  return data.items ?? []
+}
+
+export async function resolveFeaturePointModel(
+  slug: string,
+  params: {
+    name?: string
+    inputCapabilities: TrainingModelCapability[]
+    outputCapabilities: TrainingModelCapability[]
+  },
+): Promise<TrainingFeaturePointModel> {
+  return request<TrainingFeaturePointModel>(
+    `/training/feature-points/${encodeURIComponent(slug)}/model/resolve`,
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    },
+  )
+}
+
+export async function setFeaturePointModel(
+  slug: string,
+  modelId: string,
+): Promise<TrainingFeaturePoint> {
+  return request<TrainingFeaturePoint>(
+    `/training/feature-points/${encodeURIComponent(slug)}/model`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ modelId }),
+    },
+  )
+}
+
+export async function clearFeaturePointModel(
+  slug: string,
+): Promise<TrainingFeaturePoint> {
+  return request<TrainingFeaturePoint>(
+    `/training/feature-points/${encodeURIComponent(slug)}/model`,
+    { method: 'DELETE' },
+  )
 }
 
 export async function createTrainingModel(

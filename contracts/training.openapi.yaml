@@ -538,7 +538,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrainingFeaturePointModel"
         "400":
-          description: '{"error": "unsupported capability"/"feature point slug is required"}'
+          description: '{"error": "unsupported capability"/"feature point slug is required"/"feature point slug too long"}'
           content:
             application/json:
               schema:

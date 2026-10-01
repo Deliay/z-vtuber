@@ -74,6 +74,10 @@ import {
   createEmotionTasks,
   listEmotionTasks,
   retryEmotionTask,
+  listTrainingFeaturePoints,
+  resolveFeaturePointModel,
+  setFeaturePointModel,
+  clearFeaturePointModel,
 } from './client'
 
 const mockFetch = vi.fn()
@@ -1530,6 +1534,8 @@ describe('API Client', () => {
       model: 'gpt-4o',
       slug: 'openai-prod/gpt-4o',
       enabled: true,
+      inputCapabilities: ['audio', 'text'],
+      outputCapabilities: ['text'],
       createdAt: '2026-09-27T00:00:00Z',
       updatedAt: '2026-09-27T00:00:00Z',
     }
@@ -1764,6 +1770,132 @@ describe('API Client', () => {
     })
   })
 
+  describe('Training Feature Points & Capabilities', () => {
+    const model = {
+      id: 'm1',
+      providerId: 'p1',
+      providerName: 'openai-prod',
+      model: 'gpt-4o',
+      slug: 'openai-prod/gpt-4o',
+      enabled: true,
+      inputCapabilities: ['audio', 'text'],
+      outputCapabilities: ['text'],
+      createdAt: '2026-09-27T00:00:00Z',
+      updatedAt: '2026-09-27T00:00:00Z',
+    }
+
+    const featurePoint = {
+      slug: 'dataset-clean',
+      name: '数据清洗',
+      inputCapabilities: ['audio', 'text'],
+      outputCapabilities: ['text'],
+      specifiedModelId: null,
+      specifiedModelSlug: null,
+      specifiedModelAvailable: false,
+      defaultModelId: 'm1',
+      defaultModelSlug: 'openai-prod/gpt-4o',
+      registeredAt: '2026-10-01T00:00:00Z',
+      updatedAt: '2026-10-01T00:00:00Z',
+    }
+
+    it('listTrainingModels should append the input/output capability queries when non-empty', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ items: [model] }) })
+
+      await listTrainingModels(true, 'audio,text', 'text')
+
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        '/api/training/models?enabled=true&input=audio%2Ctext&output=text',
+        expect.anything(),
+      )
+
+      // 空字符串能力视为缺省，不拼 query，保持既有 listTrainingModels(true) 兼容
+      await listTrainingModels(true, '', '')
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        '/api/training/models?enabled=true',
+        expect.anything(),
+      )
+    })
+
+    it('listTrainingFeaturePoints should GET /training/feature-points and return data.items', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ items: [featurePoint] }),
+      })
+
+      const result = await listTrainingFeaturePoints()
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/feature-points',
+        expect.anything(),
+      )
+      expect(result).toEqual([featurePoint])
+    })
+
+    it('listTrainingFeaturePoints should return an empty array when items is undefined', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+
+      expect(await listTrainingFeaturePoints()).toEqual([])
+    })
+
+    it('resolveFeaturePointModel should POST the resolve body and return the resolved model', async () => {
+      const resolved = {
+        slug: 'dataset-clean',
+        modelId: 'm1',
+        modelSlug: 'openai-prod/gpt-4o',
+        source: 'default',
+      }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(resolved) })
+
+      const result = await resolveFeaturePointModel('dataset-clean', {
+        name: '数据清洗',
+        inputCapabilities: ['audio', 'text'],
+        outputCapabilities: ['text'],
+      })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/feature-points/dataset-clean/model/resolve',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            name: '数据清洗',
+            inputCapabilities: ['audio', 'text'],
+            outputCapabilities: ['text'],
+          }),
+        }),
+      )
+      expect(result).toEqual(resolved)
+    })
+
+    it('setFeaturePointModel should PUT the modelId and encode the slug', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ...featurePoint, specifiedModelId: 'm1' }),
+      })
+
+      const result = await setFeaturePointModel('data clean', 'm1')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/feature-points/data%20clean/model',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ modelId: 'm1' }),
+        }),
+      )
+      expect(result.specifiedModelId).toBe('m1')
+    })
+
+    it('clearFeaturePointModel should DELETE the feature point model assignment', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(featurePoint) })
+
+      await clearFeaturePointModel('dataset-clean')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/training/feature-points/dataset-clean/model',
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+    })
+  })
+
   describe('apiErrorMessage', () => {
     it('should extract the error field from a JSON error body and map it to a readable message', () => {
       expect(apiErrorMessage({ serverMessage: '{"error":"task not done"}' })).toBe(
@@ -1803,6 +1935,11 @@ describe('API Client', () => {
         ['invalid provider response', '模型服务响应非法'],
         ['task not failed', '任务未处于失败状态'],
         ['task not found', '任务不存在'],
+        ['unsupported capability', '不支持的能力'],
+        ['model not qualified', '该模型不满足功能点能力要求'],
+        ['feature point not found', '功能点不存在'],
+        ['feature point slug is required', '功能点标识不能为空'],
+        ['feature point slug too long', '功能点标识过长'],
       ]
       for (const [code, message] of cases) {
         expect(apiErrorMessage({ serverMessage: JSON.stringify({ error: code }) })).toBe(message)
