@@ -18,7 +18,8 @@ public class TrainingModelRepositoryTests(MongoDbFixture fixture) : IClassFixtur
     private TrainingModelRepository Repository => new(fixture.Database);
 
     private static TrainingModelRecord Model(
-        ObjectId providerId, string model, bool enabled = true, DateTime? createdAt = null)
+        ObjectId providerId, string model, bool enabled = true, DateTime? createdAt = null,
+        string[]? input = null, string[]? output = null)
     {
         var now = createdAt ?? DateTime.UtcNow;
         return new TrainingModelRecord
@@ -26,6 +27,8 @@ public class TrainingModelRepositoryTests(MongoDbFixture fixture) : IClassFixtur
             ProviderId = providerId,
             Model = model,
             Enabled = enabled,
+            InputCapabilities = input ?? [],
+            OutputCapabilities = output ?? [],
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -147,5 +150,48 @@ public class TrainingModelRepositoryTests(MongoDbFixture fixture) : IClassFixtur
         Assert.Equal(2, deleted);
         var rest = Assert.Single(await repository.ListAsync());
         Assert.Equal("o1", rest.Model);
+    }
+
+    // ---- Plan 2.5：能力过滤（input/output 覆盖判定，空能力模型不入候选）----
+
+    [Fact]
+    public async Task List_FiltersByCapabilities_Coverage()
+    {
+        var repository = Repository;
+        var providerId = ObjectId.GenerateNewId();
+        await repository.InsertAsync(Model(providerId, "audio-text",
+            input: ["audio", "text"], output: ["text"]));
+        await repository.InsertAsync(Model(providerId, "text-only",
+            input: ["text"], output: ["text"]));
+        await repository.InsertAsync(Model(providerId, "empty-cap"));
+
+        var audioText = await repository.ListAsync(
+            enabled: null, input: ["audio", "text"], output: ["text"]);
+        Assert.Equal(new[] { "audio-text" }, audioText.Select(m => m.Model).ToArray());
+
+        var textOnly = await repository.ListAsync(
+            enabled: null, input: ["text"], output: ["text"]);
+        Assert.Equal(new[] { "audio-text", "text-only" }, textOnly.Select(m => m.Model).ToArray());
+    }
+
+    [Fact]
+    public async Task List_EmptyCapabilityModel_NeverMatchesNonEmptyRequirement()
+    {
+        var repository = Repository;
+        await repository.InsertAsync(Model(ObjectId.GenerateNewId(), "empty-cap"));
+
+        Assert.Empty(await repository.ListAsync(
+            enabled: null, input: ["text"], output: ["text"]));
+    }
+
+    [Fact]
+    public async Task List_WithoutCapabilityFilter_ReturnsAll()
+    {
+        var repository = Repository;
+        await repository.InsertAsync(Model(ObjectId.GenerateNewId(), "empty-cap"));
+        await repository.InsertAsync(Model(ObjectId.GenerateNewId(), "text-cap",
+            input: ["text"], output: ["text"]));
+
+        Assert.Equal(2, (await repository.ListAsync()).Count);
     }
 }

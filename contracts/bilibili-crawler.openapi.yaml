@@ -1223,10 +1223,12 @@ paths:
   /api/training/models:
     get:
       summary: 查询模型列表（代理训练服务）
-      description: 代理 training 服务，query 原样透传；每项含服务端拼好的 slug。
+      description: 代理 training 服务，query 原样透传；每项含服务端拼好的 slug。input/output 为逗号分隔的能力过滤。
       operationId: listTrainingModels
       parameters:
         - $ref: "#/components/parameters/TrainingModelEnabledQuery"
+        - $ref: "#/components/parameters/TrainingModelInputQuery"
+        - $ref: "#/components/parameters/TrainingModelOutputQuery"
       responses:
         "200":
           description: 模型列表
@@ -1323,6 +1325,102 @@ paths:
           description: 已删除
         "404":
           description: 模型不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+  /api/training/feature-points:
+    get:
+      summary: 查询功能点列表（代理训练服务）
+      description: 代理 training 服务，实时计算指定可用性与默认选择。
+      operationId: listTrainingFeaturePoints
+      responses:
+        "200":
+          description: 功能点列表（Slug 升序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingFeaturePointList"
+        "502":
+          description: training 服务不可达
+  /api/training/feature-points/{slug}/model/resolve:
+    post:
+      summary: 功能点请求模型（代理训练服务，自动登记）
+      description: 代理 training 服务，body 原样透传。
+      operationId: resolveTrainingFeaturePointModel
+      parameters:
+        - $ref: "#/components/parameters/TrainingFeaturePointSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingFeaturePointResolveRequest"
+      responses:
+        "200":
+          description: 解析结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingFeaturePointModel"
+        "400":
+          description: 字段非法
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+  /api/training/feature-points/{slug}/model:
+    put:
+      summary: 指定功能点模型（代理训练服务）
+      description: 代理 training 服务，body 原样透传。
+      operationId: setTrainingFeaturePointModel
+      parameters:
+        - $ref: "#/components/parameters/TrainingFeaturePointSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingFeaturePointSetModelRequest"
+      responses:
+        "200":
+          description: 指定成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingFeaturePoint"
+        "400":
+          description: 字段非法 / 模型不可用
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "404":
+          description: 功能点或模型不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
+    delete:
+      summary: 取消指定（代理训练服务）
+      operationId: clearTrainingFeaturePointModel
+      parameters:
+        - $ref: "#/components/parameters/TrainingFeaturePointSlug"
+      responses:
+        "200":
+          description: 已取消指定
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingFeaturePoint"
+        "404":
+          description: 功能点不存在
           content:
             application/json:
               schema:
@@ -1599,6 +1697,27 @@ components:
       description: 按启用状态过滤
       schema:
         type: boolean
+    TrainingModelInputQuery:
+      name: input
+      in: query
+      required: false
+      description: 逗号分隔的所需输入能力；模型输入能力须覆盖该集合
+      schema:
+        type: string
+    TrainingModelOutputQuery:
+      name: output
+      in: query
+      required: false
+      description: 逗号分隔的所需输出能力；模型输出能力须覆盖该集合
+      schema:
+        type: string
+    TrainingFeaturePointSlug:
+      name: slug
+      in: path
+      required: true
+      description: 功能点标识
+      schema:
+        type: string
     TrainingEmotionDatasetIdQuery:
       name: datasetId
       in: query
@@ -2738,9 +2857,13 @@ components:
           type: string
         apiKey:
           type: string
+    TrainingModelCapability:
+      type: string
+      description: 模型能力（语音/视频/文本/图片）
+      enum: [audio, video, text, image]
     TrainingModel:
       type: object
-      required: [id, providerId, providerName, model, slug, enabled, createdAt, updatedAt]
+      required: [id, providerId, providerName, model, slug, enabled, inputCapabilities, outputCapabilities, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -2755,6 +2878,16 @@ components:
           description: "{providerName}/{model}，展示用"
         enabled:
           type: boolean
+        inputCapabilities:
+          type: array
+          description: 输入能力（audio/video/text/image 子集）；空 = 未声明
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
+        outputCapabilities:
+          type: array
+          description: 输出能力（audio/video/text/image 子集）；空 = 未声明
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
         createdAt:
           type: string
           format: date-time
@@ -2777,13 +2910,36 @@ components:
           type: string
         model:
           type: string
+        inputCapabilities:
+          type: array
+          nullable: true
+          description: 输入能力（可选，缺省空数组 = 未声明）
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
+        outputCapabilities:
+          type: array
+          nullable: true
+          description: 输出能力（可选，缺省空数组 = 未声明）
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
     TrainingModelUpdateRequest:
       type: object
+      description: 缺失字段不变；能力传空数组即清空、缺省不改
       properties:
         model:
           type: string
         enabled:
           type: boolean
+        inputCapabilities:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
+        outputCapabilities:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
     TrainingModelDiscoverResult:
       type: object
       required: [models]
@@ -2814,6 +2970,89 @@ components:
           type: integer
         skipped:
           type: integer
+    TrainingFeaturePoint:
+      type: object
+      required: [slug, name, inputCapabilities, outputCapabilities, specifiedModelId, specifiedModelSlug, specifiedModelAvailable, defaultModelId, defaultModelSlug, registeredAt, updatedAt]
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        inputCapabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
+        outputCapabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
+        specifiedModelId:
+          type: string
+          nullable: true
+        specifiedModelSlug:
+          type: string
+          nullable: true
+        specifiedModelAvailable:
+          type: boolean
+        defaultModelId:
+          type: string
+          nullable: true
+        defaultModelSlug:
+          type: string
+          nullable: true
+        registeredAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TrainingFeaturePointList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 按 slug 升序
+          items:
+            $ref: "#/components/schemas/TrainingFeaturePoint"
+    TrainingFeaturePointModel:
+      type: object
+      required: [slug, modelId, modelSlug, source]
+      properties:
+        slug:
+          type: string
+        modelId:
+          type: string
+          nullable: true
+        modelSlug:
+          type: string
+          nullable: true
+        source:
+          type: string
+          description: "specified | default | none"
+    TrainingFeaturePointResolveRequest:
+      type: object
+      required: [inputCapabilities, outputCapabilities]
+      properties:
+        name:
+          type: string
+          nullable: true
+        inputCapabilities:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
+        outputCapabilities:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TrainingModelCapability"
+    TrainingFeaturePointSetModelRequest:
+      type: object
+      required: [modelId]
+      properties:
+        modelId:
+          type: string
     EmotionResult:
       type: object
       description: 结构化情绪数据（十字段固定结构）

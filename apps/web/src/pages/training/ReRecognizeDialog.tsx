@@ -3,6 +3,7 @@ import {
   apiErrorMessage,
   listTrainingModels,
   recognizeTrainingDatasetItem,
+  resolveFeaturePointModel,
   updateTrainingDatasetItem,
 } from '../../api/client'
 import { parsePosition } from '../../utils/format'
@@ -10,6 +11,13 @@ import type { components } from '../../api/schema-training'
 
 type TrainingModel = components['schemas']['TrainingModel']
 type TrainingDatasetItem = components['schemas']['TrainingDatasetItem']
+type TrainingModelCapability = components['schemas']['TrainingModelCapability']
+
+/** 数据清洗功能点的标识与能力要求。 */
+const FEATURE_POINT_SLUG = 'dataset-clean'
+const FEATURE_POINT_NAME = '数据清洗'
+const INPUT_CAPABILITIES: TrainingModelCapability[] = ['audio', 'text']
+const OUTPUT_CAPABILITIES: TrainingModelCapability[] = ['text']
 
 /** 内联编辑草稿（`m:ss`/`m:ss.S` 字符串口径），保存时与识别文本一并提交，避免静默丢弃。 */
 export interface ReRecognizeDialogDraft {
@@ -70,9 +78,20 @@ export function ReRecognizeDialog({
 
   useEffect(() => {
     let active = true
-    listTrainingModels(true)
-      .then((list) => {
-        if (active) setModels(list)
+    // resolve 完成功能点自动登记并取回解析结果；候选按功能点能力过滤且仅取启用者。
+    Promise.all([
+      resolveFeaturePointModel(FEATURE_POINT_SLUG, {
+        name: FEATURE_POINT_NAME,
+        inputCapabilities: INPUT_CAPABILITIES,
+        outputCapabilities: OUTPUT_CAPABILITIES,
+      }),
+      listTrainingModels(true, INPUT_CAPABILITIES.join(','), OUTPUT_CAPABILITIES.join(',')),
+    ])
+      .then(([resolved, list]) => {
+        if (!active) return
+        setModels(list)
+        // 默认选中解析结果（specified 优先、default 兜底）；用户仍可临时改选。
+        if (resolved.modelId) setModelId(resolved.modelId)
       })
       .catch((err) => {
         if (active) setError(apiErrorMessage(err, '加载模型失败'))
@@ -185,7 +204,7 @@ export function ReRecognizeDialog({
         </select>
 
         {models.length === 0 && (
-          <div style={{ color: '#94a3b8' }}>请先在模型设置中配置</div>
+          <div style={{ color: '#94a3b8' }}>请先在模型设置中配置模型与能力</div>
         )}
 
         <label htmlFor="re-recognize-text">文本</label>

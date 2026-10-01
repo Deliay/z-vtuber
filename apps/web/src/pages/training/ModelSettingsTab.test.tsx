@@ -21,6 +21,7 @@ vi.mock('../../api/client', async (importOriginal) => {
     createTrainingModel: vi.fn(),
     updateTrainingModel: vi.fn(),
     deleteTrainingModel: vi.fn(),
+    listTrainingFeaturePoints: vi.fn(),
   }
 })
 
@@ -34,6 +35,7 @@ const mockListModels = vi.mocked(client.listTrainingModels)
 const mockCreateModel = vi.mocked(client.createTrainingModel)
 const mockUpdateModel = vi.mocked(client.updateTrainingModel)
 const mockDeleteModel = vi.mocked(client.deleteTrainingModel)
+const mockListFeaturePoints = vi.mocked(client.listTrainingFeaturePoints)
 
 function apiError(status: number, serverMessage: string): Error {
   return Object.assign(new Error('API request failed'), { status, serverMessage })
@@ -65,6 +67,8 @@ const modelA: TrainingModel = {
   model: 'gpt-4o',
   slug: 'openai-prod/gpt-4o',
   enabled: true,
+  inputCapabilities: ['audio', 'text'],
+  outputCapabilities: ['text'],
   createdAt: '2026-09-27T00:00:00Z',
   updatedAt: '2026-09-27T00:00:00Z',
 }
@@ -82,6 +86,7 @@ describe('ModelSettingsTab', () => {
     vi.resetAllMocks()
     mockListProviders.mockResolvedValue([])
     mockListModels.mockResolvedValue([])
+    mockListFeaturePoints.mockResolvedValue([])
   })
 
   it('should render the providers table and never show the plaintext api key', async () => {
@@ -342,6 +347,8 @@ describe('ModelSettingsTab', () => {
       expect(mockCreateModel).toHaveBeenCalledWith({
         providerId: 'p1',
         model: 'gpt-4o-audio',
+        inputCapabilities: [],
+        outputCapabilities: [],
       })
     })
 
@@ -390,6 +397,92 @@ describe('ModelSettingsTab', () => {
     resolveCreate({ ...modelA, id: 'm3' })
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: '手动添加模型' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('should render the input/output capability columns with Chinese labels and the 未设置 empty state', async () => {
+    const modelWithoutCapabilities: TrainingModel = {
+      ...modelA,
+      id: 'm3',
+      slug: 'openai-prod/text-embedding',
+      inputCapabilities: [],
+      outputCapabilities: [],
+    }
+    mockListProviders.mockResolvedValue([providerA])
+    mockListModels.mockResolvedValue([modelA, modelWithoutCapabilities])
+
+    render(<ModelSettingsTab />)
+    await screen.findByText('openai-prod/gpt-4o')
+
+    const modelsTable = screen
+      .getByRole('columnheader', { name: 'slug' })
+      .closest('table') as HTMLElement
+    expect(within(modelsTable).getByRole('columnheader', { name: '输入能力' })).toBeInTheDocument()
+    expect(within(modelsTable).getByRole('columnheader', { name: '输出能力' })).toBeInTheDocument()
+
+    const row = within(modelsTable).getByText('openai-prod/gpt-4o').closest('tr') as HTMLElement
+    // 输入 audio,text → 语音、文本；输出 text → 文本
+    expect(within(row).getAllByText('语音、文本')).toHaveLength(1)
+    expect(within(row).getAllByText('文本')).toHaveLength(1)
+
+    const emptyRow = within(modelsTable)
+      .getByText('openai-prod/text-embedding')
+      .closest('tr') as HTMLElement
+    // 空能力两列都显示「未设置」
+    expect(within(emptyRow).getAllByText('未设置')).toHaveLength(2)
+  })
+
+  it('should create a model with the selected input and output capabilities', async () => {
+    mockListProviders.mockResolvedValue([providerA])
+    mockCreateModel.mockResolvedValue({ ...modelA, id: 'm3' })
+
+    render(<ModelSettingsTab />)
+    await screen.findByText('openai-prod')
+
+    fireEvent.click(screen.getByRole('button', { name: '手动添加模型' }))
+    fireEvent.change(screen.getByLabelText('所属 Provider'), { target: { value: 'p1' } })
+    fireEvent.change(screen.getByLabelText('模型名'), { target: { value: 'gpt-4o-audio' } })
+    fireEvent.click(screen.getByLabelText('输入能力 语音'))
+    fireEvent.click(screen.getByLabelText('输入能力 文本'))
+    fireEvent.click(screen.getByLabelText('输出能力 文本'))
+    fireEvent.click(screen.getByRole('button', { name: '确认添加' }))
+
+    await waitFor(() => {
+      expect(mockCreateModel).toHaveBeenCalledWith({
+        providerId: 'p1',
+        model: 'gpt-4o-audio',
+        inputCapabilities: ['audio', 'text'],
+        outputCapabilities: ['text'],
+      })
+    })
+  })
+
+  it('should prefill and save edited capabilities, including clearing them', async () => {
+    mockListProviders.mockResolvedValue([providerA])
+    mockListModels.mockResolvedValue([modelA])
+    mockUpdateModel.mockResolvedValue(modelA)
+
+    render(<ModelSettingsTab />)
+    await screen.findByText('openai-prod/gpt-4o')
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑能力 openai-prod/gpt-4o' }))
+    const dialog = await screen.findByRole('dialog', { name: '编辑能力 openai-prod/gpt-4o' })
+    // 预填当前能力
+    expect(within(dialog).getByLabelText('输入能力 语音')).toBeChecked()
+    expect(within(dialog).getByLabelText('输入能力 文本')).toBeChecked()
+    expect(within(dialog).getByLabelText('输出能力 文本')).toBeChecked()
+
+    // 清空全部能力（空数组 + 显式提交）
+    fireEvent.click(within(dialog).getByLabelText('输入能力 语音'))
+    fireEvent.click(within(dialog).getByLabelText('输入能力 文本'))
+    fireEvent.click(within(dialog).getByLabelText('输出能力 文本'))
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(mockUpdateModel).toHaveBeenCalledWith('m1', {
+        inputCapabilities: [],
+        outputCapabilities: [],
+      })
     })
   })
 })

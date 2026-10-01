@@ -100,6 +100,8 @@ public sealed record TrainingModelDto(
     [property: JsonPropertyName("model")] string Model,
     [property: JsonPropertyName("slug")] string Slug,
     [property: JsonPropertyName("enabled")] bool Enabled,
+    [property: JsonPropertyName("inputCapabilities")] IReadOnlyList<string> InputCapabilities,
+    [property: JsonPropertyName("outputCapabilities")] IReadOnlyList<string> OutputCapabilities,
     [property: JsonPropertyName("createdAt")] DateTime CreatedAt,
     [property: JsonPropertyName("updatedAt")] DateTime UpdatedAt);
 
@@ -108,11 +110,54 @@ public sealed record TrainingModelListDto(
 
 public sealed record TrainingModelCreateRequest(
     [property: JsonPropertyName("providerId")] string? ProviderId,
-    [property: JsonPropertyName("model")] string? Model);
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("inputCapabilities")] IReadOnlyList<string>? InputCapabilities = null,
+    [property: JsonPropertyName("outputCapabilities")] IReadOnlyList<string>? OutputCapabilities = null);
 
+/// <summary>
+/// 更新模型请求：<c>model</c>/<c>enabled</c> 缺失不变；能力用非可空 <see cref="JsonElement"/> 区分
+/// 「字段缺失」（<c>Undefined</c>，不改）与「JSON null」（不改）/「数组」（含空数组 = 清空）。
+/// </summary>
 public sealed record TrainingModelUpdateRequest(
     [property: JsonPropertyName("model")] string? Model,
-    [property: JsonPropertyName("enabled")] bool? Enabled);
+    [property: JsonPropertyName("enabled")] bool? Enabled)
+{
+    [JsonPropertyName("inputCapabilities")]
+    public JsonElement InputCapabilities { get; init; }
+
+    [JsonPropertyName("outputCapabilities")]
+    public JsonElement OutputCapabilities { get; init; }
+}
+
+public sealed record TrainingFeaturePointDto(
+    [property: JsonPropertyName("slug")] string Slug,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("inputCapabilities")] IReadOnlyList<string> InputCapabilities,
+    [property: JsonPropertyName("outputCapabilities")] IReadOnlyList<string> OutputCapabilities,
+    [property: JsonPropertyName("specifiedModelId")] string? SpecifiedModelId,
+    [property: JsonPropertyName("specifiedModelSlug")] string? SpecifiedModelSlug,
+    [property: JsonPropertyName("specifiedModelAvailable")] bool SpecifiedModelAvailable,
+    [property: JsonPropertyName("defaultModelId")] string? DefaultModelId,
+    [property: JsonPropertyName("defaultModelSlug")] string? DefaultModelSlug,
+    [property: JsonPropertyName("registeredAt")] DateTime RegisteredAt,
+    [property: JsonPropertyName("updatedAt")] DateTime UpdatedAt);
+
+public sealed record TrainingFeaturePointListDto(
+    [property: JsonPropertyName("items")] IReadOnlyList<TrainingFeaturePointDto> Items);
+
+public sealed record TrainingFeaturePointModelDto(
+    [property: JsonPropertyName("slug")] string Slug,
+    [property: JsonPropertyName("modelId")] string? ModelId,
+    [property: JsonPropertyName("modelSlug")] string? ModelSlug,
+    [property: JsonPropertyName("source")] string Source);
+
+public sealed record TrainingFeaturePointResolveRequest(
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("inputCapabilities")] IReadOnlyList<string>? InputCapabilities,
+    [property: JsonPropertyName("outputCapabilities")] IReadOnlyList<string>? OutputCapabilities);
+
+public sealed record TrainingFeaturePointSetModelRequest(
+    [property: JsonPropertyName("modelId")] string? ModelId);
 
 public sealed record TrainingDiscoveredModelDto(
     [property: JsonPropertyName("model")] string Model);

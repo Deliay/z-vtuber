@@ -1,9 +1,11 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Z.Vtuber.Common.Contracts;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Training.Contracts;
@@ -28,12 +30,30 @@ public sealed class TrainingModelsController(
     private readonly ILogger<TrainingModelsController> _logger =
         logger ?? NullLogger<TrainingModelsController>.Instance;
 
-    /// <summary>模型列表：<c>enabled?</c> 过滤、CreatedAt 升序；<c>slug = {providerName}/{model}</c>（Provider 缺失则空名）。</summary>
+    /// <summary>
+    /// 模型列表：<c>enabled?</c> 过滤、<c>input</c>/<c>output</c> 按能力过滤（逗号分隔，模型须覆盖集合）、
+    /// CreatedAt 升序；<c>slug = {providerName}/{model}</c>（Provider 缺失则空名）。
+    /// </summary>
     [HttpGet]
     public async Task<ActionResult<TrainingModelListDto>> List(
-        [FromQuery] bool? enabled, CancellationToken ct = default)
+        [FromQuery] bool? enabled,
+        [FromQuery] string? input,
+        [FromQuery] string? output,
+        CancellationToken ct = default)
     {
-        var list = await models.ListAsync(enabled, ct);
+        IReadOnlyList<string> requiredInput;
+        IReadOnlyList<string> requiredOutput;
+        try
+        {
+            requiredInput = ParseCapabilityQuery(input);
+            requiredOutput = ParseCapabilityQuery(output);
+        }
+        catch (CapabilityException)
+        {
+            return BadRequest(new ErrorResponse("unsupported capability"));
+        }
+
+        var list = await models.ListAsync(enabled, requiredInput, requiredOutput, ct);
         var providerNames = (await providers.ListAsync(ct)).ToDictionary(p => p.Id, p => p.Name);
 
         var items = list
@@ -59,12 +79,26 @@ public sealed class TrainingModelsController(
             return BadRequest(modelError);
         }
 
+        IReadOnlyList<string> inputCapabilities;
+        IReadOnlyList<string> outputCapabilities;
+        try
+        {
+            inputCapabilities = TrainingModelCapabilities.Normalize(request?.InputCapabilities);
+            outputCapabilities = TrainingModelCapabilities.Normalize(request?.OutputCapabilities);
+        }
+        catch (CapabilityException)
+        {
+            return BadRequest(new ErrorResponse("unsupported capability"));
+        }
+
         var now = DateTime.UtcNow;
         var record = new TrainingModelRecord
         {
             ProviderId = provider.Id,
             Model = model,
             Enabled = true,
+            InputCapabilities = inputCapabilities.ToArray(),
+            OutputCapabilities = outputCapabilities.ToArray(),
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -115,6 +149,29 @@ public sealed class TrainingModelsController(
         if (request?.Enabled is { } enabled)
         {
             update = update.Set(m => m.Enabled, enabled);
+        }
+
+        if (request is not null)
+        {
+            if (TryReadCapabilities(request.InputCapabilities, out var inputCapabilities) is { } inputError)
+            {
+                return BadRequest(inputError);
+            }
+
+            if (inputCapabilities is not null)
+            {
+                update = update.Set(m => m.InputCapabilities, inputCapabilities);
+            }
+
+            if (TryReadCapabilities(request.OutputCapabilities, out var outputCapabilities) is { } outputError)
+            {
+                return BadRequest(outputError);
+            }
+
+            if (outputCapabilities is not null)
+            {
+                update = update.Set(m => m.OutputCapabilities, outputCapabilities);
+            }
         }
 
         TrainingModelRecord? updated;
@@ -173,6 +230,51 @@ public sealed class TrainingModelsController(
 
         normalized = trimmed;
         return null;
+    }
+
+    /// <summary>解析 <c>input</c>/<c>output</c> query（逗号分隔）：空白 = 空集合；非法能力值抛 <see cref="CapabilityException"/>。</summary>
+    private static IReadOnlyList<string> ParseCapabilityQuery(string? raw) =>
+        string.IsNullOrWhiteSpace(raw)
+            ? Array.Empty<string>()
+            : TrainingModelCapabilities.Normalize(raw.Split(','));
+
+    /// <summary>
+    /// 读取更新请求能力字段：<c>Undefined</c>/<c>Null</c> → 不改（capabilities 为 null）；数组 → 归一化
+    /// （空数组 = 清空）；其他 JSON 类型或非法能力值 → <c>unsupported capability</c>。
+    /// </summary>
+    private static ErrorResponse? TryReadCapabilities(JsonElement element, out string[]? capabilities)
+    {
+        capabilities = null;
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Undefined:
+            case JsonValueKind.Null:
+                return null;
+            case JsonValueKind.Array:
+                var raw = new List<string?>();
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.String)
+                    {
+                        return new ErrorResponse("unsupported capability");
+                    }
+
+                    raw.Add(item.GetString());
+                }
+
+                try
+                {
+                    capabilities = TrainingModelCapabilities.Normalize(raw).ToArray();
+                }
+                catch (CapabilityException)
+                {
+                    return new ErrorResponse("unsupported capability");
+                }
+
+                return null;
+            default:
+                return new ErrorResponse("unsupported capability");
+        }
     }
 
     private static bool IsDuplicateKey(MongoWriteException ex) =>
