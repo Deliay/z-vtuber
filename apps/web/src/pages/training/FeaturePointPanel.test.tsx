@@ -81,11 +81,13 @@ describe('FeaturePointPanel', () => {
     expect(within(row).getAllByText('文本')).toHaveLength(1)
   })
 
-  it('should show the default model slug when no model is specified', async () => {
+  it('should show 未设置 with the default model slug when no model is specified', async () => {
     render(<FeaturePointPanel />)
 
     await screen.findByText('数据清洗')
-    expect(currentModelCell(rowOf('数据清洗'))).toHaveTextContent('openai-prod/gpt-4o')
+    const cell = currentModelCell(rowOf('数据清洗'))
+    expect(cell).toHaveTextContent('未设置')
+    expect(cell).toHaveTextContent('默认 openai-prod/gpt-4o')
   })
 
   it('should show 无可用模型 when there is neither a specified nor a default model', async () => {

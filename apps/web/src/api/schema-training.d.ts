@@ -1620,7 +1620,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingFeaturePointModel"];
                 };
             };
-            /** @description {"error": "unsupported capability"/"feature point slug is required"/"feature point slug too long"} */
+            /** @description {"error": "unsupported capability"/"inputCapabilities is required"/"outputCapabilities is required"/"feature point slug is required"/"feature point slug too long"} */
             400: {
                 headers: {
                     [name: string]: unknown;

@@ -97,6 +97,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   'feature point not found': '功能点不存在',
   'feature point slug is required': '功能点标识不能为空',
   'feature point slug too long': '功能点标识过长',
+  'inputCapabilities is required': '功能点所需输入能力不能为空',
+  'outputCapabilities is required': '功能点所需输出能力不能为空',
 }
 
 /**

@@ -67,6 +67,18 @@ public sealed class TrainingFeaturePointsController(
             return BadRequest(new ErrorResponse("unsupported capability"));
         }
 
+        // 契约 TrainingFeaturePointResolveRequest 声明能力数组必填：缺失/空（含全空白）一律 400，
+        // 杜绝登记出「无能力要求」功能点（空要求会使空能力模型误入候选，违反 PRD 功能点 1 验收）。
+        if (request?.InputCapabilities is null || input.Count == 0)
+        {
+            return BadRequest(new ErrorResponse("inputCapabilities is required"));
+        }
+
+        if (request.OutputCapabilities is null || output.Count == 0)
+        {
+            return BadRequest(new ErrorResponse("outputCapabilities is required"));
+        }
+
         var resolution = await resolver.ResolveAsync(normalizedSlug, request?.Name, input, output, ct);
         _logger.LogInformation(
             "training feature point resolved: slug={Slug} source={Source} modelId={ModelId}",

@@ -124,11 +124,16 @@ export function FeaturePointPanel() {
                   <td style={cellStyle}>{capabilityLabels(fp.outputCapabilities)}</td>
                   <td style={cellStyle}>
                     {unspecified ? (
-                      fp.defaultModelSlug ? (
-                        fp.defaultModelSlug
-                      ) : (
-                        <span style={{ color: '#94a3b8' }}>无可用模型</span>
-                      )
+                      <>
+                        <span>未设置</span>
+                        {fp.defaultModelSlug ? (
+                          <span style={{ color: '#94a3b8', marginLeft: '0.25rem' }}>
+                            （默认 {fp.defaultModelSlug}）
+                          </span>
+                        ) : (
+                          <span style={{ color: '#94a3b8', marginLeft: '0.25rem' }}>无可用模型</span>
+                        )}
+                      </>
                     ) : fp.specifiedModelAvailable ? (
                       fp.specifiedModelSlug
                     ) : (

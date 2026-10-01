@@ -246,6 +246,42 @@ public class TrainingFeaturePointApiTests(MongoDbFixture fixture)
     }
 
     [Fact]
+    public async Task Resolve_MissingCapabilities_Returns400_AndDoesNotRegister()
+    {
+        var controller = CreateController();
+
+        var missingInput = await controller.Resolve(
+            "fp", new TrainingFeaturePointResolveRequest("F", null, ["text"]));
+        Assert.Equal("inputCapabilities is required", ErrorOf(missingInput, StatusCodes.Status400BadRequest));
+
+        var missingOutput = await controller.Resolve(
+            "fp", new TrainingFeaturePointResolveRequest("F", ["text"], null));
+        Assert.Equal("outputCapabilities is required", ErrorOf(missingOutput, StatusCodes.Status400BadRequest));
+
+        // 空 body：两字段均缺失，先报输入必填。
+        var emptyBody = await controller.Resolve("fp", null);
+        Assert.Equal("inputCapabilities is required", ErrorOf(emptyBody, StatusCodes.Status400BadRequest));
+
+        Assert.Empty(await FeaturePoints.ListAsync());
+    }
+
+    [Fact]
+    public async Task Resolve_EmptyCapabilities_Returns400()
+    {
+        var controller = CreateController();
+
+        var emptyInput = await controller.Resolve(
+            "fp", new TrainingFeaturePointResolveRequest("F", [], ["text"]));
+        Assert.Equal("inputCapabilities is required", ErrorOf(emptyInput, StatusCodes.Status400BadRequest));
+
+        var emptyOutput = await controller.Resolve(
+            "fp", new TrainingFeaturePointResolveRequest("F", ["text"], []));
+        Assert.Equal("outputCapabilities is required", ErrorOf(emptyOutput, StatusCodes.Status400BadRequest));
+
+        Assert.Empty(await FeaturePoints.ListAsync());
+    }
+
+    [Fact]
     public async Task Resolve_WhitespaceSlug_Returns400()
     {
         var result = await CreateController().Resolve(
