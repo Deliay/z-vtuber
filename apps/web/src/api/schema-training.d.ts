@@ -491,7 +491,7 @@ export interface paths {
         put?: never;
         /**
          * 绘图生成（文本 + 图片 → 图片）
-         * @description 以 multipart/form-data 输入 text（必填，trim 后非空）+ image（图片文件，必填， image/png / image/jpeg / image/webp，≤ Image:MaxImageBytes 默认 10MB）+ modelId（可选）。 所用模型须满足「输入能力覆盖 text,image、输出能力含 image」：显式 modelId 优先 （非法/不存在 404 model not found、停用 400 model disabled、能力不符 400 model does not support image input/output），缺省按功能点 image-generate 解析 （指定模型优先 → 默认首候选），无可用模型 409 no image model available。 调用 OpenAI-like POST {endpoint}/images/edits（multipart model/prompt/image → data[0].b64_json）， 成功返回图片二进制，失败统一 {"error": "..."}；输入校验失败不发起上游调用。
+         * @description 以 multipart/form-data 输入 text（必填，trim 后非空）+ image（图片文件，必填， image/png / image/jpeg / image/webp，≤ Image:MaxImageBytes 默认 10MB）+ modelId（可选）。 所用模型须满足「输入能力覆盖 text,image、输出能力含 image」：显式 modelId 优先 （非法/不存在 404 model not found、停用 400 model disabled、能力不符 400 model does not support image input/output），缺省按功能点 image-generate 解析 （指定模型优先 → 默认首候选），无可用模型 409 no image model available。 调用 OpenAI-like POST {endpoint}/images/edits（multipart model/prompt/image/response_format=b64_json → data[0].b64_json；显式声明 b64_json，避免标准 OpenAI 兼容实现默认返回 url）， 成功返回图片二进制，失败统一 {"error": "..."}；输入校验失败不发起上游调用。
          */
         post: operations["generateTrainingImage"];
         delete?: never;

@@ -231,7 +231,7 @@ sequenceDiagram
 
 #### 实现点 3: OpenAI-like 图片客户端（`Ai/OpenAiLikeImageClient.cs`）
 
-- `POST {provider.Endpoint}/images/edits`（Bearer 鉴权），`MultipartFormDataContent`：`model`、`prompt`（=text）、`image`（`ByteArrayContent`，带原始文件名与 Content-Type）；
+- `POST {provider.Endpoint}/images/edits`（Bearer 鉴权），`MultipartFormDataContent`：`model`、`prompt`（=text）、`image`（`ByteArrayContent`，带原始文件名与 Content-Type）、`response_format=b64_json`（显式声明，标准 OpenAI 兼容实现默认返回 `url`，不声明则与「仅认 b64_json」的解析层不自洽、成功路径会稳定落 502）；
 - 解析响应 `data[0].b64_json` → base64 解码字节；缺失/解码失败 → `ModelOutputException`（502 `invalid model output`）；非 2xx/超时/传输失败 → `HttpRequestException`（502 `model service unavailable`）；
 - 复用 named client `AiModel`：`AllowAutoRedirect=false`（避免携带 API key 跟随重定向）、`ModelSessionHeaderHandler` 的 `x-opencode-session` 头一致；超时 `Image:RequestTimeoutSeconds`（默认 120s，客户端实例级设置）；
 - `url` 形式响应本期不支持（→ `invalid model output`），见 §6.1 决策。
@@ -263,7 +263,7 @@ sequenceDiagram
 | 端点归属 | training 提供 + api 代理 | api 直接实现 | **A** | 需求明确「API由training服务提供，api代理出去」；与 synthesize 同链路 |
 | 请求形态 | `multipart/form-data`（text + image 文件） | JSON base64 | **A** | 需求明确「API使用multipart输入文件和文本」；二进制文件天然 multipart |
 | 上游调用契约 | OpenAI-like `POST /images/edits`（multipart） | chat/completions 扩展 modalities | **A** | 图像编辑标准契约、入参形态（文本+图片文件）与需求一致；Providers 已承载 OpenAI-like endpoint/key |
-| 生成结果取回 | 仅 `b64_json` | 支持 `url` 回拉 | **A** | `b64_json` 一次请求拿全量、无二次出网；`url` 形态留待后续（本期 `invalid model output`） |
+| 生成结果取回 | 仅 `b64_json`（请求端 `response_format=b64_json`） | 支持 `url` 回拉 | **A** | `b64_json` 一次请求拿全量、无二次出网；请求端显式声明避免标准实现默认返回 `url`；`url` 形态留待后续（本期 `invalid model output`） |
 | 模型选择 | 显式 `modelId` + 功能点 `image-generate` 缺省解析 | 固定配置默认模型 id | **A** | 复用既有功能点机制（指定/默认/管理面可调），与 synthesize 情绪模型同口径 |
 | 无可用模型 | 409 `no image model available` | 400 | **A** | 与 synthesize「无音色参考 409」同口径：服务侧资源缺失非请求格式错误 |
 | Claude-like 派发 | 抛 `ModelImageNotSupportedException` → 400 | 尝试 chat 接口 | **A** | 与 `ClaudeLikeChatClient` 音频不支持同模式；能力白名单本就应拦下，派发层兜底 |

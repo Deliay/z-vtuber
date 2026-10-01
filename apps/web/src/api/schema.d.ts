@@ -1105,7 +1105,7 @@ export interface paths {
         put?: never;
         /**
          * 绘图生成（代理训练服务）
-         * @description 代理 training 服务，multipart/form-data 请求体（text + image + 可选 modelId）与 Content-Type（含 boundary）原样透传；成功返回 image/png 二进制（Content-Type 与响应体透传）， 错误码（400/404/409/502）与错误体透传，上游不可达 502 training service unavailable。
+         * @description 代理 training 服务，multipart/form-data 请求体（text + image + 可选 modelId）与 Content-Type（含 boundary）原样透传；training 上游以 response_format=b64_json 调 OpenAI-like /images/edits 取回图片。成功返回 image/png 二进制（Content-Type 与响应体透传）， 错误码（400/404/409/502）与错误体透传，上游不可达 502 training service unavailable。
          */
         post: operations["generateTrainingImage"];
         delete?: never;

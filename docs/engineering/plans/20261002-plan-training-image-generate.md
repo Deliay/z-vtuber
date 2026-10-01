@@ -39,7 +39,7 @@ type: Permanent
 4. **`modelId` 非 ObjectId 一律按不存在 → 404 `model not found`**（与 recognize 同口径）。
 5. **大小校验双保险**：`IFormFile.Length` 前置拦截（> `Image:MaxImageBytes` → 400 `image too large`），读取后按实际字节数复核；所有输入校验失败均**不发起上游模型调用**。
 6. **超时口径**：`Image:RequestTimeoutSeconds`（默认 120s）设在 `OpenAiLikeImageClient` 实例（`HttpClient.Timeout`，同 `OpenAiLikeChatClient` 手法）；`TaskCanceledException`（非客户端取消）→ 502 `model service unavailable`；代理 180s 不变。
-7. **上游结果仅认 `b64_json`**：响应缺 `data[0].b64_json`、base64 解码失败、`url` 形态 → `ModelOutputException` → 502 `invalid model output`（本期不回拉，提案 §6.1 决策）。
+7. **上游结果仅认 `b64_json`（请求端显式声明）**：请求 multipart 携带 `response_format=b64_json`（标准 OpenAI 兼容实现默认返回 `url`，不声明则成功路径会稳定落 502），响应缺 `data[0].b64_json`、base64 解码失败、`url` 形态 → `ModelOutputException` → 502 `invalid model output`（`url` 回拉不做，提案 §6.1 决策）。
 8. **本期无 web/UI 改动**；`npm run codegen` 仅随契约再生成 `apps/web/src/api/schema.d.ts`/`schema-training.d.ts`（勿手改）。
 
 ### 1.2 实施范围
@@ -83,7 +83,7 @@ type: Permanent
 |---|------|---------|------|
 | 2.1 | `ModelExceptions` + `ModelImageNotSupportedException`（消息 `model does not support image output`，映射 400） | `servers/training/Ai/ModelExceptions.cs` | 与 `ModelAudioNotSupportedException` 同构 |
 | 2.2 | 图片客户端抽象：`GenerateImageInput(Bytes, MimeType, FileName)` / `GeneratedImage(Bytes, MimeType)`；`IImageModelClient.GenerateImageAsync(provider, model, prompt, image, ct)`（传输失败/超时/非 2xx 抛 `HttpRequestException`、输出不可解析抛 `ModelOutputException`、Provider 不支持图片输出抛 `ModelImageNotSupportedException`）+ `IImageModelClientFactory.Create(providerType)` | `servers/training/Ai/IImageModelClient.cs` | 与提案 §3.2 签名一致 |
-| 2.3 | `OpenAiLikeImageClient`：`POST {provider.Endpoint}/images/edits`（Bearer）+ `MultipartFormDataContent`（`model`/`prompt`/`image`（`ByteArrayContent`，带原文件名与 Content-Type））；解析 `data[0].b64_json` → base64 解码；缺字段/解码失败/`url` 形态 → `ModelOutputException`；非 2xx/超时/传输失败 → `HttpRequestException`；`HttpClient.Timeout = Image:RequestTimeoutSeconds`；复用 named client `AiModel`（`x-opencode-session` 头、`AllowAutoRedirect=false` 一致） | `servers/training/Ai/OpenAiLikeImageClient.cs` | `OpenAiLikeImageClientTests`（假 `HttpMessageHandler`）转绿 |
+| 2.3 | `OpenAiLikeImageClient`：`POST {provider.Endpoint}/images/edits`（Bearer）+ `MultipartFormDataContent`（`model`/`prompt`/`image`（`ByteArrayContent`，带原文件名与 Content-Type）/`response_format=b64_json`（显式声明，与「仅认 b64_json」解析自洽））；解析 `data[0].b64_json` → base64 解码；缺字段/解码失败/`url` 形态 → `ModelOutputException`；非 2xx/超时/传输失败 → `HttpRequestException`；`HttpClient.Timeout = Image:RequestTimeoutSeconds`；复用 named client `AiModel`（`x-opencode-session` 头、`AllowAutoRedirect=false` 一致） | `servers/training/Ai/OpenAiLikeImageClient.cs` | `OpenAiLikeImageClientTests`（假 `HttpMessageHandler`）转绿（断言表单含 `response_format`/`b64_json`） |
 | 2.4 | `ImageModelClientFactory`：按 `provider.Type` 派发（`openai` → `OpenAiLikeImageClient`；`claude` 及未知类型 → 抛 `ModelImageNotSupportedException`） | `servers/training/Ai/ImageModelClientFactory.cs` | 派发用例转绿 |
 
 ### Phase 3: training 编排与端点（TDD：每任务测试先行）

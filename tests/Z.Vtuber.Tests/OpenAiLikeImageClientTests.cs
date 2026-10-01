@@ -80,6 +80,8 @@ public class OpenAiLikeImageClientTests
         Assert.Contains("img-model", body);
         Assert.Contains("name=prompt", body);
         Assert.Contains("一只猫", body);
+        Assert.Contains("name=response_format", body);
+        Assert.Contains("b64_json", body);
         Assert.Contains("name=image", body);
         Assert.Contains("filename=ref.png", body);
     }
