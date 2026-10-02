@@ -490,8 +490,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 绘图生成（文本 + 图片 → 图片）
-         * @description 以 multipart/form-data 输入 text（必填，trim 后非空）+ image（图片文件，必填， image/png / image/jpeg / image/webp，≤ Image:MaxImageBytes 默认 10MB）+ modelId（可选）。 所用模型须满足「输入能力覆盖 text,image、输出能力含 image」：显式 modelId 优先 （非法/不存在 404 model not found、停用 400 model disabled、能力不符 400 model does not support image input/output），缺省按功能点 image-generate 解析 （指定模型优先 → 默认首候选），无可用模型 409 no image model available。 调用 OpenAI-like POST {endpoint}/images/edits（multipart model/prompt/image/response_format=b64_json → data[0].b64_json；显式声明 b64_json，避免标准 OpenAI 兼容实现默认返回 url）， 成功返回图片二进制，失败统一 {"error": "..."}；输入校验失败不发起上游调用。
+         * 绘图生成（文本 + 多图片 → 图片）
+         * @description 以 multipart/form-data 输入 text（必填，trim 后非空）+ image（参考图片 1..N 张，必填， 同名字段重复提交；每张 image/png / image/jpeg / image/webp，≤ Image:MaxImageBytes 默认 10MB， 张数 ≤ Image:MaxImageCount 默认 10）+ modelId（可选）。 所用模型须满足「输入能力覆盖 text,image、输出能力含 image」：显式 modelId 优先 （非法/不存在 404 model not found、停用 400 model disabled、能力不符 400 model does not support image input/output），缺省按功能点 image-generate 解析 （指定模型优先 → 默认首候选），无可用模型 409 no image model available。 调用 OpenAI-like POST {endpoint}/images/edits（multipart model/prompt/image（单图）或 image[]（多图）/response_format=b64_json → data[0].b64_json；显式声明 b64_json， 避免标准 OpenAI 兼容实现默认返回 url），成功返回图片二进制，失败统一 {"error": "..."}； 输入校验失败不发起上游调用。
          */
         post: operations["generateTrainingImage"];
         delete?: never;
@@ -818,11 +818,8 @@ export interface components {
         TrainingImageGenerateRequest: {
             /** @description 绘图提示文本（trim 后非空） */
             text: string;
-            /**
-             * Format: binary
-             * @description 参考图片（image/png / image/jpeg / image/webp，≤ Image:MaxImageBytes 默认 10MB）
-             */
-            image: string;
+            /** @description 参考图片 1..N 张（同名字段重复提交；image/png / image/jpeg / image/webp，每张 ≤ Image:MaxImageBytes 默认 10MB，张数 ≤ Image:MaxImageCount 默认 10） */
+            image: string[];
             /** @description 指定模型 id；缺省按功能点 image-generate 解析（指定优先 → 默认首候选） */
             modelId?: string | null;
         };
@@ -2106,7 +2103,7 @@ export interface operations {
                     "image/png": string;
                 };
             };
-            /** @description {"error": "text is required"/"image is required"/"unsupported image type"/"image too large"/"model disabled"/"model does not support image input"/"model does not support image output"} */
+            /** @description {"error": "text is required"/"image is required"/"too many images"/"unsupported image type"/"image too large"/"model disabled"/"model does not support image input"/"model does not support image output"} */
             400: {
                 headers: {
                     [name: string]: unknown;

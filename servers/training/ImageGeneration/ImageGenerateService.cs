@@ -12,7 +12,7 @@ namespace Z.Vtuber.Training.ImageGeneration;
 /// <summary>
 /// 绘图生成编排：模型选择（显式 <c>modelId</c> 校验优先；缺省按功能点 <c>image-generate</c>
 /// 指定优先 → 默认首候选解析，无可用模型 409）→ 读 Provider → <see cref="IImageModelClient"/> 生成。
-/// Info 日志仅记录 modelSlug/图片字节数/耗时，不打文本、图片内容与 apiKey。
+/// Info 日志仅记录 modelSlug/图片张数/图片总字节数/耗时，不打文本、图片内容与 apiKey。
 /// </summary>
 public sealed class ImageGenerateService(
     TrainingModelRepository models,
@@ -29,20 +29,21 @@ public sealed class ImageGenerateService(
     internal static readonly string[] RequiredOutput = [TrainingModelCapabilities.Image];
 
     public async Task<GeneratedImage> GenerateAsync(
-        string text, string? modelId, GenerateImageInput image, CancellationToken ct = default)
+        string text, string? modelId, IReadOnlyList<GenerateImageInput> images, CancellationToken ct = default)
     {
         var (model, provider) = await ResolveModelAsync(modelId, ct);
 
         var client = imageClientFactory.Create(provider.Type);
 
         var stopwatch = Stopwatch.StartNew();
-        var result = await client.GenerateImageAsync(provider, model, text, image, ct);
+        var result = await client.GenerateImageAsync(provider, model, text, images, ct);
         stopwatch.Stop();
 
         logger.LogInformation(
-            "training image-generate: modelSlug={ModelSlug} imageBytes={ImageBytes} elapsedMs={ElapsedMs}",
+            "training image-generate: modelSlug={ModelSlug} imageCount={ImageCount} totalImageBytes={TotalImageBytes} elapsedMs={ElapsedMs}",
             TrainingMapping.BuildModelSlug(provider.Name, model.Model),
-            image.Bytes.Length,
+            images.Count,
+            images.Sum(i => (long)i.Bytes.Length),
             stopwatch.ElapsedMilliseconds);
         return result;
     }
