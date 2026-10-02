@@ -7,6 +7,10 @@ public sealed class ProviderTypeException(string message) : Exception(message);
 public sealed class ModelAudioNotSupportedException()
     : Exception("model does not support audio input");
 
+/// <summary>Provider 类型不支持图片输出（Claude-like 等）→ 映射 400 <c>model does not support image output</c>。</summary>
+public sealed class ModelImageNotSupportedException()
+    : Exception("model does not support image output");
+
 /// <summary>模型输出非预期 JSON → 映射 502 <c>invalid model output</c>。</summary>
 public sealed class ModelOutputException(string message) : Exception(message);
 

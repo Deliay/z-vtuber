@@ -7,6 +7,7 @@ using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Configuration;
 using Z.Vtuber.Training.Emotion;
 using Z.Vtuber.Training.FeaturePoints;
+using Z.Vtuber.Training.ImageGeneration;
 using Z.Vtuber.Training.Synthesis;
 using Z.Vtuber.Training.Vectors;
 
@@ -61,6 +62,12 @@ builder.Services.AddOptions<SynthesizeOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+// 绘图生成（图片大小上限 / 上游图片生成超时）
+builder.Services.AddOptions<ImageOptions>()
+    .Bind(builder.Configuration.GetSection(ImageOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<AiOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<EmotionTaskOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<RecordingServiceOptions>>().Value);
@@ -68,6 +75,7 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<EmbeddingOpti
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<MilvusOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<TtsOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SynthesizeOptions>>().Value);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ImageOptions>>().Value);
 
 // transcript-api 内网地址（named client，节 TranscriptService:BaseUrl）
 builder.Services.AddHttpClient<ITranscriptApiClient, TranscriptApiClient>(
@@ -131,6 +139,7 @@ builder.Services.AddSingleton<TrainingFeaturePointRepository>();
 builder.Services.AddSingleton<ITrainingModelResolver, TrainingModelResolver>();
 
 builder.Services.AddSingleton<IChatModelClientFactory, ChatModelClientFactory>();
+builder.Services.AddSingleton<IImageModelClientFactory, ImageModelClientFactory>();
 builder.Services.AddSingleton<IModelDiscoveryClient, ModelDiscoveryClient>();
 builder.Services.AddSingleton<IEmotionTaskLockProvider, RedisEmotionTaskLockProvider>();
 builder.Services.AddSingleton<EmotionTaskRunner>();
@@ -144,6 +153,7 @@ builder.Services.AddSingleton<IVectorStore, MilvusVectorStore>();
 builder.Services.AddSingleton<VectorSyncService>();
 builder.Services.AddSingleton<SegmentSyncService>();
 builder.Services.AddSingleton<SynthesizeService>();
+builder.Services.AddSingleton<ImageGenerateService>();
 
 builder.Services.AddControllers();
 

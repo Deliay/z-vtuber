@@ -25,12 +25,20 @@ public static class FeaturePointIds
     /// <summary>输入文本识别情绪（合成情绪推断）。</summary>
     public const string EmotionFromText = "emotion-from-text";
 
+    /// <summary>绘图生成（文本 + 图片 → 图片）。</summary>
+    public const string ImageGenerate = "image-generate";
+
     private static readonly string[] AudioTextInput =
         [TrainingModelCapabilities.Audio, TrainingModelCapabilities.Text];
 
     private static readonly string[] TextInput = [TrainingModelCapabilities.Text];
 
     private static readonly string[] TextOutput = [TrainingModelCapabilities.Text];
+
+    private static readonly string[] TextImageInput =
+        [TrainingModelCapabilities.Text, TrainingModelCapabilities.Image];
+
+    private static readonly string[] ImageOutput = [TrainingModelCapabilities.Image];
 
     public static readonly FeaturePointDefinition DatasetCleanDefinition =
         new(DatasetClean, "数据清洗", AudioTextInput, TextOutput);
@@ -40,4 +48,7 @@ public static class FeaturePointIds
 
     public static readonly FeaturePointDefinition EmotionFromTextDefinition =
         new(EmotionFromText, "输入文本识别情绪", TextInput, TextOutput);
+
+    public static readonly FeaturePointDefinition ImageGenerateDefinition =
+        new(ImageGenerate, "绘图生成", TextImageInput, ImageOutput);
 }
