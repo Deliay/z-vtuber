@@ -12,8 +12,8 @@ namespace Z.Vtuber.Training.Controllers;
 /// <summary>
 /// 绘图生成 API（契约 <c>contracts/training.openapi.yaml</c>）：
 /// <c>POST /api/training/images/generate</c>，<c>multipart/form-data</c> 输入
-/// <c>text</c>（必填）+ <c>image</c>（图片文件，必填）+ <c>modelId</c>（可选）→ 200 图片二进制；
-/// 错误体统一 <c>{"error": "..."}</c>。输入校验（text→image→类型→大小）在调用上游前完成，失败不发起模型调用。
+/// <c>text</c>（必填）+ <c>image</c>（参考图片 1..N 张，同名字段重复提交，必填）+ <c>modelId</c>（可选）→ 200 图片二进制；
+/// 错误体统一 <c>{"error": "..."}</c>。输入校验（text→张数→逐张类型→逐张大小）在调用上游前完成，失败不发起模型调用。
 /// </summary>
 [ApiController]
 [Route("api/training/images")]
@@ -29,15 +29,16 @@ public sealed class TrainingImageGenerateController(
         logger ?? NullLogger<TrainingImageGenerateController>.Instance;
 
     /// <summary>
-    /// 绘图生成：text（400 <c>text is required</c>）→ image 存在（400 <c>image is required</c>）→
-    /// 类型白名单（400 <c>unsupported image type</c>）→ 大小上限（400 <c>image too large</c>）→
+    /// 绘图生成：text（400 <c>text is required</c>）→ 过滤 0 字节 part 后张数 ≥1（400 <c>image is required</c>）→
+    /// 张数 ≤ <see cref="ImageOptions.MaxImageCount"/>（400 <c>too many images</c>）→
+    /// 逐张类型白名单（400 <c>unsupported image type</c>）→ 逐张大小上限（400 <c>image too large</c>，Length 前置 + 读后复核）→
     /// <see cref="ImageGenerateService"/>（模型解析 + 调上游）→ 200 图片二进制。
     /// </summary>
     [HttpPost("generate")]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> Generate(
         [FromForm] string? text,
-        [FromForm] IFormFile? image,
+        [FromForm] IFormFileCollection? image,
         [FromForm] string? modelId,
         CancellationToken ct = default)
     {
@@ -47,39 +48,51 @@ public sealed class TrainingImageGenerateController(
             return BadRequest(new ErrorResponse("text is required"));
         }
 
-        if (image is null || image.Length == 0)
+        // 0 字节 part 一律剔除，不参与计数与后续校验（与既有 image.Length == 0 → image is required 口径一致）。
+        var files = (image ?? new FormFileCollection()).Where(f => f.Length > 0).ToList();
+        if (files.Count == 0)
         {
             return BadRequest(new ErrorResponse("image is required"));
         }
 
-        if (!IsSupportedImageType(image.ContentType))
+        if (files.Count > options.MaxImageCount)
+        {
+            return BadRequest(new ErrorResponse("too many images"));
+        }
+
+        // 第一趟：全量类型白名单（任一非法整体拒绝）。
+        if (files.Any(f => !IsSupportedImageType(f.ContentType)))
         {
             return BadRequest(new ErrorResponse("unsupported image type"));
         }
 
-        // 大小校验双保险：IFormFile.Length 前置拦截，读取后按实际字节数复核。
-        if (image.Length > options.MaxImageBytes)
+        // 第二趟：全量大小上限（IFormFile.Length 前置拦截），读取后按实际字节数复核（双保险）。
+        if (files.Any(f => f.Length > options.MaxImageBytes))
         {
             return BadRequest(new ErrorResponse("image too large"));
         }
 
-        byte[] bytes;
-        await using (var buffer = new MemoryStream())
+        var inputs = new List<GenerateImageInput>(files.Count);
+        foreach (var file in files)
         {
-            await image.CopyToAsync(buffer, ct);
-            bytes = buffer.ToArray();
-        }
+            byte[] bytes;
+            await using (var buffer = new MemoryStream())
+            {
+                await file.CopyToAsync(buffer, ct);
+                bytes = buffer.ToArray();
+            }
 
-        if (bytes.LongLength > options.MaxImageBytes)
-        {
-            return BadRequest(new ErrorResponse("image too large"));
-        }
+            if (bytes.LongLength > options.MaxImageBytes)
+            {
+                return BadRequest(new ErrorResponse("image too large"));
+            }
 
-        var input = new GenerateImageInput(bytes, NormalizeContentType(image.ContentType), image.FileName);
+            inputs.Add(new GenerateImageInput(bytes, NormalizeContentType(file.ContentType), file.FileName));
+        }
 
         try
         {
-            var result = await service.GenerateAsync(prompt, modelId, input, ct);
+            var result = await service.GenerateAsync(prompt, modelId, inputs, ct);
             return File(result.Bytes, result.MimeType);
         }
         catch (NoImageModelAvailableException)

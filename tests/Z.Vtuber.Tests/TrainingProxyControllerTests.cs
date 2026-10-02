@@ -780,6 +780,39 @@ public class TrainingProxyControllerTests
     }
 
     [Fact]
+    public async Task GenerateTrainingImage_ForwardsMultipleSameNameImageParts()
+    {
+        var handler = new StubHandler { Handler = _ => Png([9, 9, 9]) };
+        var controller = CreateController(new HttpClient(handler));
+        const string boundary = "----boundary456";
+        controller.HttpContext.Request.Method = "POST";
+        controller.HttpContext.Request.ContentType = $"multipart/form-data; boundary={boundary}";
+        var multipart = Encoding.UTF8.GetBytes(
+            $"--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n两只猫\r\n" +
+            $"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"a.png\"\r\n" +
+            "Content-Type: image/png\r\n\r\nAAA\r\n" +
+            $"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"b.png\"\r\n" +
+            "Content-Type: image/png\r\n\r\nBBB\r\n" +
+            $"--{boundary}--\r\n");
+        controller.HttpContext.Request.Body = new MemoryStream(multipart);
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.GenerateTrainingImage(CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/images/generate", handler.Requests[0]);
+        Assert.NotNull(handler.ContentTypes[0]);
+        Assert.StartsWith("multipart/form-data", handler.ContentTypes[0]);
+        Assert.Contains(boundary, handler.ContentTypes[0]);
+        var forwarded = handler.Bodies[0];
+        Assert.Contains("两只猫", forwarded);
+        Assert.Contains("filename=\"a.png\"", forwarded);
+        Assert.Contains("filename=\"b.png\"", forwarded);
+        Assert.Equal(2, forwarded.Split("name=\"image\"").Length - 1);
+    }
+
+    [Fact]
     public async Task GenerateTrainingImage_UpstreamImageResponse_Passthrough()
     {
         var handler = new StubHandler { Handler = _ => Png([7, 8, 9]) };
