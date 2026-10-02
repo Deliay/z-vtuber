@@ -17,9 +17,10 @@ public sealed record GeneratedImage(byte[] Bytes, string MimeType);
 /// </summary>
 public interface IImageModelClient
 {
+    /// <summary><paramref name="images"/> 至少 1 张；顺序按提交顺序透传。</summary>
     Task<GeneratedImage> GenerateImageAsync(
         TrainingProviderRecord provider, TrainingModelRecord model,
-        string prompt, GenerateImageInput image, CancellationToken ct = default);
+        string prompt, IReadOnlyList<GenerateImageInput> images, CancellationToken ct = default);
 }
 
 /// <summary>

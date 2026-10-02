@@ -10,7 +10,8 @@ namespace Z.Vtuber.Tests;
 
 /// <summary>
 /// OpenAI-like 图片客户端契约（假 <see cref="HttpMessageHandler"/>，不打外网）：
-/// <c>POST {endpoint}/images/edits</c> multipart（model/prompt/image，带原文件名与 Content-Type）、
+/// <c>POST {endpoint}/images/edits</c> multipart（model/prompt/图片，单图字段名 <c>image</c> 零回归、
+/// 多图字段名 <c>image[]</c> 重复，带原文件名与 Content-Type）、
 /// <c>data[0].b64_json</c> 解析、非 2xx/超时/传输失败与不可解析输出的异常映射；工厂按 provider.Type 派发。
 /// </summary>
 public class OpenAiLikeImageClientTests
@@ -55,6 +56,21 @@ public class OpenAiLikeImageClientTests
 
     private static GenerateImageInput Image() => new([1, 2, 3], "image/png", "ref.png");
 
+    private static IReadOnlyList<GenerateImageInput> Images(params GenerateImageInput[] images) => images;
+
+    private static int CountOccurrences(string text, string needle)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += needle.Length;
+        }
+
+        return count;
+    }
+
     private static HttpResponseMessage Json(string body) =>
         new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
@@ -68,7 +84,7 @@ public class OpenAiLikeImageClientTests
         };
         var client = Create(handler);
 
-        var result = await client.GenerateImageAsync(Provider(), Model(), "一只猫", Image());
+        var result = await client.GenerateImageAsync(Provider(), Model(), "一只猫", Images(Image()));
 
         Assert.Equal([9, 8, 7], result.Bytes);
         Assert.Equal("image/png", result.MimeType);
@@ -82,8 +98,44 @@ public class OpenAiLikeImageClientTests
         Assert.Contains("一只猫", body);
         Assert.Contains("name=response_format", body);
         Assert.Contains("b64_json", body);
+        // 单图零回归：字段名恰为 image（非 image[]），文件名保持原值。
         Assert.Contains("name=image", body);
         Assert.Contains("filename=ref.png", body);
+        Assert.DoesNotContain("image[]", body);
+        Assert.Equal(1, CountOccurrences(body, "filename="));
+    }
+
+    [Fact]
+    public async Task Generate_MultipleImages_UsesImageArrayFieldInOrder()
+    {
+        var payload = Convert.ToBase64String([9, 8, 7]);
+        var handler = new StubHandler
+        {
+            Handler = _ => Json($"{{\"data\":[{{\"b64_json\":\"{payload}\"}}]}}"),
+        };
+        var client = Create(handler);
+
+        var images = new[]
+        {
+            new GenerateImageInput([1, 1], "image/png", "a.png"),
+            new GenerateImageInput([2, 2], "image/jpeg", ""),
+            new GenerateImageInput([3, 3], "image/webp", "c.webp"),
+        };
+
+        var result = await client.GenerateImageAsync(Provider(), Model(), "p", images);
+
+        Assert.Equal([9, 8, 7], result.Bytes);
+        var body = handler.Bodies[0];
+        Assert.Contains("name=model", body);
+        Assert.Contains("name=prompt", body);
+        Assert.Contains("\"image[]\"", body);
+        Assert.Equal(3, CountOccurrences(body, "image[]"));
+        Assert.Contains("filename=a.png", body);
+        Assert.Contains("filename=image-2", body); // 文件名为空 → image-{序号}（1 基）
+        Assert.Contains("filename=c.webp", body);
+        Assert.Contains("Content-Type: image/png", body);
+        Assert.Contains("Content-Type: image/jpeg", body);
+        Assert.Contains("Content-Type: image/webp", body);
     }
 
     [Fact]
@@ -93,7 +145,7 @@ public class OpenAiLikeImageClientTests
         var client = Create(handler);
 
         await Assert.ThrowsAsync<HttpRequestException>(
-            () => client.GenerateImageAsync(Provider(), Model(), "p", Image()));
+            () => client.GenerateImageAsync(Provider(), Model(), "p", Images(Image())));
     }
 
     [Theory]
@@ -108,7 +160,7 @@ public class OpenAiLikeImageClientTests
         var client = Create(handler);
 
         await Assert.ThrowsAsync<ModelOutputException>(
-            () => client.GenerateImageAsync(Provider(), Model(), "p", Image()));
+            () => client.GenerateImageAsync(Provider(), Model(), "p", Images(Image())));
     }
 
     [Fact]
@@ -118,7 +170,7 @@ public class OpenAiLikeImageClientTests
         var client = Create(handler);
 
         await Assert.ThrowsAsync<HttpRequestException>(
-            () => client.GenerateImageAsync(Provider(), Model(), "p", Image()));
+            () => client.GenerateImageAsync(Provider(), Model(), "p", Images(Image())));
     }
 
     [Fact]
@@ -128,7 +180,7 @@ public class OpenAiLikeImageClientTests
         var client = Create(handler);
 
         await Assert.ThrowsAsync<TaskCanceledException>(
-            () => client.GenerateImageAsync(Provider(), Model(), "p", Image()));
+            () => client.GenerateImageAsync(Provider(), Model(), "p", Images(Image())));
     }
 
     [Fact]
