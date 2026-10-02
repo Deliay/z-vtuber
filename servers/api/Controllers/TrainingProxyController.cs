@@ -141,6 +141,10 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
     public Task<IActionResult> RebuildDatasetSegments(string datasetId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/segments/rebuild", ct);
 
+    [HttpPost("training/images/generate")]
+    public Task<IActionResult> GenerateTrainingImage(CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Post, "api/training/images/generate", ct);
+
     private async Task<IActionResult> ForwardAsync(HttpMethod method, string upstreamPath, CancellationToken ct)
     {
         var client = httpClientFactory.CreateClient(TrainingClientName);

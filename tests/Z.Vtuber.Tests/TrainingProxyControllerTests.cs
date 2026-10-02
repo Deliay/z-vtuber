@@ -737,4 +737,81 @@ public class TrainingProxyControllerTests
         Assert.Equal(StatusCodes.Status400BadRequest, controller.Response.StatusCode);
         Assert.Contains("unsupported capability", await ReadBodyAsync(controller.HttpContext));
     }
+
+    // ---- 绘图接口镜像：multipart 请求体（含 boundary）与 image/png 二进制响应透传 ----
+
+    private static async Task<byte[]> ReadBytesAsync(HttpContext context)
+    {
+        context.Response.Body.Position = 0;
+        using var buffer = new MemoryStream();
+        await context.Response.Body.CopyToAsync(buffer);
+        return buffer.ToArray();
+    }
+
+    private static HttpResponseMessage Png(byte[] bytes)
+    {
+        var content = new ByteArrayContent(bytes);
+        content.Headers.TryAddWithoutValidation("Content-Type", "image/png");
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+    }
+
+    [Fact]
+    public async Task GenerateTrainingImage_ForwardsPostMultipartBodyAndContentType()
+    {
+        var handler = new StubHandler { Handler = _ => Png([9, 9, 9]) };
+        var controller = CreateController(new HttpClient(handler));
+        const string boundary = "----boundary123";
+        controller.HttpContext.Request.Method = "POST";
+        controller.HttpContext.Request.ContentType = $"multipart/form-data; boundary={boundary}";
+        var multipart = Encoding.UTF8.GetBytes(
+            $"--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n一只猫\r\n--{boundary}--\r\n");
+        controller.HttpContext.Request.Body = new MemoryStream(multipart);
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.GenerateTrainingImage(CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("POST", handler.Methods[0]);
+        Assert.Equal("/api/training/images/generate", handler.Requests[0]);
+        Assert.NotNull(handler.ContentTypes[0]);
+        Assert.StartsWith("multipart/form-data", handler.ContentTypes[0]);
+        Assert.Contains(boundary, handler.ContentTypes[0]);
+        Assert.Contains("一只猫", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task GenerateTrainingImage_UpstreamImageResponse_Passthrough()
+    {
+        var handler = new StubHandler { Handler = _ => Png([7, 8, 9]) };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.Method = "POST";
+        controller.HttpContext.Request.ContentType = "multipart/form-data; boundary=b";
+        controller.HttpContext.Request.Body = new MemoryStream([1]);
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.GenerateTrainingImage(CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+        Assert.Equal("image/png", controller.Response.ContentType);
+        Assert.Equal([7, 8, 9], await ReadBytesAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task GenerateTrainingImage_Unreachable_Returns502()
+    {
+        var handler = new StubHandler { Handler = _ => throw new HttpRequestException("boom") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.Method = "POST";
+        controller.HttpContext.Request.ContentType = "multipart/form-data; boundary=b";
+        controller.HttpContext.Request.Body = new MemoryStream([1]);
+
+        var result = await controller.GenerateTrainingImage(CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+        Assert.Equal(
+            """{"error":"training service unavailable"}""",
+            JsonSerializer.Serialize(status.Value));
+    }
 }
