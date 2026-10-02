@@ -19,6 +19,7 @@ public class TrainingProxyTimeoutConsistencyTests
             ("Ai", new AiOptions().RequestTimeoutSeconds),
             ("Embedding", new EmbeddingOptions().RequestTimeoutSeconds),
             ("Milvus", new MilvusOptions().RequestTimeoutSeconds),
+            ("Image", new ImageOptions().RequestTimeoutSeconds),
         };
 
         foreach (var (stage, seconds) in stageBudgets)
