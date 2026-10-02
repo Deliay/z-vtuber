@@ -34,7 +34,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
 
     private sealed class StubImageClient : IImageModelClient
     {
-        public List<(TrainingModelRecord Model, string Prompt, GenerateImageInput Image)> Calls { get; } = [];
+        public List<(TrainingModelRecord Model, string Prompt, IReadOnlyList<GenerateImageInput> Images)> Calls { get; } = [];
 
         public GeneratedImage Result { get; set; } = new([4, 5, 6], "image/png");
 
@@ -42,9 +42,9 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
 
         public Task<GeneratedImage> GenerateImageAsync(
             TrainingProviderRecord provider, TrainingModelRecord model,
-            string prompt, GenerateImageInput image, CancellationToken ct = default)
+            string prompt, IReadOnlyList<GenerateImageInput> images, CancellationToken ct = default)
         {
-            Calls.Add((model, prompt, image));
+            Calls.Add((model, prompt, images));
             return Throw is not null
                 ? Task.FromException<GeneratedImage>(Throw)
                 : Task.FromResult(Result);
@@ -86,6 +86,17 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
             Headers = new HeaderDictionary(),
             ContentType = contentType,
         };
+    }
+
+    private static IFormFileCollection Files(params IFormFile[] files)
+    {
+        var collection = new FormFileCollection();
+        foreach (var file in files)
+        {
+            collection.Add(file);
+        }
+
+        return collection;
     }
 
     private async Task<TrainingProviderRecord> SeedProviderAsync(string type = TrainingProviderTypes.OpenAi)
@@ -149,7 +160,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
         var factory = new StubImageClientFactory(client);
 
         var result = await Create(factory).Generate(
-            "  一只猫  ", File([1, 2, 3], "image/png", "cat.png"), model.Id.ToString());
+            "  一只猫  ", Files(File([1, 2, 3], "image/png", "cat.png")), model.Id.ToString());
 
         var file = Assert.IsType<FileContentResult>(result);
         Assert.Equal("image/png", file.ContentType);
@@ -158,16 +169,136 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
         var call = Assert.Single(client.Calls);
         Assert.Equal(model.Id, call.Model.Id);
         Assert.Equal("一只猫", call.Prompt);
-        Assert.Equal([1, 2, 3], call.Image.Bytes);
-        Assert.Equal("image/png", call.Image.MimeType);
-        Assert.Equal("cat.png", call.Image.FileName);
+        var image = Assert.Single(call.Images);
+        Assert.Equal([1, 2, 3], image.Bytes);
+        Assert.Equal("image/png", image.MimeType);
+        Assert.Equal("cat.png", image.FileName);
+    }
+
+    [Fact]
+    public async Task Generate_MultipleImages_Succeeds_AndForwardsAllInOrder()
+    {
+        var provider = await SeedProviderAsync();
+        var model = await SeedModelAsync(provider.Id);
+        var client = new StubImageClient();
+        var factory = new StubImageClientFactory(client);
+
+        var result = await Create(factory).Generate(
+            "文本",
+            Files(
+                File([1, 2], "image/png", "a.png"),
+                File([3, 4, 5], "image/jpeg", "b.jpg"),
+                File([6], "image/webp", "c.webp")),
+            model.Id.ToString());
+
+        Assert.IsType<FileContentResult>(result);
+        var call = Assert.Single(client.Calls);
+        Assert.Equal(3, call.Images.Count);
+        Assert.Equal([1, 2], call.Images[0].Bytes);
+        Assert.Equal("image/png", call.Images[0].MimeType);
+        Assert.Equal("a.png", call.Images[0].FileName);
+        Assert.Equal([3, 4, 5], call.Images[1].Bytes);
+        Assert.Equal("image/jpeg", call.Images[1].MimeType);
+        Assert.Equal([6], call.Images[2].Bytes);
+        Assert.Equal("image/webp", call.Images[2].MimeType);
+    }
+
+    [Fact]
+    public async Task Generate_TooManyImages_Returns400_AndSkipsUpstream()
+    {
+        var provider = await SeedProviderAsync();
+        var model = await SeedModelAsync(provider.Id);
+        var client = new StubImageClient();
+        var factory = new StubImageClientFactory(client);
+
+        var result = await Create(factory, new ImageOptions { MaxImageCount = 2 }).Generate(
+            "文本",
+            Files(
+                File([1], "image/png", "a.png"),
+                File([1], "image/png", "b.png"),
+                File([1], "image/png", "c.png")),
+            model.Id.ToString());
+
+        Assert.Equal("too many images", ErrorOf(result, StatusCodes.Status400BadRequest));
+        Assert.Empty(client.Calls);
+        Assert.Empty(factory.Types);
+    }
+
+    [Fact]
+    public async Task Generate_ElevenImages_DefaultMaxImageCount_Returns400()
+    {
+        var files = Enumerable.Range(0, 11)
+            .Select(i => File([1], "image/png", $"f{i}.png"))
+            .ToArray();
+
+        var result = await Create(new StubImageClientFactory(new StubImageClient()))
+            .Generate("文本", Files(files), null);
+
+        Assert.Equal("too many images", ErrorOf(result, StatusCodes.Status400BadRequest));
+    }
+
+    [Fact]
+    public async Task Generate_SecondImageUnsupportedType_Returns400_AndSkipsUpstream()
+    {
+        var client = new StubImageClient();
+        var result = await Create(new StubImageClientFactory(client)).Generate(
+            "文本",
+            Files(File([1], "image/png", "a.png"), File([1], "image/gif", "b.gif")),
+            null);
+
+        Assert.Equal("unsupported image type", ErrorOf(result, StatusCodes.Status400BadRequest));
+        Assert.Empty(client.Calls);
+    }
+
+    [Fact]
+    public async Task Generate_SecondImageTooLarge_Returns400_AndSkipsUpstream()
+    {
+        var client = new StubImageClient();
+        var result = await Create(new StubImageClientFactory(client), new ImageOptions { MaxImageBytes = 2 })
+            .Generate(
+                "文本",
+                Files(File([1], "image/png", "a.png"), File([1, 2, 3], "image/png", "b.png")),
+                null);
+
+        Assert.Equal("image too large", ErrorOf(result, StatusCodes.Status400BadRequest));
+        Assert.Empty(client.Calls);
+    }
+
+    [Fact]
+    public async Task Generate_ZeroBytePartsOnly_Returns400ImageRequired()
+    {
+        var client = new StubImageClient();
+        var result = await Create(new StubImageClientFactory(client)).Generate(
+            "文本", Files(File([], "image/png", "a.png"), File([], "image/png", "b.png")), null);
+
+        Assert.Equal("image is required", ErrorOf(result, StatusCodes.Status400BadRequest));
+        Assert.Empty(client.Calls);
+    }
+
+    [Fact]
+    public async Task Generate_ZeroBytePartMixedWithValid_IgnoresZeroByte()
+    {
+        var provider = await SeedProviderAsync();
+        var model = await SeedModelAsync(provider.Id);
+        var client = new StubImageClient();
+
+        var result = await Create(new StubImageClientFactory(client)).Generate(
+            "文本",
+            Files(File([], "image/png", "empty.png"), File([7, 8], "image/png", "ok.png")),
+            model.Id.ToString());
+
+        Assert.IsType<FileContentResult>(result);
+        var call = Assert.Single(client.Calls);
+        var image = Assert.Single(call.Images);
+        Assert.Equal([7, 8], image.Bytes);
+        Assert.Equal("ok.png", image.FileName);
     }
 
     [Fact]
     public async Task Generate_EmptyText_Returns400()
     {
         var result = await Create(new StubImageClientFactory(new StubImageClient()))
-            .Generate("   ", File([1], "image/png"), null);
+            .Generate("   ", Files(File([1], "image/png")), null);
 
         Assert.Equal("text is required", ErrorOf(result, StatusCodes.Status400BadRequest));
     }
@@ -185,7 +316,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
     public async Task Generate_EmptyImage_Returns400()
     {
         var result = await Create(new StubImageClientFactory(new StubImageClient()))
-            .Generate("文本", File([], "image/png"), null);
+            .Generate("文本", Files(File([], "image/png")), null);
 
         Assert.Equal("image is required", ErrorOf(result, StatusCodes.Status400BadRequest));
     }
@@ -195,7 +326,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
     {
         var client = new StubImageClient();
         var result = await Create(new StubImageClientFactory(client))
-            .Generate("文本", File([1, 2, 3], "image/gif"), null);
+            .Generate("文本", Files(File([1, 2, 3], "image/gif")), null);
 
         Assert.Equal("unsupported image type", ErrorOf(result, StatusCodes.Status400BadRequest));
         Assert.Empty(client.Calls);
@@ -206,7 +337,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
     {
         var client = new StubImageClient();
         var result = await Create(new StubImageClientFactory(client), new ImageOptions { MaxImageBytes = 2 })
-            .Generate("文本", File([1, 2, 3], "image/png"), null);
+            .Generate("文本", Files(File([1, 2, 3], "image/png")), null);
 
         Assert.Equal("image too large", ErrorOf(result, StatusCodes.Status400BadRequest));
         Assert.Empty(client.Calls);
@@ -216,12 +347,12 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
     public async Task Generate_InvalidModelId_Returns404()
     {
         var result = await Create(new StubImageClientFactory(new StubImageClient()))
-            .Generate("文本", File([1], "image/png"), ObjectId.GenerateNewId().ToString());
+            .Generate("文本", Files(File([1], "image/png")), ObjectId.GenerateNewId().ToString());
 
         Assert.Equal("model not found", ErrorOf(result, StatusCodes.Status404NotFound));
 
         var malformed = await Create(new StubImageClientFactory(new StubImageClient()))
-            .Generate("文本", File([1], "image/png"), "not-an-object-id");
+            .Generate("文本", Files(File([1], "image/png")), "not-an-object-id");
 
         Assert.Equal("model not found", ErrorOf(malformed, StatusCodes.Status404NotFound));
     }
@@ -233,7 +364,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
         var model = await SeedModelAsync(provider.Id, enabled: false);
 
         var result = await Create(new StubImageClientFactory(new StubImageClient()))
-            .Generate("文本", File([1], "image/png"), model.Id.ToString());
+            .Generate("文本", Files(File([1], "image/png")), model.Id.ToString());
 
         Assert.Equal("model disabled", ErrorOf(result, StatusCodes.Status400BadRequest));
     }
@@ -246,7 +377,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
             provider.Id, input: [TrainingModelCapabilities.Image], output: [TrainingModelCapabilities.Image]);
 
         var result = await Create(new StubImageClientFactory(new StubImageClient()))
-            .Generate("文本", File([1], "image/png"), model.Id.ToString());
+            .Generate("文本", Files(File([1], "image/png")), model.Id.ToString());
 
         Assert.Equal("model does not support image input", ErrorOf(result, StatusCodes.Status400BadRequest));
     }
@@ -260,7 +391,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
             output: [TrainingModelCapabilities.Text]);
 
         var result = await Create(new StubImageClientFactory(new StubImageClient()))
-            .Generate("文本", File([1], "image/png"), model.Id.ToString());
+            .Generate("文本", Files(File([1], "image/png")), model.Id.ToString());
 
         Assert.Equal("model does not support image output", ErrorOf(result, StatusCodes.Status400BadRequest));
     }
@@ -269,7 +400,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
     public async Task Generate_Default_NoCandidate_Returns409()
     {
         var result = await Create(new StubImageClientFactory(new StubImageClient()))
-            .Generate("文本", File([1], "image/png"), null);
+            .Generate("文本", Files(File([1], "image/png")), null);
 
         Assert.Equal("no image model available", ErrorOf(result, StatusCodes.Status409Conflict));
     }
@@ -284,7 +415,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
 
         var client = new StubImageClient();
         var result = await Create(new StubImageClientFactory(client))
-            .Generate("文本", File([1], "image/png"), null);
+            .Generate("文本", Files(File([1], "image/png")), null);
 
         Assert.IsType<FileContentResult>(result);
         Assert.NotEqual(first.Id, Assert.Single(client.Calls).Model.Id);
@@ -300,7 +431,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
 
         var client = new StubImageClient();
         var result = await Create(new StubImageClientFactory(client))
-            .Generate("文本", File([1], "image/png"), null);
+            .Generate("文本", Files(File([1], "image/png")), null);
 
         Assert.IsType<FileContentResult>(result);
         Assert.Equal(first.Id, Assert.Single(client.Calls).Model.Id);
@@ -314,7 +445,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
         var client = new StubImageClient { Throw = new HttpRequestException("boom") };
 
         var result = await Create(new StubImageClientFactory(client))
-            .Generate("文本", File([1], "image/png"), model.Id.ToString());
+            .Generate("文本", Files(File([1], "image/png")), model.Id.ToString());
 
         Assert.Equal("model service unavailable", ErrorOf(result, StatusCodes.Status502BadGateway));
     }
@@ -327,7 +458,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
         var client = new StubImageClient { Throw = new TaskCanceledException("timeout") };
 
         var result = await Create(new StubImageClientFactory(client))
-            .Generate("文本", File([1], "image/png"), model.Id.ToString());
+            .Generate("文本", Files(File([1], "image/png")), model.Id.ToString());
 
         Assert.Equal("model service unavailable", ErrorOf(result, StatusCodes.Status502BadGateway));
     }
@@ -340,7 +471,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
         var client = new StubImageClient { Throw = new ModelOutputException("bad") };
 
         var result = await Create(new StubImageClientFactory(client))
-            .Generate("文本", File([1], "image/png"), model.Id.ToString());
+            .Generate("文本", Files(File([1], "image/png")), model.Id.ToString());
 
         Assert.Equal("invalid model output", ErrorOf(result, StatusCodes.Status502BadGateway));
     }
@@ -356,7 +487,7 @@ public class TrainingImageGenerateApiTests(MongoDbFixture fixture)
             NullLoggerFactory.Instance);
 
         var result = await Create(factory)
-            .Generate("文本", File([1], "image/png"), model.Id.ToString());
+            .Generate("文本", Files(File([1], "image/png")), model.Id.ToString());
 
         Assert.Equal("model does not support image output", ErrorOf(result, StatusCodes.Status400BadRequest));
     }
