@@ -894,3 +894,11 @@ export function trainingAudioClipUrl(
   const end = typeof endMs === 'number' && endMs > 0 ? endMs : startMs + 300000
   return recordingAudioClipUrl(roomId, fileName, startMs, end)
 }
+
+/**
+ * 数据集导出 zip 下载地址：`/api/training/datasets/{datasetId}/export`。
+ * 供 `<a href download>` 直接下载（浏览器接管流式下载），无需前端维护状态。
+ */
+export function trainingDatasetExportUrl(datasetId: string): string {
+  return `${BASE_URL}/training/datasets/${encodeURIComponent(datasetId)}/export`
+}

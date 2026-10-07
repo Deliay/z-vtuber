@@ -1094,6 +1094,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/datasets/{datasetId}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 导出数据集为 zip（代理训练服务）
+         * @description 代理 training 服务，query 原样透传；成功 200 以 application/zip 流式透传响应体 （无 Content-Length）与 Content-Disposition（attachment; filename*=UTF-8''{urlencoded 数据集名}.zip） 及 Cache-Control: no-store，训练侧打包与跳过口径见 training 契约； 404 数据集不存在与 502 training service unavailable 错误体透传。
+         */
+        get: operations["exportTrainingDataset"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/training/images/generate": {
         parameters: {
             query?: never;
@@ -4536,6 +4556,49 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrainingSegmentsRebuildResult"];
+                };
+            };
+            /** @description 数据集不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingErrorResponse"];
+                };
+            };
+            /** @description training 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    exportTrainingDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["TrainingDatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 导出的 zip 二进制流（Content-Type / Content-Disposition 透传，无 Content-Length） */
+            200: {
+                headers: {
+                    /** @description attachment; filename*=UTF-8''{urlencoded 数据集名}.zip */
+                    "Content-Disposition"?: string;
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
                 };
             };
             /** @description 数据集不存在 */
