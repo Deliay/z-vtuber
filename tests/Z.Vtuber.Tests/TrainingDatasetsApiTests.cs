@@ -28,7 +28,7 @@ public class TrainingDatasetsApiTests(MongoDbFixture fixture) : IClassFixture<Mo
 
     private TrainingDatasetsController CreateController() =>
         WithContext(new TrainingDatasetsController(
-            Datasets, Items, NullLogger<TrainingDatasetsController>.Instance));
+            Datasets, Items, new StubAudioClient(), NullLogger<TrainingDatasetsController>.Instance));
 
     private static T WithContext<T>(T controller) where T : ControllerBase
     {

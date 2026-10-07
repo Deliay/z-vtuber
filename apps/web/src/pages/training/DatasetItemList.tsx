@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
   Alert,
   App as AntdApp,
@@ -37,6 +37,12 @@ export interface DatasetItemListProps {
   waveformLoader?: WaveformLoader
   /** 列表数据变化（如情绪任务提交）后的外部回调（用于刷新任务队列等）。 */
   onChanged?: () => void
+  /**
+   * 条目列表加载结束后回调条目数（用于数据集页「下载数据集」禁用判定）。
+   * 携带 `datasetId` 以便父级丢弃非当前数据集（旧实例在途响应晚到）的上报；
+   * 加载失败按 0 上报（未知 = 禁用）。
+   */
+  onItemsLoaded?: (datasetId: string, count: number) => void
 }
 
 type GroupMode = 'none' | 'source' | 'audioType'
@@ -128,6 +134,7 @@ export function DatasetItemList({
   reloadToken = 0,
   waveformLoader,
   onChanged,
+  onItemsLoaded,
 }: DatasetItemListProps) {
   const { modal } = AntdApp.useApp()
   const [items, setItems] = useState<TrainingDatasetItem[]>([])
@@ -145,17 +152,32 @@ export function DatasetItemList({
   /** 内联保存/批量删除进行中标志（防重复提交）。 */
   const [savingEdit, setSavingEdit] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  /** 组件存活标志：卸载后在途请求的回调一律丢弃，避免旧数据集响应污染父级计数。 */
+  const activeRef = useRef(true)
+
+  useEffect(() => {
+    activeRef.current = true
+    return () => {
+      activeRef.current = false
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
+    const requestedDatasetId = datasetId
     try {
       const list = await listTrainingDatasetItems(datasetId)
+      if (!activeRef.current) return
       setItems(list)
       setSelected((prev) => prev.filter((id) => list.some((item) => item.id === id)))
       setError('')
+      onItemsLoaded?.(requestedDatasetId, list.length)
     } catch (err) {
+      if (!activeRef.current) return
       setError(errorMessage(err))
+      // 计数不可用（加载失败）时按 0 上报，使父级「下载数据集」禁用（未知 = 禁用）。
+      onItemsLoaded?.(requestedDatasetId, 0)
     }
-  }, [datasetId])
+  }, [datasetId, onItemsLoaded])
 
   useEffect(() => {
     void refresh()

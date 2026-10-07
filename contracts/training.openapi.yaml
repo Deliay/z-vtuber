@@ -826,6 +826,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/training/datasets/{datasetId}/export:
+    get:
+      summary: 导出数据集为 zip（流式）
+      description: >-
+        将数据集条目按 CreatedAt、AudioKey 升序（与条目列表一致）从 000001 起连续编号，
+        逐条取音频（与试听同源）打包为 zip 流式返回：每条成功导出的条目写入 {6位数字}.mp3
+        （audio/mpeg 字节）与同名 {6位数字}.txt（条目文本，UTF-8 无 BOM），
+        音频获取失败或降级非 mp3 的条目跳过且不占编号（编号保持连续），下载不中断。
+        响应头先行：200 / application/zip / Content-Disposition:
+        attachment; filename*=UTF-8''{urlencoded 数据集名}.zip / Cache-Control: no-store，
+        无 Content-Length（chunked 流式下行）；数据集为空时返回仅含中央目录的空 zip。
+      operationId: exportTrainingDataset
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      responses:
+        "200":
+          description: 导出的 zip 二进制流（无 Content-Length；空数据集返回空 zip）
+          headers:
+            Content-Disposition:
+              description: "attachment; filename*=UTF-8''{urlencoded 数据集名}.zip"
+              schema:
+                type: string
+            Cache-Control:
+              description: no-store
+              schema:
+                type: string
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: '{"error": "dataset not found"}'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/training/images/generate:
     post:
       summary: 绘图生成（文本 + 多图片 → 图片）

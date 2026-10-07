@@ -29,7 +29,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
 单条「重新识别」与批量「情绪识别」后台任务（周期扫描 + Redis 抢锁消费，写入条目 `Extensions.emotion`）。web 一律经 `servers/api` 代理访问，不直连本服务。
 
 - `Controllers/`：
-  - `TrainingDatasetsController`（`[Route("api/training/datasets")]`，接口 1-4）：列表（`type` 必填且本期固定 `audio`，否则 400 `unsupported dataset type`，按 `CreatedAt` 升序）、新建（201；名字 trim 后非空 ≤128，否则 400 `name is required`/`name too long`；同 `(Type,Name)` 重名 409 `dataset name exists`）、重命名（400/404/409/200）、删除（先 `DeleteByDatasetAsync` 级联清条目再删数据集，204/404）
+  - `TrainingDatasetsController`（`[Route("api/training/datasets")]`，接口 1-4）：列表（`type` 必填且本期固定 `audio`，否则 400 `unsupported dataset type`，按 `CreatedAt` 升序）、新建（201；名字 trim 后非空 ≤128，否则 400 `name is required`/`name too long`；同 `(Type,Name)` 重名 409 `dataset name exists`）、重命名（400/404/409/200）、删除（先 `DeleteByDatasetAsync` 级联清条目再删数据集，204/404）；另含**导出 zip action** `GET {datasetId}/export`（数据集存在性校验 404 后响应头先行：200 / `application/zip` / `Content-Disposition: attachment; filename*=UTF-8''{urlencoded 名字}.zip` / `Cache-Control: no-store`，再 `ZipArchive(Response.Body, Create, leaveOpen)` 流式写；条目 `ListAsync(datasetId, null, null)`（`CreatedAt`、`AudioKey` 升序）逐条 `IRecordingAudioClient.GetClipAsync` 取音频，成功条目从 `000001` 起 `{D6}.mp3` + `{D6}.txt`（UTF-8 无 BOM）成对并 `FlushAsync`，取数失败或 `ContentType != audio/mpeg`（含 recording wav 降级）跳过且不占编号、下载不中断，全程尊重 `RequestAborted`；Info 收尾日志 `exported/skipped`；构造新增必填 `IRecordingAudioClient`）
   - `TrainingDatasetItemsController`（`[Route("api/training/datasets/{datasetId}/items")]`，接口 5-8）：列表（`audioType?`/`source?` 过滤，`CreatedAt`、`AudioKey` 升序）、导入、更新、批量删除；错误体统一 `{"error": "..."}`，非法 ObjectId 一律按「不存在」→ 404；存在性判定与前值回读走仓储 `GetByIdAsync` 单读
   - `TrainingProvidersController`（`[Route("api/training/providers")]`，接口 9-14，新增）：Provider 列表/新建/更新/删除（删除**级联删其下 Models**）、`GET {id}/models/discover`（按 `type` 选协议并去重排序；不可达 502 `provider service unavailable`、响应非法 502 `invalid provider response`）、`POST {id}/models/import`（`{imported, skipped}`；模型名 trim 后 > 128 → 400 `model too long`，与手动添加同口径）；name 全局唯一（409 `provider name exists`）、type 白名单 `openai|claude`、endpoint 仅 http/https 且去尾 `/`；**响应永不含 apiKey，仅 `apiKeySet`**
   - `TrainingModelsController`（`[Route("api/training/models")]`，接口 15-18，新增）：列表（`enabled?` 过滤 + `input`/`output` 逗号分隔能力过滤，模型须**覆盖**所需集合，每项含服务端拼好的 `slug = {providerName}/{model}` 与**输入/输出能力** `inputCapabilities`/`outputCapabilities`）、手动添加（Provider 下拉口径，provider 404/重复 409 `model exists`；可选能力数组归一化，非法 400 `unsupported capability`）、更新（启停/改名 409；能力用 `JsonElement` 区分缺失（不改）/显式 null（不改）/数组（含空数组 = 清空），非法 400 `unsupported capability`）、删除
@@ -80,6 +80,7 @@ AI 训练模块「数据集工具优化」：数据集管理、条目管理、�
 | POST | `/api/training/datasets` | 新建（201；400/409 `dataset name exists`） |
 | PUT | `/api/training/datasets/{datasetId}` | 重命名（200/400/404/409） |
 | DELETE | `/api/training/datasets/{datasetId}` | 删除并**级联清空该数据集全部条目**（204/404） |
+| GET | `/api/training/datasets/{datasetId}/export` | 导出数据集为 zip（流式：`{D6}.mp3` + `{D6}.txt`（UTF-8 无 BOM）成对、`000001` 起连续编号；取音频失败/降级非 mp3 跳过不占编号；`Content-Disposition` UTF-8 文件名；200/404） |
 | GET | `/api/training/datasets/{datasetId}/items` | 条目列表（query `audioType?`/`source?`；200/404） |
 | POST | `/api/training/datasets/{datasetId}/items/import` | 从识别结果导入（`{imported, skipped}`；400/404/502 `transcript service unavailable`） |
 | PUT | `/api/training/datasets/{datasetId}/items/{itemId}` | 更新 `audioUri`/`text`/`startMs`/`endMs`（400/404） |
