@@ -39,6 +39,10 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
     public Task<IActionResult> DeleteDataset(string datasetId, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Delete, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}", ct);
 
+    [HttpGet("training/datasets/{datasetId}/export")]
+    public Task<IActionResult> ExportDataset(string datasetId, CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Get, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/export", ct);
+
     [HttpGet("training/datasets/{datasetId}/items")]
     public Task<IActionResult> ListItems(string datasetId, [FromQuery] string? audioType, [FromQuery] string? source, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Get, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/items", ct);

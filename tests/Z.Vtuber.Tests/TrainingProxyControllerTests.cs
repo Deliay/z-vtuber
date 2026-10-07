@@ -847,4 +847,72 @@ public class TrainingProxyControllerTests
             """{"error":"training service unavailable"}""",
             JsonSerializer.Serialize(status.Value));
     }
+
+    // ---- 数据集导出 zip 镜像透传 ----
+
+    private static HttpResponseMessage Zip(byte[] bytes, string contentDisposition)
+    {
+        var content = new ByteArrayContent(bytes);
+        content.Headers.TryAddWithoutValidation("Content-Type", "application/zip");
+        content.Headers.TryAddWithoutValidation("Content-Disposition", contentDisposition);
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        response.Headers.TryAddWithoutValidation("Cache-Control", "no-store");
+        return response;
+    }
+
+    [Fact]
+    public async Task ExportDataset_UpstreamZipResponse_PassthroughBytesContentTypeAndDisposition()
+    {
+        const string disposition = "attachment; filename*=UTF-8''%E6%AD%8C%E5%9B%9E.zip";
+        var handler = new StubHandler { Handler = _ => Zip([1, 2, 3, 4], disposition) };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.Method = "GET";
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ExportDataset("ds1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal("GET", handler.Methods[0]);
+        Assert.Equal("/api/training/datasets/ds1/export", handler.Requests[0]);
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+        Assert.Equal("application/zip", controller.Response.ContentType);
+        Assert.Contains("filename*=UTF-8''", controller.Response.Headers.ContentDisposition.ToString());
+        Assert.Contains("%E6%AD%8C%E5%9B%9E", controller.Response.Headers.ContentDisposition.ToString());
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl.ToString());
+        Assert.Equal([1, 2, 3, 4], await ReadBytesAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task ExportDataset_Upstream404_PassthroughErrorBody()
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => Json(HttpStatusCode.NotFound, """{"error":"dataset not found"}"""),
+        };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.Method = "GET";
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ExportDataset("ds1", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status404NotFound, controller.Response.StatusCode);
+        Assert.Equal("""{"error":"dataset not found"}""", await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Fact]
+    public async Task ExportDataset_Unreachable_Returns502()
+    {
+        var handler = new StubHandler { Handler = _ => throw new HttpRequestException("boom") };
+        var controller = CreateController(new HttpClient(handler));
+        controller.HttpContext.Request.Method = "GET";
+
+        var result = await controller.ExportDataset("ds1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+        Assert.Equal(
+            """{"error":"training service unavailable"}""",
+            JsonSerializer.Serialize(status.Value));
+    }
 }
