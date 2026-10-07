@@ -34,6 +34,7 @@ const mockListFeaturePoints = vi.mocked(client.listTrainingFeaturePoints)
 const mockListEmotionTasks = vi.mocked(client.listEmotionTasks)
 
 type Dataset = Awaited<ReturnType<typeof client.listTrainingDatasets>>[number]
+type DatasetItem = Awaited<ReturnType<typeof client.listTrainingDatasetItems>>[number]
 
 function apiError(status: number, serverMessage: string): Error {
   return Object.assign(new Error('API request failed'), { status, serverMessage })
@@ -51,7 +52,7 @@ const datasetB: Dataset = { ...datasetA, id: 'd2', name: '杂谈语料' }
 
 const createdDataset: Dataset = { ...datasetA, id: 'd3', name: '新数据集' }
 
-const item: Awaited<ReturnType<typeof client.listTrainingDatasetItems>>[number] = {
+const item: DatasetItem = {
   id: 'i1',
   datasetId: 'd1',
   audioType: 'transcript',
@@ -307,5 +308,53 @@ describe('DatasetsPage', () => {
     const link = screen.getByText('下载数据集').closest('a')
     expect(link).toHaveAttribute('href', '/api/training/datasets/d1/export')
     expect(link).toHaveAttribute('download')
+  })
+
+  it('should disable the download link when the item list fails to load', async () => {
+    mockListItems.mockImplementation((datasetId: string) =>
+      datasetId === 'd1'
+        ? Promise.resolve([item])
+        : Promise.reject(apiError(500, 'boom')),
+    )
+
+    render(<DatasetsPage />)
+
+    // d1 有条目 → 按钮可用
+    await waitFor(() => {
+      expect(screen.getByText('下载数据集').closest('a')).not.toHaveAttribute('aria-disabled')
+    })
+
+    // 切到 d2 且列表加载失败 → 按钮必须禁用（未知 = 禁用，不残留 d1 计数）
+    await pickOption('数据集', '杂谈语料')
+
+    await waitFor(() => {
+      expect(screen.getByText('下载数据集').closest('a')).toHaveAttribute('aria-disabled', 'true')
+    })
+  })
+
+  it('should not keep the previous item count in the window after switching datasets', async () => {
+    let resolveD2: ((value: DatasetItem[]) => void) | undefined
+    mockListItems.mockImplementation((datasetId: string) =>
+      datasetId === 'd1'
+        ? Promise.resolve([item])
+        : new Promise<DatasetItem[]>((resolve) => {
+            resolveD2 = resolve
+          }),
+    )
+
+    render(<DatasetsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('下载数据集').closest('a')).not.toHaveAttribute('aria-disabled')
+    })
+
+    await pickOption('数据集', '杂谈语料')
+
+    // d2 仍在加载：计数已随选择清零 → 禁用，不残留 d1 的计数
+    await waitFor(() => {
+      expect(screen.getByText('下载数据集').closest('a')).toHaveAttribute('aria-disabled', 'true')
+    })
+
+    resolveD2?.([])
   })
 })

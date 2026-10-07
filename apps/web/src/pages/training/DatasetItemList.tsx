@@ -158,6 +158,8 @@ export function DatasetItemList({
       onItemsLoaded?.(list.length)
     } catch (err) {
       setError(errorMessage(err))
+      // 计数不可用（加载失败）时按 0 上报，使父级「下载数据集」禁用（未知 = 禁用）。
+      onItemsLoaded?.(0)
     }
   }, [datasetId, onItemsLoaded])
 

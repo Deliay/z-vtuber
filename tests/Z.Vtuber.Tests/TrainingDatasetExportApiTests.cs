@@ -257,6 +257,29 @@ public class TrainingDatasetExportApiTests(MongoDbFixture fixture)
         Assert.Equal(("b/live/700001/recordings/a.flv", 1000L, (long?)null), request);
     }
 
+    [Fact]
+    public async Task Export_ItemWithNullText_DoesNotBreakExportAndKeepsPairing()
+    {
+        var dataset = await SeedDatasetAsync("空文本脏数据");
+        var baseTime = new DateTime(2026, 10, 7, 0, 0, 0, DateTimeKind.Utc);
+        // 历史/上游脏数据可能落库 text=null：应写空 txt 并继续导出后续条目，不中断、不跳号。
+        await SeedItemAsync(dataset.Id, "b/live/700001/recordings/a.flv", null!, "k1", createdAt: baseTime);
+        await SeedItemAsync(dataset.Id, "b/live/700001/recordings/b.flv", "第二句", "k2",
+            createdAt: baseTime.AddMinutes(1));
+
+        var audio = new ExportStubAudioClient();
+        audio.Clips["b/live/700001/recordings/a.flv"] = new AudioClip([1], "audio/mpeg");
+        audio.Clips["b/live/700001/recordings/b.flv"] = new AudioClip([2], "audio/mpeg");
+
+        var entries = ReadZip(await ExportAsync(dataset.Id, audio));
+
+        Assert.Equal(
+            new[] { "000001.mp3", "000001.txt", "000002.mp3", "000002.txt" },
+            entries.Select(e => e.Name).ToArray());
+        Assert.Empty(entries[1].Bytes);
+        Assert.Equal("第二句", Encoding.UTF8.GetString(entries[3].Bytes));
+    }
+
     private async Task<Stream> ExportAsync(ObjectId datasetId, ExportStubAudioClient audio)
     {
         var controller = CreateController(audio);

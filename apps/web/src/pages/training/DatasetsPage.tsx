@@ -25,6 +25,13 @@ export function DatasetsPage() {
   const [importOpen, setImportOpen] = useState(false)
   const [itemCount, setItemCount] = useState(0)
 
+  // 切换数据集时立即清零条目数：避免旧数据集计数残留导致新数据集按钮在列表返回前短暂可用；
+  // 新计数随后由 DatasetItemList 加载成功后经 onItemsLoaded 上提（加载失败按 0 上报）。
+  const handleSelectDataset = (datasetId: string) => {
+    setSelectedId(datasetId)
+    setItemCount(0)
+  }
+
   // 未选定数据集或数据集为空时禁用下载；按钮始终渲染（PRD 功能点 1）。
   const exportDisabled = !selectedId || itemCount === 0
   const exportLink = (
@@ -45,7 +52,7 @@ export function DatasetsPage() {
 
   const audioTab = (
     <>
-      <DatasetSelector selectedId={selectedId} onSelect={setSelectedId} />
+      <DatasetSelector selectedId={selectedId} onSelect={handleSelectDataset} />
 
       <Space style={{ margin: '16px 0' }}>
         {exportDisabled ? (

@@ -253,7 +253,8 @@ public sealed class TrainingDatasetsController(
                 var txt = zip.CreateEntry(stem + ".txt");
                 await using (var stream = txt.Open())
                 {
-                    await stream.WriteAsync(encoder.GetBytes(item.Text), ct);
+                    // 容忍历史/上游脏数据 text=null：单条缺失文本不应击穿整个导出（写空 txt，保持配对）。
+                    await stream.WriteAsync(encoder.GetBytes(item.Text ?? string.Empty), ct);
                 }
 
                 // 单条写入后立即冲刷，保证流式即时下行（响应头已先行，首字节即时产出）。
