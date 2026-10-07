@@ -280,6 +280,37 @@ public class TrainingDatasetExportApiTests(MongoDbFixture fixture)
         Assert.Equal("第二句", Encoding.UTF8.GetString(entries[3].Bytes));
     }
 
+    // ---- 回归：Kestrel 默认禁止同步 IO（ZipArchive 只提供同步写）----
+
+    [Fact]
+    public async Task Export_KestrelDisallowsSynchronousIO_StreamsZipWithoutSynchronousWrites()
+    {
+        var dataset = await SeedDatasetAsync("同步 IO 回归");
+        await SeedItemAsync(dataset.Id, "b/live/700001/recordings/a.flv", "句子", "k1");
+
+        var audio = new ExportStubAudioClient();
+        audio.Clips["b/live/700001/recordings/a.flv"] = new AudioClip([1, 2, 3], "audio/mpeg");
+
+        // 模拟 Kestrel 默认：响应体同步 Write/Flush 抛与线上一致的异常，仅允许异步写。
+        var body = new SyncDisallowedResponseStream();
+        var controller = CreateController(audio);
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext { Response = { Body = body } },
+        };
+
+        var result = await controller.Export(dataset.Id.ToString());
+
+        // 导出成功即证明全程未对响应体做同步 IO（否则会抛 Synchronous operations are disallowed）。
+        Assert.IsType<EmptyResult>(result);
+        var entries = ReadZip(body.Inner);
+        Assert.Equal(
+            new[] { "000001.mp3", "000001.txt" },
+            entries.Select(e => e.Name).ToArray());
+        Assert.Equal(new byte[] { 1, 2, 3 }, entries[0].Bytes);
+        Assert.Equal("句子", Encoding.UTF8.GetString(entries[1].Bytes));
+    }
+
     private async Task<Stream> ExportAsync(ObjectId datasetId, ExportStubAudioClient audio)
     {
         var controller = CreateController(audio);
@@ -314,5 +345,61 @@ public class TrainingDatasetExportApiTests(MongoDbFixture fixture)
         public Task<AudioClip> MergeClipsAsync(
             IReadOnlyList<AudioClipRequest> items, CancellationToken ct = default) =>
             throw new NotSupportedException();
+    }
+
+    /// <summary>
+    /// 模拟 Kestrel 默认响应体：同步 <c>Write</c>/<c>Write(span)</c>/<c>Flush</c> 抛与线上一致的异常；
+    /// 异步写落到内部 <see cref="MemoryStream"/>。用于证明导出端点不对响应体做同步 IO。
+    /// </summary>
+    private sealed class SyncDisallowedResponseStream : Stream
+    {
+        private readonly MemoryStream _inner = new();
+
+        public MemoryStream Inner => _inner;
+
+        public override bool CanRead => false;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => true;
+
+        public override long Length => _inner.Length;
+
+        public override long Position
+        {
+            get => _inner.Position;
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() => throw SyncWriteDisallowed();
+
+        public override Task FlushAsync(CancellationToken cancellationToken) =>
+            _inner.FlushAsync(cancellationToken);
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw SyncWriteDisallowed();
+
+        public override void Write(ReadOnlySpan<byte> buffer) =>
+            throw SyncWriteDisallowed();
+
+        public override Task WriteAsync(
+            byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            _inner.WriteAsync(buffer, offset, count, cancellationToken);
+
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+            _inner.WriteAsync(buffer, cancellationToken);
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+
+        public override void SetLength(long value) =>
+            throw new NotSupportedException();
+
+        private static InvalidOperationException SyncWriteDisallowed() =>
+            new("Synchronous operations are disallowed. Call WriteAsync or set AllowSynchronousIO to true instead.");
     }
 }
