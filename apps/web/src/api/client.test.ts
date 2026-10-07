@@ -60,6 +60,7 @@ import {
   updateTrainingDatasetItem,
   batchDeleteTrainingDatasetItems,
   trainingAudioClipUrl,
+  trainingDatasetExportUrl,
   listTrainingProviders,
   createTrainingProvider,
   updateTrainingProvider,
@@ -1513,6 +1514,11 @@ describe('API Client', () => {
       expect(trainingAudioClipUrl('b/live/101/recordings/', 0, null)).toBeNull()
       expect(trainingAudioClipUrl('b/live/abc/recordings/a.flv', 0, null)).toBeNull()
       expect(trainingAudioClipUrl('https://example.com/a.flv', 0, null)).toBeNull()
+    })
+
+    it('trainingDatasetExportUrl should build the dataset export url with encoded id', () => {
+      expect(trainingDatasetExportUrl('ds1')).toBe('/api/training/datasets/ds1/export')
+      expect(trainingDatasetExportUrl('a b/c')).toBe('/api/training/datasets/a%20b%2Fc/export')
     })
   })
 

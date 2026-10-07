@@ -281,6 +281,7 @@ apps/web/src/pages/training/（新增测试）
 ## 11. 相关文档
 
 - PRD：`docs/product/draft/20261007-training-dataset-export-zip-prd.md`
+- 实现 Plan：`docs/engineering/plans/20261007-plan-training-dataset-export-zip.md`（[[20261007-plan-training-dataset-export-zip]]）
 - 音频数据集技术提案：`docs/engineering/proposals/20260927-proposal-training-audio-dataset.md`
 - 既有契约：`contracts/training.openapi.yaml`、`contracts/bilibili-crawler.openapi.yaml`
 - 规范：`docs/engineering/common-rules.md`、`docs/engineering/backend-rules.md`、`docs/engineering/frontend-rules.md`

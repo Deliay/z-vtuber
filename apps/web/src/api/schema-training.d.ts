@@ -480,6 +480,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/datasets/{datasetId}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 导出数据集为 zip（流式）
+         * @description 将数据集条目按 CreatedAt、AudioKey 升序（与条目列表一致）从 000001 起连续编号， 逐条取音频（与试听同源）打包为 zip 流式返回：每条成功导出的条目写入 {6位数字}.mp3 （audio/mpeg 字节）与同名 {6位数字}.txt（条目文本，UTF-8 无 BOM）， 音频获取失败或降级非 mp3 的条目跳过且不占编号（编号保持连续），下载不中断。 响应头先行：200 / application/zip / Content-Disposition: attachment; filename*=UTF-8''{urlencoded 数据集名}.zip / Cache-Control: no-store， 无 Content-Length（chunked 流式下行）；数据集为空时返回仅含中央目录的空 zip。
+         */
+        get: operations["exportTrainingDataset"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/training/images/generate": {
         parameters: {
             query?: never;
@@ -2068,6 +2088,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrainingSegmentsRebuildResult"];
+                };
+            };
+            /** @description {"error": "dataset not found"} */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    exportTrainingDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 数据集 id（ObjectId） */
+                datasetId: components["parameters"]["DatasetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 导出的 zip 二进制流（无 Content-Length；空数据集返回空 zip） */
+            200: {
+                headers: {
+                    /** @description attachment; filename*=UTF-8''{urlencoded 数据集名}.zip */
+                    "Content-Disposition"?: string;
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
                 };
             };
             /** @description {"error": "dataset not found"} */
