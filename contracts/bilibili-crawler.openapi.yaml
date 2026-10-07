@@ -1654,6 +1654,42 @@ paths:
                 $ref: "#/components/schemas/TrainingErrorResponse"
         "502":
           description: training 服务不可达
+  /api/training/datasets/{datasetId}/export:
+    get:
+      summary: 导出数据集为 zip（代理训练服务）
+      description: >-
+        代理 training 服务，query 原样透传；成功 200 以 application/zip 流式透传响应体
+        （无 Content-Length）与 Content-Disposition（attachment; filename*=UTF-8''{urlencoded 数据集名}.zip）
+        及 Cache-Control: no-store，训练侧打包与跳过口径见 training 契约；
+        404 数据集不存在与 502 training service unavailable 错误体透传。
+      operationId: exportTrainingDataset
+      parameters:
+        - $ref: "#/components/parameters/TrainingDatasetId"
+      responses:
+        "200":
+          description: 导出的 zip 二进制流（Content-Type / Content-Disposition 透传，无 Content-Length）
+          headers:
+            Content-Disposition:
+              description: "attachment; filename*=UTF-8''{urlencoded 数据集名}.zip"
+              schema:
+                type: string
+            Cache-Control:
+              description: no-store
+              schema:
+                type: string
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: 数据集不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingErrorResponse"
+        "502":
+          description: training 服务不可达
   /api/training/images/generate:
     post:
       summary: 绘图生成（代理训练服务）
