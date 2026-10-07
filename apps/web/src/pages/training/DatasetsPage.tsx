@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Button, Space, Tabs, theme, Tooltip, Typography } from 'antd'
 import { DownloadOutlined } from '@ant-design/icons'
 import { trainingDatasetExportUrl } from '../../api/client'
@@ -24,13 +24,23 @@ export function DatasetsPage() {
   const [queueToken, setQueueToken] = useState(0)
   const [importOpen, setImportOpen] = useState(false)
   const [itemCount, setItemCount] = useState(0)
+  /** 当前选中数据集的最新值（供丢弃在途旧响应使用，避免闭包过期）。 */
+  const selectedIdRef = useRef('')
 
   // 切换数据集时立即清零条目数：避免旧数据集计数残留导致新数据集按钮在列表返回前短暂可用；
-  // 新计数随后由 DatasetItemList 加载成功后经 onItemsLoaded 上提（加载失败按 0 上报）。
+  // 新计数随后由 DatasetItemList 加载结束后经 onItemsLoaded 上提（加载失败按 0 上报）。
   const handleSelectDataset = (datasetId: string) => {
+    selectedIdRef.current = datasetId
     setSelectedId(datasetId)
     setItemCount(0)
   }
+
+  // 丢弃非当前数据集的上报：旧 DatasetItemList 实例卸载不会中止在途请求，
+  // 其响应晚到时不得污染当前数据集的条目计数（否则空数据集按钮会被点亮）。
+  const handleItemsLoaded = useCallback((datasetId: string, count: number) => {
+    if (datasetId !== selectedIdRef.current) return
+    setItemCount(count)
+  }, [])
 
   // 未选定数据集或数据集为空时禁用下载；按钮始终渲染（PRD 功能点 1）。
   const exportDisabled = !selectedId || itemCount === 0
@@ -77,7 +87,7 @@ export function DatasetsPage() {
           datasetId={selectedId}
           reloadToken={reloadToken}
           onChanged={() => setQueueToken((token) => token + 1)}
-          onItemsLoaded={setItemCount}
+          onItemsLoaded={handleItemsLoaded}
         />
       )}
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { renderWithProviders as render } from '../../test/render'
 import { DatasetsPage } from './DatasetsPage'
 import * as client from '../../api/client'
@@ -356,5 +356,64 @@ describe('DatasetsPage', () => {
     })
 
     resolveD2?.([])
+  })
+
+  it('should ignore a late in-flight response from the previous dataset', async () => {
+    let resolveD1: ((value: DatasetItem[]) => void) | undefined
+    mockListItems.mockImplementation((datasetId: string) =>
+      datasetId === 'd1'
+        ? new Promise<DatasetItem[]>((resolve) => {
+            resolveD1 = resolve
+          })
+        : Promise.resolve([]),
+    )
+
+    render(<DatasetsPage />)
+    await screen.findByRole('combobox', { name: '数据集' })
+
+    await pickOption('数据集', '杂谈语料')
+
+    // d2（空）先返回 → 禁用
+    await waitFor(() => {
+      expect(screen.getByText('下载数据集').closest('a')).toHaveAttribute('aria-disabled', 'true')
+    })
+
+    // d1 的旧响应晚到（1 条）→ 不得点亮空数据集按钮
+    await act(async () => {
+      resolveD1?.([item])
+    })
+
+    expect(screen.getByText('下载数据集').closest('a')).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('should not let a late response from the previous dataset land during the switch window', async () => {
+    let resolveD1: ((value: DatasetItem[]) => void) | undefined
+    let resolveD2: ((value: DatasetItem[]) => void) | undefined
+    mockListItems.mockImplementation((datasetId: string) =>
+      datasetId === 'd1'
+        ? new Promise<DatasetItem[]>((resolve) => {
+            resolveD1 = resolve
+          })
+        : new Promise<DatasetItem[]>((resolve) => {
+            resolveD2 = resolve
+          }),
+    )
+
+    render(<DatasetsPage />)
+    await screen.findByRole('combobox', { name: '数据集' })
+
+    await pickOption('数据集', '杂谈语料')
+
+    // d2 仍在途：旧 d1 响应先到（1 条）→ 窗口内不得点亮
+    await act(async () => {
+      resolveD1?.([item])
+    })
+    expect(screen.getByText('下载数据集').closest('a')).toHaveAttribute('aria-disabled', 'true')
+
+    // d2 返回空 → 保持禁用
+    await act(async () => {
+      resolveD2?.([])
+    })
+    expect(screen.getByText('下载数据集').closest('a')).toHaveAttribute('aria-disabled', 'true')
   })
 })
