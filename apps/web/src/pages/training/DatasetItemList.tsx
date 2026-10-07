@@ -37,6 +37,8 @@ export interface DatasetItemListProps {
   waveformLoader?: WaveformLoader
   /** 列表数据变化（如情绪任务提交）后的外部回调（用于刷新任务队列等）。 */
   onChanged?: () => void
+  /** 条目列表加载成功后回调条目数（用于数据集页「下载数据集」禁用判定）。 */
+  onItemsLoaded?: (count: number) => void
 }
 
 type GroupMode = 'none' | 'source' | 'audioType'
@@ -128,6 +130,7 @@ export function DatasetItemList({
   reloadToken = 0,
   waveformLoader,
   onChanged,
+  onItemsLoaded,
 }: DatasetItemListProps) {
   const { modal } = AntdApp.useApp()
   const [items, setItems] = useState<TrainingDatasetItem[]>([])
@@ -152,10 +155,11 @@ export function DatasetItemList({
       setItems(list)
       setSelected((prev) => prev.filter((id) => list.some((item) => item.id === id)))
       setError('')
+      onItemsLoaded?.(list.length)
     } catch (err) {
       setError(errorMessage(err))
     }
-  }, [datasetId])
+  }, [datasetId, onItemsLoaded])
 
   useEffect(() => {
     void refresh()

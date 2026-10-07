@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Button, Space, Tabs } from 'antd'
+import { Button, Space, Tabs, theme, Tooltip, Typography } from 'antd'
 import { DownloadOutlined } from '@ant-design/icons'
+import { trainingDatasetExportUrl } from '../../api/client'
 import { DatasetSelector } from './DatasetSelector'
 import { DatasetItemList } from './DatasetItemList'
 import { TranscriptImportDialog } from './TranscriptImportDialog'
@@ -12,27 +13,56 @@ type TabKey = 'audio' | 'models'
 
 /**
  * 训练 → 数据集：多 Tab 容器（「音频数据集」/「模型设置」）。
- * 「音频数据集」Tab 内为数据集下拉管理 + 从 Transcript 导入 + 音频数据列表 + 情绪任务队列；
+ * 「音频数据集」Tab 内为数据集下拉管理 + 下载数据集 + 从 Transcript 导入 + 音频数据列表 + 情绪任务队列；
  * 「模型设置」Tab 内为 Providers / Models 管理。
  */
 export function DatasetsPage() {
+  const { token } = theme.useToken()
   const [activeTab, setActiveTab] = useState<TabKey>('audio')
   const [selectedId, setSelectedId] = useState('')
   const [reloadToken, setReloadToken] = useState(0)
   const [queueToken, setQueueToken] = useState(0)
   const [importOpen, setImportOpen] = useState(false)
+  const [itemCount, setItemCount] = useState(0)
+
+  // 未选定数据集或数据集为空时禁用下载；按钮始终渲染（PRD 功能点 1）。
+  const exportDisabled = !selectedId || itemCount === 0
+  const exportLink = (
+    <Typography.Link
+      href={selectedId ? trainingDatasetExportUrl(selectedId) : undefined}
+      download
+      aria-disabled={exportDisabled ? true : undefined}
+      style={exportDisabled ? { color: token.colorTextDisabled } : undefined}
+      onClick={(event) => {
+        if (exportDisabled) {
+          event.preventDefault()
+        }
+      }}
+    >
+      下载数据集
+    </Typography.Link>
+  )
 
   const audioTab = (
     <>
       <DatasetSelector selectedId={selectedId} onSelect={setSelectedId} />
 
-      {selectedId && (
-        <Space style={{ margin: '16px 0' }}>
+      <Space style={{ margin: '16px 0' }}>
+        {exportDisabled ? (
+          // 置灰说明对键盘用户同样可达（focus 即出 Tooltip）。
+          <Tooltip title="请先选择非空数据集" trigger={['hover', 'focus']}>
+            {exportLink}
+          </Tooltip>
+        ) : (
+          exportLink
+        )}
+
+        {selectedId && (
           <Button icon={<DownloadOutlined />} onClick={() => setImportOpen(true)}>
             从 Transcript 导入
           </Button>
-        </Space>
-      )}
+        )}
+      </Space>
 
       {selectedId && (
         <DatasetItemList
@@ -40,6 +70,7 @@ export function DatasetsPage() {
           datasetId={selectedId}
           reloadToken={reloadToken}
           onChanged={() => setQueueToken((token) => token + 1)}
+          onItemsLoaded={setItemCount}
         />
       )}
 

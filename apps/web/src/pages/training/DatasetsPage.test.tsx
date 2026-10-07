@@ -51,6 +51,22 @@ const datasetB: Dataset = { ...datasetA, id: 'd2', name: '杂谈语料' }
 
 const createdDataset: Dataset = { ...datasetA, id: 'd3', name: '新数据集' }
 
+const item: Awaited<ReturnType<typeof client.listTrainingDatasetItems>>[number] = {
+  id: 'i1',
+  datasetId: 'd1',
+  audioType: 'transcript',
+  source: 't1',
+  audioUri: 'b/live/101/recordings/a.flv',
+  audioKey: 'transcript:t1:0',
+  startMs: 0,
+  endMs: 60000,
+  text: '第一句',
+  extensions: null,
+  emotion: null,
+  createdAt: '2026-09-27T00:00:00Z',
+  updatedAt: '2026-09-27T00:00:00Z',
+}
+
 async function pickOption(ariaLabel: string, optionText: string) {
   fireEvent.mouseDown(screen.getByRole('combobox', { name: ariaLabel }))
   await waitFor(() => {
@@ -253,5 +269,43 @@ describe('DatasetsPage', () => {
 
     expect(await screen.findByText('暂无音频数据，可从 Transcript 导入')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /从 Transcript 导入/ })).toBeInTheDocument()
+  })
+
+  it('should always render the download link and disable it while no dataset is selected', async () => {
+    mockListDatasets.mockResolvedValue([])
+
+    render(<DatasetsPage />)
+    await screen.findByRole('combobox', { name: '数据集' })
+
+    const link = screen.getByText('下载数据集').closest('a')
+    expect(link).not.toBeNull()
+    expect(link).toHaveAttribute('aria-disabled', 'true')
+    // 禁用态不设置 href，点击不发起下载
+    expect(link).not.toHaveAttribute('href')
+    // 「从 Transcript 导入」未选中数据集仍不显示（既有行为不回退）
+    expect(screen.queryByRole('button', { name: /从 Transcript 导入/ })).not.toBeInTheDocument()
+  })
+
+  it('should disable the download link when the selected dataset is empty', async () => {
+    render(<DatasetsPage />)
+    await waitFor(() => {
+      expect(mockListItems).toHaveBeenCalledWith('d1')
+    })
+
+    const link = screen.getByText('下载数据集').closest('a')
+    expect(link).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('should enable the download link with the export href when the dataset has items', async () => {
+    mockListItems.mockResolvedValue([item])
+
+    render(<DatasetsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('下载数据集').closest('a')).not.toHaveAttribute('aria-disabled')
+    })
+    const link = screen.getByText('下载数据集').closest('a')
+    expect(link).toHaveAttribute('href', '/api/training/datasets/d1/export')
+    expect(link).toHaveAttribute('download')
   })
 })
