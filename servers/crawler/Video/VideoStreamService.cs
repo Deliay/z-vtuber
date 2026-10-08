@@ -75,6 +75,26 @@ public sealed class VideoStreamService
         {
             throw new VideoDownloadException(502, "暂无可用 B 站账号，无法取流");
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // cookie 客户端超时（非客户端取消）：按上游不可用映射 502
+            throw new VideoDownloadException(502, "取流失败：上游服务不可用");
+        }
+        catch (HttpRequestException)
+        {
+            // cookie 服务不可达或返回非 2xx
+            throw new VideoDownloadException(502, "取流失败：上游服务不可用");
+        }
+        catch (JsonException)
+        {
+            // cookie 服务返回非 JSON
+            throw new VideoDownloadException(502, "取流失败：上游服务不可用");
+        }
+        catch (InvalidOperationException)
+        {
+            // CookieServiceClient 对返回 null 结果抛 InvalidOperationException（NoAvailableCookieException 已在上方捕获）
+            throw new VideoDownloadException(502, "取流失败：上游服务不可用");
+        }
 
         VideoPlayInfo info;
         try
