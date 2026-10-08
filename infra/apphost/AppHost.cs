@@ -114,6 +114,10 @@ api.WithReference(training)
     .WaitFor(training)
     .WithEnvironment("TrainingService:BaseUrl", training.GetEndpoint("http"));
 
+api.WithReference(crawler)
+    .WaitFor(crawler)
+    .WithEnvironment("CrawlerService:BaseUrl", crawler.GetEndpoint("http"));
+
 var web = builder.AddViteApp("web", "../../apps/web")
     .WithReference(api)
     .WithReference(notifier)

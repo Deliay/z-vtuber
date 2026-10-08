@@ -10,9 +10,12 @@ using Z.Vtuber.Crawler.Jobs;
 using Z.Vtuber.Crawler.Live;
 using Z.Vtuber.Crawler.Locking;
 using Z.Vtuber.Crawler.Services;
+using Z.Vtuber.Crawler.Video;
 using Z.Vtuber.Crawler.Weibo;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllers();
 
 builder.Services.AddHealthChecks()
     .AddCheck<Z.Vtuber.Crawler.MongoDbHealthCheck>("mongo");
@@ -106,6 +109,14 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<LiveGuardListFetcher>();
 builder.Services.AddSingleton<LiveGuardTop3BackfillService>();
 
+// 视频下载：CDN 流式通道独立于风控/拟真通道，整体超时设为 Infinite（以 RequestAborted 联动取消），
+// 避免 GB 级下载被默认超时截断；JSON 取数（view/playurl）仍走既有 resilient 通道。
+builder.Services.AddHttpClient(VideoStreamService.StreamClientName, client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan;
+});
+builder.Services.AddSingleton<VideoStreamService>();
+
 builder.Services.AddHostedService<AccountInfoJob>();
 builder.Services.AddHostedService<LiveStatusJob>();
 builder.Services.AddHostedService<SpaceTimelineJob>();
@@ -131,6 +142,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapHealthChecks("/health");
+app.MapControllers();
 
 _ = Task.Run(async () =>
 {

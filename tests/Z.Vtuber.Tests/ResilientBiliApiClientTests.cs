@@ -63,6 +63,16 @@ public sealed class ResilientBiliApiClientTests
             return RoomGuardListFunc?.Invoke(cookieId, cookie, roomId, bId, page, ct)
                 ?? Task.FromResult(new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
         }
+
+        public Func<string, string, string, int, CancellationToken, Task<VideoPlayInfo>>? VideoPlayInfoFunc { get; set; }
+
+        public Task<VideoPlayInfo> GetVideoPlayInfoAsync(string cookieId, string cookie, string bvid, int page, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref _callCount);
+            LastCookie = cookie;
+            return VideoPlayInfoFunc?.Invoke(cookieId, cookie, bvid, page, ct)
+                ?? Task.FromResult(new VideoPlayInfo { Title = "default", Cid = 0, PageCount = 1 });
+        }
     }
 
     private static BilibiliCrawlerOptions DefaultOptions() => new()

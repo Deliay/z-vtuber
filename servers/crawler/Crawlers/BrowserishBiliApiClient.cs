@@ -204,6 +204,34 @@ public sealed class BrowserishBiliApiClient : IBiliApiClient, IDisposable
         return apiResponse.Data.Deserialize<GuardInfo>(JsonOptions)!;
     }
 
+    public async Task<VideoPlayInfo> GetVideoPlayInfoAsync(string cookieId, string cookie, string bvid, int page, CancellationToken ct = default)
+    {
+        await EnsureWarmupAsync(ct);
+        await DelayAsync(ct);
+
+        var account = await _accountProvider.GetProviderAsync(cookieId, cookie, ct);
+        var biliAccount = account.GetRequiredService<BilibiliAccount>();
+
+        return await BiliVideoResponseParser.FetchAsync(
+            biliAccount,
+            url => GetJsonAsync(url, cookie, ct),
+            bvid,
+            page,
+            ct);
+    }
+
+    private async Task<JsonElement> GetJsonAsync(string url, string cookie, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add("Cookie", cookie);
+
+        using var response = await _httpClient.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        return doc.RootElement.Clone();
+    }
+
     public async Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"https://ukamnads.icu/api/v2/channel?uId={mid}");

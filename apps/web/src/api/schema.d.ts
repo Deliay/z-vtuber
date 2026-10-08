@@ -368,6 +368,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/b/video/{bvid}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 下载 B 站视频原始流
+         * @description 代理 crawler 服务的视频取流端点，实时从 B 站取出原始流（DASH 的 m4v/m4a 或整段 flv）后流式透传， 平台不落盘、不转码、不重封装，传输结束即弃；支持 Range 分段获取（206）与 If-Range 条件请求，越界区间返回 416。 「都下载」不设打包端点：调用方以 kind=video 与 kind=audio 各请求一次。
+         */
+        get: operations["downloadBilibiliVideo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/recordings": {
         parameters: {
             query?: never;
@@ -2598,6 +2618,105 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    downloadBilibiliVideo: {
+        parameters: {
+            query: {
+                /** @description 下载内容类型；video=仅视频流，audio=仅音频流（大小写敏感） */
+                kind: "video" | "audio";
+                /** @description 多 P 视频的分 P 序号（从 1 开始），默认第 1 P */
+                page?: number;
+            };
+            header?: {
+                /** @description 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整文件 */
+                Range?: components["parameters"]["Range"];
+                /** @description 条件 Range，校验失败（值与当前文件不匹配）时回退为 200 返回完整文件 */
+                "If-Range"?: components["parameters"]["IfRange"];
+            };
+            path: {
+                /**
+                 * @description B 站视频 BV 号
+                 * @example BV1xx411c7mD
+                 */
+                bvid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 完整原始流内容（未携带 Range 或 Range 不被支持时返回完整内容） */
+            200: {
+                headers: {
+                    /** @description 附件下载文件名，含视频标题、分 P 与类型，如 attachment; filename*=UTF-8''标题.p01.video.m4v */
+                    "Content-Disposition"?: string;
+                    /** @description 服务端支持的分段单位，固定为 bytes */
+                    "Accept-Ranges"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                    "audio/mp4": string;
+                    "video/x-flv": string;
+                };
+            };
+            /** @description 单区间分段内容（Range 可满足） */
+            206: {
+                headers: {
+                    /** @description 当前返回的字节区间及流总大小，如 bytes 0-1023/20480 */
+                    "Content-Range"?: string;
+                    /** @description 服务端支持的分段单位，固定为 bytes */
+                    "Accept-Ranges"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                    "audio/mp4": string;
+                    "video/x-flv": string;
+                };
+            };
+            /** @description bvid 格式非法、kind 非法、page 非法、page 越界，或该视频仅提供整段 flv（无独立音频流）却请求 kind=audio */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
+                };
+            };
+            /** @description 视频不存在或不可访问（已删除/私密/限制访问） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
+                };
+            };
+            /** @description 请求区间越界（起始位置不小于流大小） */
+            416: {
+                headers: {
+                    /** @description 未满足的区间及流总大小，如 bytes *\/20480 */
+                    "Content-Range"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description crawler 服务不可达，或 B 站取流失败（风控受限/权限受限/无可用账号/上游不可用），body 含可读原因 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
+                };
             };
         };
     };
