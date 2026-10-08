@@ -68,6 +68,13 @@ builder.Services.AddHttpClient(Z.Vtuber.Controllers.TrainingProxyController.Trai
         Z.Vtuber.Controllers.TrainingProxyController.DefaultTimeoutSeconds));
 });
 
+// 视频下载代理：GB 级流式传输不得被默认超时截断，整体超时设为 Infinite（以客户端 RequestAborted 联动取消）。
+builder.Services.AddHttpClient(Z.Vtuber.Controllers.BilibiliVideoDownloadController.CrawlerClientName, client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["CrawlerService:BaseUrl"] ?? "http://crawler");
+    client.Timeout = Timeout.InfiniteTimeSpan;
+});
+
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
