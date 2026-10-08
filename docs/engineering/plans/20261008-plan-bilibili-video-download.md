@@ -68,7 +68,7 @@ type: Permanent
 
 ## 2. 分支与提交流程
 
-- 需求总分支 `feat/bilibili-video-download`（基于 origin/main，PRD 与技术提案已随 `3b03d31` 提交，需求总 PR #181）：本 Plan 提交到该分支随 PR 评审；实现提交同入该分支（提案 §头 feat-branch 同名），如需隔离评审可从需求总分支切出 `feat/bilibili-video-download-impl` 以 PR 回需求总分支（同 `feat/dataset-model-capability-impl` → #168 先例）。
+- 需求总分支 `feat/bilibili-video-download`（基于 origin/main，PRD 与技术提案已随 `3b03d31` 提交，需求总 PR #181）：本 Plan 提交到该分支随 PR 评审；实现提交同入该分支（提案 §头 feat-branch 同名），如需隔离评审可从需求总分支切出 `feat/bilibili-video-download-impl` 以 PR 回需求总分支（同 `feat/dataset-model-capability-impl` → #168 先例）。**实际实现走隔离分支：`feat/bilibili-video-download-impl` → 需求总分支，PR #182。**
 - 提交顺序（Conventional Commits，测试与实现分开）：
   1. `docs(bilibili-video-download):` 本实现 Plan（需求总分支）；
   2. `feat(contracts):` 契约变更（video-download 新增 + bilibili-crawler 更新）+ `npm run codegen`；
