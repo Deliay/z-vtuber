@@ -187,6 +187,22 @@ public sealed class VideoDownloadApiTests
     }
 
     [Fact]
+    public async Task Download_FetchNetworkFailure_Returns502Not500()
+    {
+        var api = new VideoTestSupport.StubBiliApi
+        {
+            OnGetVideoPlayInfo = (_, _, _, _, _) => Task.FromException<VideoPlayInfo>(new HttpRequestException("connection refused")),
+        };
+        var controller = CreateController(api, new HttpClient(new VideoTestSupport.StubHttpHandler()));
+
+        var result = await controller.Download(Bvid, "video", 1, CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+        Assert.Equal("取流失败：上游服务不可用", ErrorMessage(status));
+    }
+
+    [Fact]
     public async Task Download_Upstream206_PassthroughHeadersAndForwardsRange()
     {
         var fragment = new byte[] { 1, 2, 3 };
@@ -251,6 +267,28 @@ public sealed class VideoDownloadApiTests
 
         Assert.Empty(offenders);
     }
+
+    [Fact]
+    public async Task Download_FullFlow_CreatesNoNewFilesInWorkingOrTempDirectory()
+    {
+        var workingBefore = Snapshot(Directory.GetCurrentDirectory());
+        var tempBefore = Snapshot(Path.GetTempPath());
+
+        var payload = new byte[] { 1, 2, 3, 4, 5 };
+        var handler = new VideoTestSupport.StubHttpHandler { Handler = _ => VideoTestSupport.BinaryResponse(payload) };
+        var controller = CreateController(ApiReturning(VideoTestSupport.DashInfo("标题")), new HttpClient(handler));
+
+        var result = await controller.Download(Bvid, "video", 1, CancellationToken.None);
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(payload, await ReadBodyAsync(controller.HttpContext));
+
+        // 口径 11：不落盘——下载前后工作目录与临时目录均不得出现新增文件
+        Assert.Equal(workingBefore, Snapshot(Directory.GetCurrentDirectory()));
+        Assert.Empty(Snapshot(Path.GetTempPath()).Except(tempBefore));
+    }
+
+    private static string[] Snapshot(string directory) =>
+        Directory.GetFileSystemEntries(directory).OrderBy(entry => entry, StringComparer.Ordinal).ToArray();
 
     private static readonly string[] DiskWritePatterns =
     [

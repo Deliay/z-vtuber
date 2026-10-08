@@ -172,6 +172,18 @@ public sealed class BiliApiClientVideoTests
         Assert.Equal(3, ex.PageCount);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ParseView_PageLessThanOne_ThrowsWithPageCount(int page)
+    {
+        using var doc = JsonDocument.Parse(ViewJson(pageCount: 3));
+
+        var ex = Assert.Throws<VideoPageOutOfRangeException>(() => BiliVideoResponseParser.ParseView(doc.RootElement, page));
+
+        Assert.Equal(3, ex.PageCount);
+    }
+
     [Fact]
     public void ParseView_NotFound_Throws()
     {

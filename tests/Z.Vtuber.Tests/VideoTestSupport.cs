@@ -64,6 +64,7 @@ internal static class VideoTestSupport
         public List<string?> IfRangeHeaders { get; } = [];
         public List<string?> Referers { get; } = [];
         public List<string?> UserAgents { get; } = [];
+        public List<CancellationToken> CancellationTokens { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -72,6 +73,11 @@ internal static class VideoTestSupport
             IfRangeHeaders.Add(GetHeader(request, "If-Range"));
             Referers.Add(request.Headers.Referrer?.ToString());
             UserAgents.Add(GetHeader(request, "User-Agent"));
+            CancellationTokens.Add(cancellationToken);
+
+            // 模拟真实 HttpClient：调用方在发送阶段取消时抛 OperationCanceledException
+            cancellationToken.ThrowIfCancellationRequested();
+
             return Task.FromResult(Handler?.Invoke(request) ?? new HttpResponseMessage(HttpStatusCode.OK));
         }
 

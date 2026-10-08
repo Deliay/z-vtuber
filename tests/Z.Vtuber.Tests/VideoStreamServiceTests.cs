@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using Z.Vtuber.Common.Contracts;
 using Z.Vtuber.Crawler.Crawlers;
 using Z.Vtuber.Crawler.Video;
@@ -290,6 +291,96 @@ public sealed class VideoStreamServiceTests
             () => service.PrepareAsync(Bvid, "video", 1, null, null, CancellationToken.None));
 
         Assert.Equal(502, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FetchNetworkFailure_Returns502()
+    {
+        var service = VideoTestSupport.CreateService(
+            ThrowingApi(new HttpRequestException("connection refused")),
+            new VideoTestSupport.StubCookieClient(),
+            new HttpClient(new VideoTestSupport.StubHttpHandler()));
+
+        var ex = await Assert.ThrowsAsync<VideoDownloadException>(
+            () => service.PrepareAsync(Bvid, "video", 1, null, null, CancellationToken.None));
+
+        Assert.Equal(502, ex.StatusCode);
+        Assert.Equal("取流失败：上游服务不可用", ex.Message);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FetchTimeout_Returns502()
+    {
+        // 取数 HttpClient 默认超时抛 TaskCanceledException；非客户端取消须映射 502 而非静默 500
+        var service = VideoTestSupport.CreateService(
+            ThrowingApi(new TaskCanceledException("timeout")),
+            new VideoTestSupport.StubCookieClient(),
+            new HttpClient(new VideoTestSupport.StubHttpHandler()));
+
+        var ex = await Assert.ThrowsAsync<VideoDownloadException>(
+            () => service.PrepareAsync(Bvid, "video", 1, null, null, CancellationToken.None));
+
+        Assert.Equal(502, ex.StatusCode);
+        Assert.Equal("取流失败：上游服务不可用", ex.Message);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_FetchNonJson_Returns502()
+    {
+        var service = VideoTestSupport.CreateService(
+            ThrowingApi(new JsonException("unexpected token")),
+            new VideoTestSupport.StubCookieClient(),
+            new HttpClient(new VideoTestSupport.StubHttpHandler()));
+
+        var ex = await Assert.ThrowsAsync<VideoDownloadException>(
+            () => service.PrepareAsync(Bvid, "video", 1, null, null, CancellationToken.None));
+
+        Assert.Equal(502, ex.StatusCode);
+        Assert.Equal("取流失败：上游服务不可用", ex.Message);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_DashAudioMissing_Returns400()
+    {
+        var info = new VideoPlayInfo
+        {
+            Title = "t",
+            Cid = 1,
+            PageCount = 1,
+            VideoStreams = [new VideoStreamCandidate { Url = "https://cdn/v.m4v", QualityId = 80 }],
+            AudioStreams = [],
+            IsFlvFallback = false,
+        };
+        var service = VideoTestSupport.CreateService(
+            new VideoTestSupport.StubBiliApi { OnGetVideoPlayInfo = (_, _, _, _, _) => Task.FromResult(info) },
+            new VideoTestSupport.StubCookieClient(),
+            new HttpClient(new VideoTestSupport.StubHttpHandler()));
+
+        var ex = await Assert.ThrowsAsync<VideoDownloadException>(
+            () => service.PrepareAsync(Bvid, "audio", 1, null, null, CancellationToken.None));
+
+        Assert.Equal(400, ex.StatusCode);
+        Assert.Contains("无独立音频流", ex.Message);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_ClientCancelled_CancelsUpstreamRequestWithoutResidual()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var handler = new VideoTestSupport.StubHttpHandler { Handler = _ => VideoTestSupport.BinaryResponse([1, 2, 3]) };
+        var service = VideoTestSupport.CreateService(
+            new VideoTestSupport.StubBiliApi { OnGetVideoPlayInfo = (_, _, _, _, _) => Task.FromResult(VideoTestSupport.DashInfo()) },
+            new VideoTestSupport.StubCookieClient(),
+            new HttpClient(handler));
+
+        // 客户端已取消：RequestAborted 联动取消，上游 SendAsync 观测到已取消 token 并抛出
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => service.PrepareAsync(Bvid, "video", 1, null, null, cts.Token));
+
+        var observed = Assert.Single(handler.CancellationTokens);
+        Assert.True(observed.IsCancellationRequested);
     }
 
     private static VideoTestSupport.StubBiliApi ThrowingApi(Exception exception) => new()
