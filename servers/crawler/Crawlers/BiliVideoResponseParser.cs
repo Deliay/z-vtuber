@@ -60,7 +60,7 @@ public static class BiliVideoResponseParser
         }
 
         var pageCount = pages.GetArrayLength();
-        if (page > pageCount)
+        if (page < 1 || page > pageCount)
         {
             throw new VideoPageOutOfRangeException(pageCount);
         }

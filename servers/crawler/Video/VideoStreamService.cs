@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 using Z.Vtuber.Crawler.Configuration;
@@ -105,11 +106,26 @@ public sealed class VideoStreamService
         {
             throw new VideoDownloadException(502, "暂无可用 B 站账号，无法取流");
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 非客户端取消（取数 HttpClient 超时）：按上游不可用映射 502，避免静默 500
+            throw new VideoDownloadException(502, "取流失败：上游服务不可用");
+        }
+        catch (HttpRequestException)
+        {
+            // B 站 API 返回非 2xx（未被 RiskControlClassifier 判为风控）或网络不可达
+            throw new VideoDownloadException(502, "取流失败：上游服务不可用");
+        }
+        catch (JsonException)
+        {
+            // 返回非 JSON（如 HTML 错误页）导致解析失败
+            throw new VideoDownloadException(502, "取流失败：上游服务不可用");
+        }
 
         var selection = Select(info, streamKind);
         if (selection is null)
         {
-            if (info.IsFlvFallback && streamKind == VideoStreamKind.Audio)
+            if (streamKind == VideoStreamKind.Audio)
             {
                 throw new VideoDownloadException(400, "该视频无独立音频流（仅整段视频流），无法只下载音频");
             }
@@ -175,12 +191,8 @@ public sealed class VideoStreamService
             : new VideoStreamSelection(VideoStreamKind.Audio, best.Url, "audio/mp4", "m4a");
     }
 
-    /// <summary>playurl 非 0 code 到可读中文原因的映射（含 -403 权限受限）。</summary>
-    public static string MapPlayUrlError(int code) => code switch
-    {
-        -403 => "取流失败：权限受限或该视频不可播放",
-        _ => "取流失败：权限受限或该视频不可播放",
-    };
+    /// <summary>playurl 非 0 code（含 -403 权限受限）到可读中文原因的映射。</summary>
+    public static string MapPlayUrlError(int code) => "取流失败：权限受限或该视频不可播放";
 
     private async Task<VideoDownloadResult> OpenUpstreamAsync(
         VideoPlayInfo info,
