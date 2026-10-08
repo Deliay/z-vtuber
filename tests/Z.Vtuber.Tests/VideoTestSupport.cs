@@ -129,4 +129,77 @@ internal static class VideoTestSupport
         response.Headers.AcceptRanges.Add("bytes");
         return response;
     }
+
+    /// <summary>可控慢速流：首读返回少量字节后阻塞直至取消；<see cref="Disposed"/> 记录释放。</summary>
+    internal sealed class ControlledStream : Stream
+    {
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _reads;
+
+        public Task Started => _started.Task;
+        public bool Disposed { get; private set; }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _reads) == 1)
+            {
+                _started.TrySetResult();
+                var count = Math.Min(buffer.Length, 4);
+                for (var i = 0; i < count; i++)
+                {
+                    buffer.Span[i] = 1;
+                }
+
+                return count;
+            }
+
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return 0;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+            => ReadAsync(buffer.AsMemory(offset, count), CancellationToken.None).AsTask().GetAwaiter().GetResult();
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
+    /// <summary>返回 <see cref="ControlledStream"/> 且不缓冲的自定义 HttpContent；<see cref="Disposed"/> 记录释放。</summary>
+    internal sealed class ControlledContent(ControlledStream stream) : HttpContent
+    {
+        public bool Disposed { get; private set; }
+
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(stream);
+
+        protected override Task SerializeToStreamAsync(Stream target, TransportContext? context) => Task.CompletedTask;
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = -1;
+            return false;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
+    }
 }

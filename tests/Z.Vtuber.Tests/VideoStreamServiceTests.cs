@@ -199,6 +199,33 @@ public sealed class VideoStreamServiceTests
         Assert.Contains("暂无可用 B 站账号", ex.Message);
     }
 
+    [Theory]
+    [MemberData(nameof(CheckoutFailures))]
+    public async Task PrepareAsync_CheckoutInfraFailure_Returns502Not500(Exception failure)
+    {
+        var service = ServiceWithCheckoutThrowing(failure);
+
+        var ex = await Assert.ThrowsAsync<VideoDownloadException>(
+            () => service.PrepareAsync(Bvid, "video", 1, null, null, CancellationToken.None));
+
+        Assert.Equal(502, ex.StatusCode);
+        Assert.Equal("取流失败：上游服务不可用", ex.Message);
+    }
+
+    public static TheoryData<Exception> CheckoutFailures => new()
+    {
+        new HttpRequestException("cookie service unreachable"),
+        new TaskCanceledException("cookie checkout timed out"),
+        new JsonException("cookie service returned non-json"),
+        new InvalidOperationException("Cookie checkout returned null result."),
+    };
+
+    private static VideoStreamService ServiceWithCheckoutThrowing(Exception exception)
+    {
+        var cookie = new VideoTestSupport.StubCookieClient { OnCheckout = () => throw exception };
+        return VideoTestSupport.CreateService(new VideoTestSupport.StubBiliApi(), cookie, new HttpClient(new VideoTestSupport.StubHttpHandler()));
+    }
+
     [Fact]
     public async Task PrepareAsync_VideoNotFound_Returns404()
     {

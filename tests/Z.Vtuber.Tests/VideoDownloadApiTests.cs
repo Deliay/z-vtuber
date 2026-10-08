@@ -272,19 +272,55 @@ public sealed class VideoDownloadApiTests
     public async Task Download_FullFlow_CreatesNoNewFilesInWorkingOrTempDirectory()
     {
         var workingBefore = Snapshot(Directory.GetCurrentDirectory());
-        var tempBefore = Snapshot(Path.GetTempPath());
+        // 自建唯一临时子目录做快照，避免对 /tmp 全量快照在其他并行 collection（Testcontainers）下偶发假失败
+        var probeDir = Path.Combine(Path.GetTempPath(), "z-vtuber-video-nodisk", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(probeDir);
 
-        var payload = new byte[] { 1, 2, 3, 4, 5 };
-        var handler = new VideoTestSupport.StubHttpHandler { Handler = _ => VideoTestSupport.BinaryResponse(payload) };
-        var controller = CreateController(ApiReturning(VideoTestSupport.DashInfo("标题")), new HttpClient(handler));
+        try
+        {
+            var payload = new byte[] { 1, 2, 3, 4, 5 };
+            var handler = new VideoTestSupport.StubHttpHandler { Handler = _ => VideoTestSupport.BinaryResponse(payload) };
+            var controller = CreateController(ApiReturning(VideoTestSupport.DashInfo("标题")), new HttpClient(handler));
 
-        var result = await controller.Download(Bvid, "video", 1, CancellationToken.None);
-        Assert.IsType<EmptyResult>(result);
-        Assert.Equal(payload, await ReadBodyAsync(controller.HttpContext));
+            var result = await controller.Download(Bvid, "video", 1, CancellationToken.None);
+            Assert.IsType<EmptyResult>(result);
+            Assert.Equal(payload, await ReadBodyAsync(controller.HttpContext));
 
-        // 口径 11：不落盘——下载前后工作目录与临时目录均不得出现新增文件
-        Assert.Equal(workingBefore, Snapshot(Directory.GetCurrentDirectory()));
-        Assert.Empty(Snapshot(Path.GetTempPath()).Except(tempBefore));
+            // 口径 11：不落盘——下载前后工作目录文件集合不变，专用临时目录零新增文件
+            Assert.Equal(workingBefore, Snapshot(Directory.GetCurrentDirectory()));
+            Assert.Empty(Directory.GetFileSystemEntries(probeDir));
+        }
+        finally
+        {
+            Directory.Delete(probeDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Download_ClientAbortsMidTransfer_AbortsCopyAndDisposesUpstream()
+    {
+        var stream = new VideoTestSupport.ControlledStream();
+        var content = new VideoTestSupport.ControlledContent(stream);
+        var handler = new VideoTestSupport.StubHttpHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = content },
+        };
+        var controller = CreateController(ApiReturning(VideoTestSupport.DashInfo()), new HttpClient(handler));
+        using var cts = new CancellationTokenSource();
+
+        // 传输中途（已开始拷贝）客户端断开
+        var downloadTask = controller.Download(Bvid, "video", 1, cts.Token);
+        await stream.Started;
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => downloadTask);
+
+        var bytesAtCancel = controller.HttpContext.Response.Body.Length;
+        // using(result) 释放上游流与响应内容，且取消后不再有字节写入（无悬挂下载、无残留）
+        Assert.True(stream.Disposed);
+        Assert.True(content.Disposed);
+        await Task.Delay(50);
+        Assert.Equal(bytesAtCancel, controller.HttpContext.Response.Body.Length);
     }
 
     private static string[] Snapshot(string directory) =>
