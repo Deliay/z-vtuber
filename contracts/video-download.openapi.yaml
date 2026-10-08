@@ -1,0 +1,153 @@
+openapi: 3.1.0
+info:
+  title: Video Download Internal API
+  version: 1.0.0
+  description: >-
+    B 站投稿视频原始流实时取流下载（crawler 服务对内契约，统一前缀 /api/video-download）。
+    平台实时从 B 站取出原始流后经响应直接透传，不落盘、不转码、不封装，传输结束即弃。
+servers:
+  - url: /
+paths:
+  /health:
+    get:
+      summary: 健康检查
+      operationId: health
+      responses:
+        "200":
+          description: 服务存活且 MongoDB 可达
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/video-download/{bvid}:
+    get:
+      summary: 下载 B 站视频原始流
+      description: >-
+        实时解析视频分 P 与取流地址后，将 B 站 CDN 返回的原始流内容流式透传（DASH 的 m4v/m4a 或整段 flv），
+        不落盘、不转码、不重封装；支持 Range 分段获取（206）与 If-Range 条件请求，越界区间返回 416。
+        「都下载」不设打包端点：调用方以 kind=video 与 kind=audio 各请求一次，各自支持断点续传。
+      operationId: downloadVideoStream
+      parameters:
+        - name: bvid
+          in: path
+          required: true
+          description: B 站视频 BV 号
+          schema:
+            type: string
+          example: BV1xx411c7mD
+        - name: kind
+          in: query
+          required: true
+          description: 下载内容类型；video=仅视频流，audio=仅音频流（大小写敏感）
+          schema:
+            type: string
+            enum: [video, audio]
+        - name: page
+          in: query
+          required: false
+          description: 多 P 视频的分 P 序号（从 1 开始），默认第 1 P
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - $ref: "#/components/parameters/Range"
+        - $ref: "#/components/parameters/IfRange"
+      responses:
+        "200":
+          description: 完整原始流内容（未携带 Range 或 Range 不被支持时返回完整内容）
+          headers:
+            Content-Disposition:
+              description: 附件下载文件名，含视频标题、分 P 与类型，如 attachment; filename*=UTF-8''标题.p01.video.m4v
+              schema:
+                type: string
+            Accept-Ranges:
+              description: 服务端支持的分段单位，固定为 bytes
+              schema:
+                type: string
+                example: bytes
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+            video/x-flv:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: 单区间分段内容（Range 可满足）
+          headers:
+            Content-Range:
+              description: 当前返回的字节区间及流总大小，如 bytes 0-1023/20480
+              schema:
+                type: string
+            Accept-Ranges:
+              description: 服务端支持的分段单位，固定为 bytes
+              schema:
+                type: string
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+            video/x-flv:
+              schema:
+                type: string
+                format: binary
+        "416":
+          description: 请求区间越界（起始位置不小于流大小）
+          headers:
+            Content-Range:
+              description: 未满足的区间及流总大小，如 bytes */20480
+              schema:
+                type: string
+        "400":
+          description: bvid 格式非法、kind 非法、page 非法、page 越界，或该视频仅提供整段 flv（无独立音频流）却请求 kind=audio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoDownloadError"
+        "404":
+          description: 视频不存在或不可访问（已删除/私密/限制访问）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoDownloadError"
+        "502":
+          description: 取流失败（B 站风控受限、权限受限、无可用账号或上游服务不可用），body 含可读中文原因
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoDownloadError"
+components:
+  parameters:
+    Range:
+      name: Range
+      in: header
+      required: false
+      description: 字节区间请求，如 bytes=0-1023；仅支持单区间，多区间请求回退为 200 返回完整内容
+      schema:
+        type: string
+    IfRange:
+      name: If-Range
+      in: header
+      required: false
+      description: 条件 Range，校验失败（值与当前内容不匹配）时回退为 200 返回完整内容
+      schema:
+        type: string
+  schemas:
+    VideoDownloadError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: 可读中文失败原因

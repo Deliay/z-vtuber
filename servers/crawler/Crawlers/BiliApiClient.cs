@@ -25,6 +25,12 @@ public interface IBiliApiClient
     Task<NavInfo> GetNavInfoV2Async(string cookieId, string cookie, CancellationToken ct = default);
     Task<SpaceDynamicsPage> GetSpaceDynamicsAsync(string cookieId, string cookie, long mid, string offset, CancellationToken ct = default);
     Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default);
+
+    /// <summary>
+    /// 解析视频取流信息：x/web-interface/view 取标题与目标分 P 的 cid，x/player/wbi/playurl 取流地址（DASH 优先、flv 回退）。
+    /// 不在此处做下载模式过滤；输入合法但视频不可访问/分 P 越界/取流受限分别抛领域异常。
+    /// </summary>
+    Task<VideoPlayInfo> GetVideoPlayInfoAsync(string cookieId, string cookie, string bvid, int page, CancellationToken ct = default);
 }
 
 public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IBiliApiClient
@@ -105,6 +111,24 @@ public sealed class BiliApiClient(IBilibiliAccountProvider accountProvider) : IB
         var provider = await accountProvider.GetProviderAsync(cookieId, cookie, ct);
         var crawler = provider.GetRequiredService<BiliLiveCrawler>();
         return await crawler.GetRoomGuardList(roomId, bId, page, ct);
+    }
+
+    public async Task<VideoPlayInfo> GetVideoPlayInfoAsync(string cookieId, string cookie, string bvid, int page, CancellationToken ct = default)
+    {
+        var provider = await accountProvider.GetProviderAsync(cookieId, cookie, ct);
+        var account = provider.GetRequiredService<BilibiliAccount>();
+        var client = provider.GetRequiredService<BiliLiveCrawler>().Client;
+
+        return await BiliVideoResponseParser.FetchAsync(account, url => GetJsonAsync(client, url, ct), bvid, page, ct);
+    }
+
+    internal static async Task<JsonElement> GetJsonAsync(HttpClient client, string url, CancellationToken ct)
+    {
+        using var response = await client.GetAsync(url, ct);
+        response.EnsureSuccessStatusCode();
+        using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        return doc.RootElement.Clone();
     }
 
     private static BilibiliApiResponse<T> EnsureSuccess<T>(BilibiliApiResponse<T> response)
