@@ -42,6 +42,12 @@ public sealed class FakeBiliApiClient : IBiliApiClient
     public Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default) =>
         Task.FromResult(RoomGuardListProvider?.Invoke(roomId, page)
             ?? new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
+
+    public Func<string, string, string, int, CancellationToken, Task<VideoPlayInfo>>? VideoPlayInfoFunc { get; set; }
+
+    public Task<VideoPlayInfo> GetVideoPlayInfoAsync(string cookieId, string cookie, string bvid, int page, CancellationToken ct = default) =>
+        VideoPlayInfoFunc?.Invoke(cookieId, cookie, bvid, page, ct)
+        ?? Task.FromResult(new VideoPlayInfo { Title = "title", Cid = 1, PageCount = 1 });
 }
 
 public sealed class FakeCookiePoolService : ICookiePoolService

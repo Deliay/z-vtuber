@@ -52,6 +52,11 @@ public sealed class ResilientBiliApiClient : IBiliApiClient
     public Task<JsonElement> GetAccountInfoDataAsync(string cookie, long mid, CancellationToken ct = default)
         => _direct.GetAccountInfoDataAsync(cookie, mid, ct);
 
+    public Task<VideoPlayInfo> GetVideoPlayInfoAsync(string cookieId, string cookie, string bvid, int page, CancellationToken ct = default)
+        => ExecuteWithResilienceAsync(cookieId, cookie, $"video:{bvid}",
+            c => _direct.GetVideoPlayInfoAsync(cookieId, c, bvid, page, ct),
+            c => _browser.GetVideoPlayInfoAsync(cookieId, c, bvid, page, ct));
+
     private async Task<T> ExecuteWithResilienceAsync<T>(
         string cookieId,
         string cookie,
