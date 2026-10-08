@@ -49,11 +49,13 @@ type: Permanent
     |------|------|-----------|
     | bvid/kind 非法、page 非法 | 400 | `参数非法：…` |
     | page 越界 | 400 | `分 P 越界：该视频共 {N} P` |
-    | flv 回退且 kind=audio | 400 | `该视频无独立音频流（仅整段视频流），无法只下载音频` |
+    | DASH 音频缺失或 flv 回退且 kind=audio | 400 | `该视频无独立音频流（仅整段视频流），无法只下载音频` |
     | view 返回 -404（不存在/已删除/私密） | 404 | `视频不存在或不可访问` |
     | `RiskControlException`（风控） | 502 | `B 站风控受限，请稍后重试` |
     | `NoAvailableCookieException`/`CookieSessionInvalidException` | 502 | `暂无可用 B 站账号，无法取流` |
+    | cookie 服务不可达/超时/响应非 JSON/返回空 | 502 | `取流失败：上游服务不可用` |
     | playurl 返回非 0（含 -403 权限受限） | 502 | `取流失败：权限受限或该视频不可播放` |
+    | 取数/取流上游异常（网络不可达、超时、非 JSON） | 502 | `取流失败：上游服务不可用` |
     | CDN 请求失败 / 上游不可达 | 502 | `取流失败：上游服务不可用`（api 侧 `crawler service unavailable` 同义） |
 
     B 站 API code → 文案映射收敛为 `VideoStreamService` 内纯函数（可单测）；api 代理对 400/404/416/502 按 `DownloadRecording` 先例透传，不归并。
