@@ -56,6 +56,74 @@ internal static class VideoTestSupport
         public HttpClient CreateClient(string name) => client;
     }
 
+    /// <summary>可控视频缓存桩：记录读/写调用，读命中/未命中与上传行为可注入。</summary>
+    internal sealed class FakeVideoObjectCache : IVideoObjectCache
+    {
+        public bool Enabled { get; set; } = true;
+        public Func<VideoCacheKey, string?, string?, VideoCacheRead?>? OnRead { get; set; }
+        public Func<VideoCacheKey, VideoCacheObjectMetadata, IVideoCacheUpload>? OnBeginUpload { get; set; }
+
+        public List<(VideoCacheKey Key, string? Range, string? IfRange)> Reads { get; } = [];
+        public List<(VideoCacheKey Key, VideoCacheObjectMetadata Metadata)> Uploads { get; } = [];
+
+        public Task<VideoCacheRead?> TryReadAsync(VideoCacheKey key, string? range, string? ifRange, CancellationToken ct)
+        {
+            Reads.Add((key, range, ifRange));
+            return Task.FromResult(OnRead?.Invoke(key, range, ifRange));
+        }
+
+        public Task<IVideoCacheUpload> BeginUploadAsync(VideoCacheKey key, VideoCacheObjectMetadata metadata, CancellationToken ct)
+        {
+            Uploads.Add((key, metadata));
+            if (OnBeginUpload is null)
+            {
+                throw new NotSupportedException();
+            }
+
+            return Task.FromResult(OnBeginUpload(key, metadata));
+        }
+    }
+
+    /// <summary>内存视频缓存上传桩：记录写入字节与完成/中止状态。</summary>
+    internal sealed class FakeVideoCacheUpload : IVideoCacheUpload
+    {
+        private readonly MemoryStream _buffer = new();
+
+        public bool FailWrites { get; set; }
+        public bool Completed { get; private set; }
+        public bool Aborted { get; private set; }
+        public byte[] Bytes => _buffer.ToArray();
+
+        public ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct)
+        {
+            if (FailWrites)
+            {
+                throw new IOException("s3 write failed");
+            }
+
+            _buffer.Write(buffer.Span);
+            return ValueTask.CompletedTask;
+        }
+
+        public Task CompleteAsync(CancellationToken ct)
+        {
+            Completed = true;
+            return Task.CompletedTask;
+        }
+
+        public Task AbortAsync(CancellationToken ct)
+        {
+            Aborted = true;
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _buffer.Dispose();
+            return ValueTask.CompletedTask;
+        }
+    }
+
     internal sealed class StubHttpHandler : HttpMessageHandler
     {
         public Func<HttpRequestMessage, HttpResponseMessage>? Handler { get; set; }
@@ -88,12 +156,14 @@ internal static class VideoTestSupport
     internal static VideoStreamService CreateService(
         IBiliApiClient bili,
         ICookieServiceClient cookieClient,
-        HttpClient streamClient) =>
+        HttpClient streamClient,
+        IVideoObjectCache? cache = null) =>
         new(
             bili,
             cookieClient,
             new StubHttpClientFactory(streamClient),
             new BilibiliCrawlerOptions(),
+            cache ?? new NoOpVideoObjectCache(),
             NullLogger<VideoStreamService>.Instance);
 
     internal static VideoPlayInfo DashInfo(

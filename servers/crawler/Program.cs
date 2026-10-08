@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Amazon.Runtime;
+using Amazon.S3;
 using MongoDB.Driver;
 using Z.Vtuber.Common.Locking;
 using Z.Vtuber.Common.Persistence;
@@ -38,6 +40,33 @@ builder.Services.AddOptions<WeiboCrawlerOptions>()
 
 builder.Services.AddSingleton(sp =>
     sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WeiboCrawlerOptions>>().Value);
+
+builder.Services.AddOptions<S3Options>()
+    .Bind(builder.Configuration.GetSection(S3Options.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddSingleton(sp =>
+    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<S3Options>>().Value);
+
+// 视频缓存：启用时构造 S3 兼容客户端（MinIO 需 ForcePathStyle），关闭时以空实现保持回源透传行为。
+builder.Services.AddSingleton<IVideoObjectCache>(sp =>
+{
+    var options = sp.GetRequiredService<S3Options>();
+    if (!options.Enabled)
+    {
+        return new NoOpVideoObjectCache();
+    }
+
+    var config = new AmazonS3Config
+    {
+        ServiceURL = options.ServiceUrl,
+        ForcePathStyle = options.ForcePathStyle,
+        AuthenticationRegion = options.Region,
+    };
+    var client = new AmazonS3Client(new BasicAWSCredentials(options.AccessKey, options.SecretKey), config);
+    return new S3VideoObjectCache(client, options, sp.GetRequiredService<ILogger<S3VideoObjectCache>>());
+});
 
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));

@@ -148,3 +148,12 @@ flowchart TD
 
 - [[20260913-live-recording-prd]]
 - 技术提案：docs/engineering/proposals/20261008-proposal-bilibili-video-download.md
+
+## 七、增量修订（2026-10-09）
+
+新增 **crawler 视频下载 S3 缓存**（技术提案：docs/engineering/proposals/20261009-proposal-video-s3-cache.md）：
+
+- crawler 新增外部 S3 配置（节 `S3`），投稿视频下载对同一 `(bvid, page, kind)` 采用 **cache-aside**：命中 S3 缓存直接流式返回，未命中回源 B 站并边透传边写入缓存；
+- 缓存为**尽力而为**：S3 读写/启停异常一律降级为无缓存，不影响下载主链路与失败原因可见性；
+- 仍然**不落本地磁盘**：缓存仅写远端 S3；「不归档」调整为「不在平台本地留存副本，缓存由外部 S3 承担且可配置生命周期淘汰」；
+- 对外接口结构、`Range`/`If-Range`/416/400/404/502 语义与返回字节一致性不变。

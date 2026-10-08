@@ -24,6 +24,7 @@ public sealed class VideoStreamService
     private readonly ICookieServiceClient _cookieServiceClient;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly BilibiliCrawlerOptions _options;
+    private readonly IVideoObjectCache _cache;
     private readonly ILogger<VideoStreamService> _logger;
 
     public VideoStreamService(
@@ -31,12 +32,14 @@ public sealed class VideoStreamService
         ICookieServiceClient cookieServiceClient,
         IHttpClientFactory httpClientFactory,
         BilibiliCrawlerOptions options,
+        IVideoObjectCache cache,
         ILogger<VideoStreamService> logger)
     {
         _bili = bili;
         _cookieServiceClient = cookieServiceClient;
         _httpClientFactory = httpClientFactory;
         _options = options;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -61,6 +64,25 @@ public sealed class VideoStreamService
         if (page < 1)
         {
             throw new VideoDownloadException(400, "参数非法：page 必须大于等于 1");
+        }
+
+        var cacheKey = VideoCacheKey.For(bvid!, page, streamKind);
+        if (_cache.Enabled)
+        {
+            var cached = await TryReadCacheAsync(cacheKey, range, ifRange, ct);
+            if (cached is not null)
+            {
+                return new VideoDownloadResult
+                {
+                    StatusCode = cached.StatusCode,
+                    ContentType = cached.ContentType,
+                    ContentDisposition = cached.ContentDisposition,
+                    AcceptRanges = cached.AcceptRanges,
+                    ContentRange = cached.ContentRange,
+                    ContentLength = cached.ContentLength,
+                    Content = cached.Content,
+                };
+            }
         }
 
         string cookieId;
@@ -153,7 +175,7 @@ public sealed class VideoStreamService
             throw new VideoDownloadException(502, "取流失败：上游服务不可用");
         }
 
-        return await OpenUpstreamAsync(info, selection, page, range, ifRange, ct);
+        return await OpenUpstreamAsync(info, selection, page, range, ifRange, cacheKey, ct);
     }
 
     /// <summary>校验收到的 bvid 是否形如 <c>^BV[0-9A-Za-z]{10}$</c>。</summary>
@@ -220,6 +242,7 @@ public sealed class VideoStreamService
         int page,
         string? range,
         string? ifRange,
+        VideoCacheKey cacheKey,
         CancellationToken ct)
     {
         var client = _httpClientFactory.CreateClient(StreamClientName);
@@ -273,19 +296,66 @@ public sealed class VideoStreamService
         }
 
         var fileName = VideoDownloadFileName.Build(info.Title, page, KindName(selection.Kind), selection.Extension);
-        var content = await response.Content.ReadAsStreamAsync(ct);
+        var disposition = VideoDownloadFileName.FormatContentDisposition(fileName);
+        var upstreamStream = await response.Content.ReadAsStreamAsync(ct);
+
+        // cache-aside 写入：仅「调用方未携带 Range + 上游完整 200」时把内容边透传边写入缓存；
+        // 带 Range 的请求为 206 分片，写入会破坏对象完整性，故不缓存。缓存启用失败降级为无缓存。
+        var content = upstreamStream;
+        if (_cache.Enabled && string.IsNullOrEmpty(range) && status == StatusCodes.Status200OK)
+        {
+            var upload = await TryBeginCacheUploadAsync(cacheKey, selection.ContentType, disposition, ct);
+            if (upload is not null)
+            {
+                content = new CachingReadStream(upstreamStream, upload, _logger);
+            }
+        }
 
         return new VideoDownloadResult
         {
             StatusCode = status,
             ContentType = selection.ContentType,
-            ContentDisposition = VideoDownloadFileName.FormatContentDisposition(fileName),
+            ContentDisposition = disposition,
             AcceptRanges = response.Headers.AcceptRanges.Count > 0 ? response.Headers.AcceptRanges.ToString() : "bytes",
             ContentRange = response.Content.Headers.ContentRange?.ToString(),
             ContentLength = response.Content.Headers.ContentLength,
             Content = content,
             Upstream = response,
         };
+    }
+
+    private async Task<VideoCacheRead?> TryReadCacheAsync(
+        VideoCacheKey cacheKey,
+        string? range,
+        string? ifRange,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _cache.TryReadAsync(cacheKey, range, ifRange, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Video cache read failed for {Key}; serving from upstream.", cacheKey.ObjectKey);
+            return null;
+        }
+    }
+
+    private async Task<IVideoCacheUpload?> TryBeginCacheUploadAsync(
+        VideoCacheKey cacheKey,
+        string contentType,
+        string disposition,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _cache.BeginUploadAsync(cacheKey, new VideoCacheObjectMetadata(contentType, disposition), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Begin video cache upload failed for {Key}; serving without cache.", cacheKey.ObjectKey);
+            return null;
+        }
     }
 
     private static string KindName(VideoStreamKind kind) => kind == VideoStreamKind.Video ? "video" : "audio";
