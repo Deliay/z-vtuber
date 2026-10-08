@@ -445,8 +445,10 @@ paths:
     get:
       summary: 下载 B 站视频原始流
       description: >-
-        代理 crawler 服务的视频取流端点，实时从 B 站取出原始流（DASH 的 m4v/m4a 或整段 flv）后流式透传，
-        平台不落盘、不转码、不重封装，传输结束即弃；支持 Range 分段获取（206）与 If-Range 条件请求，越界区间返回 416。
+        代理 crawler 服务的视频取流端点，返回 B 站投稿视频原始流（DASH 的 m4v/m4a 或整段 flv），
+        不转码、不重封装；支持 Range 分段获取（206）与 If-Range 条件请求，越界区间返回 416。
+        crawler 侧对同一 (bvid, page, kind) 采用 cache-aside：命中外部 S3 缓存直接流式返回，
+        未命中回源 B 站并边透传边写入缓存；缓存故障降级为回源，对调用方字节语义一致、不落本地盘。
         「都下载」不设打包端点：调用方以 kind=video 与 kind=audio 各请求一次。
       operationId: downloadBilibiliVideo
       parameters:

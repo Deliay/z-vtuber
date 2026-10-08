@@ -3,8 +3,9 @@ info:
   title: Video Download Internal API
   version: 1.0.0
   description: >-
-    B 站投稿视频原始流实时取流下载（crawler 服务对内契约，统一前缀 /api/video-download）。
-    平台实时从 B 站取出原始流后经响应直接透传，不落盘、不转码、不封装，传输结束即弃。
+    B 站投稿视频原始流取流下载（crawler 服务对内契约，统一前缀 /api/video-download）。
+    不转码、不封装；对同一 (bvid, page, kind) 采用 cache-aside：命中外部 S3 缓存直接流式返回，
+    未命中回源 B 站并边透传边写入缓存；缓存故障降级为回源，不落本地盘。
 servers:
   - url: /
 paths:
@@ -23,8 +24,10 @@ paths:
     get:
       summary: 下载 B 站视频原始流
       description: >-
-        实时解析视频分 P 与取流地址后，将 B 站 CDN 返回的原始流内容流式透传（DASH 的 m4v/m4a 或整段 flv），
-        不落盘、不转码、不重封装；支持 Range 分段获取（206）与 If-Range 条件请求，越界区间返回 416。
+        对同一 (bvid, page, kind) 采用 cache-aside：先查外部 S3 缓存，命中直接流式返回该视频原始流
+        （DASH 的 m4v/m4a 或整段 flv）；未命中则实时解析视频分 P 与取流地址，从 B 站 CDN 取流，
+        不转码、不重封装，并在「完整 200 且无 Range」时将内容边透传边写入 S3 缓存（失败降级不阻断）。
+        支持 Range 分段获取（206）与 If-Range 条件请求，越界区间返回 416。
         「都下载」不设打包端点：调用方以 kind=video 与 kind=audio 各请求一次，各自支持断点续传。
       operationId: downloadVideoStream
       parameters:

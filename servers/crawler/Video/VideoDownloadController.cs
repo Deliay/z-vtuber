@@ -31,7 +31,7 @@ public sealed class VideoDownloadController(VideoStreamService service) : Contro
             return StatusCode(ex.StatusCode, new { error = ex.Message });
         }
 
-        using (result)
+        await using (result)
         {
             Response.StatusCode = result.StatusCode;
             Response.ContentType = result.ContentType;
