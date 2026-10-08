@@ -98,6 +98,9 @@ public class CookiePoolServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
 
         public Task<GuardInfo> GetRoomGuardListAsync(string cookieId, string cookie, long roomId, long bId, int page = 1, CancellationToken ct = default)
             => Task.FromResult(new GuardInfo { Info = new GuardInfo.PageInfo { PageCount = 1 }, List = [] });
+
+        public Task<VideoPlayInfo> GetVideoPlayInfoAsync(string cookieId, string cookie, string bvid, int page, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 
     [Fact]
