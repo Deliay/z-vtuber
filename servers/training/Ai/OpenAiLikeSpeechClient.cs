@@ -88,23 +88,23 @@ public sealed class OpenAiLikeSpeechClient : ISpeechModelClient
 
     /// <summary>
     /// 组装 <c>/chat/completions</c> 请求体：<c>modalities=["text","audio"]</c>、<c>audio.format="wav"</c>、
-    /// <c>audio.voice</c> 携带参考语音 data URI（<c>ReferenceContentType</c> 映射的 format + base64）、
+    /// <c>audio.voice</c> 携带参考语音 data URI（MIME 由 <c>ReferenceContentType</c> 映射 + base64）、
     /// messages 两段（user 单段文本 prompt 在前、assistant 目标文本在后）。
     /// prompt 的语种提示以配置的 <c>Speech:DefaultLang</c> 为默认基准（非默认语种才附加朗读语言要求）。
     /// </summary>
     internal string BuildBody(string model, SpeechSynthesizeRequest request)
     {
-        var mineType = MapAudioFormat(request.ReferenceContentType);
+        var mimeType = MapAudioMimeType(request.ReferenceContentType);
         var audioBase64 = Convert.ToBase64String(request.ReferenceAudio);
-        
+
         var payload = new
         {
             model,
             modalities = new[] { "text", "audio" },
             audio = new
             {
-                format = "wav", 
-                voice = $"data:{mineType};base64,{audioBase64}"
+                format = "wav",
+                voice = $"data:{mimeType};base64,{audioBase64}",
             },
             messages = new object[]
             {
@@ -125,17 +125,17 @@ public sealed class OpenAiLikeSpeechClient : ISpeechModelClient
     }
 
     /// <summary>
-    /// 参考语音 Content-Type → <c>audio.voice</c> data URI 子类型：分号参数归一后
-    /// <c>audio/mpeg</c>→<c>mp3</c>、<c>audio/wav</c>/<c>audio/x-wav</c>/<c>audio/wave</c>→<c>wav</c>，
-    /// 未知按 <c>mp3</c>（参考音频多来自 recording 合并结果，多为 <c>audio/mpeg</c>）。
+    /// 参考语音 Content-Type → <c>audio.voice</c> data URI 的 MIME：分号参数归一后
+    /// <c>audio/wav</c>/<c>audio/x-wav</c>/<c>audio/wave</c>→<c>audio/wav</c>，
+    /// 其余（含 <c>audio/mpeg</c>）按 <c>audio/mpeg</c>（参考音频多来自 recording 合并结果，多为 <c>audio/mpeg</c>）。
     /// </summary>
-    internal static string MapAudioFormat(string? contentType)
+    internal static string MapAudioMimeType(string? contentType)
     {
         var mime = contentType?.Split(';')[0].Trim().ToLowerInvariant();
         return mime switch
         {
-            "audio/wav" or "audio/x-wav" or "audio/wave" => "wav",
-            _ => "mp3",
+            "audio/wav" or "audio/x-wav" or "audio/wave" => "audio/wav",
+            _ => "audio/mpeg",
         };
     }
 

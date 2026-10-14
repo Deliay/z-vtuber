@@ -88,7 +88,7 @@ public class OpenAiLikeSpeechClientTests
         Assert.Equal(["text", "audio"], root.GetProperty("modalities").EnumerateArray().Select(e => e.GetString()));
         Assert.Equal("wav", root.GetProperty("audio").GetProperty("format").GetString());
         Assert.Equal(
-            $"data:mp3;base64,{Convert.ToBase64String([9, 8, 7])}",
+            $"data:audio/mpeg;base64,{Convert.ToBase64String([9, 8, 7])}",
             root.GetProperty("audio").GetProperty("voice").GetString());
 
         // messages[0]：user 单段文本 prompt（SpeechPromptBuilder 产物）
@@ -105,16 +105,16 @@ public class OpenAiLikeSpeechClientTests
     }
 
     [Theory]
-    [InlineData("audio/mpeg", "mp3")]
-    [InlineData("audio/mpeg; codecs=x", "mp3")]
-    [InlineData("audio/wav", "wav")]
-    [InlineData("audio/x-wav", "wav")]
-    [InlineData("audio/wave", "wav")]
-    [InlineData("application/octet-stream", "mp3")]
-    [InlineData(null, "mp3")]
-    public void MapAudioFormat_MapsKnownContentTypes(string? contentType, string expected)
+    [InlineData("audio/mpeg", "audio/mpeg")]
+    [InlineData("audio/mpeg; codecs=x", "audio/mpeg")]
+    [InlineData("audio/wav", "audio/wav")]
+    [InlineData("audio/x-wav", "audio/wav")]
+    [InlineData("audio/wave", "audio/wav")]
+    [InlineData("application/octet-stream", "audio/mpeg")]
+    [InlineData(null, "audio/mpeg")]
+    public void MapAudioMimeType_MapsKnownContentTypes(string? contentType, string expected)
     {
-        Assert.Equal(expected, OpenAiLikeSpeechClient.MapAudioFormat(contentType));
+        Assert.Equal(expected, OpenAiLikeSpeechClient.MapAudioMimeType(contentType));
     }
 
     [Fact]
