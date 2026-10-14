@@ -21,11 +21,15 @@ public sealed class OpenAiLikeSpeechClient : ISpeechModelClient
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<OpenAiLikeSpeechClient> _logger;
+    private readonly string _defaultLang;
 
-    public OpenAiLikeSpeechClient(HttpClient httpClient, AiOptions options, ILogger<OpenAiLikeSpeechClient> logger)
+    public OpenAiLikeSpeechClient(
+        HttpClient httpClient, AiOptions options, SpeechOptions speechOptions,
+        ILogger<OpenAiLikeSpeechClient> logger)
     {
         _httpClient = httpClient;
         _logger = logger;
+        _defaultLang = speechOptions.DefaultLang;
         // 超时经 HttpClient.Timeout 生效（超时抛 TaskCanceledException，按未取消客户端映射 502）。
         _httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.RequestTimeoutSeconds));
     }
@@ -85,8 +89,9 @@ public sealed class OpenAiLikeSpeechClient : ISpeechModelClient
     /// <summary>
     /// 组装 <c>/chat/completions</c> 请求体：<c>modalities=["text","audio"]</c>、<c>audio.format="wav"</c>、
     /// messages 单 user 两段（<c>input_audio</c>（base64 + format 映射）在前、<c>text</c>（prompt）在后）。
+    /// prompt 的语种提示以配置的 <c>Speech:DefaultLang</c> 为默认基准（非默认语种才附加朗读语言要求）。
     /// </summary>
-    internal static string BuildBody(string model, SpeechSynthesizeRequest request)
+    internal string BuildBody(string model, SpeechSynthesizeRequest request)
     {
         var payload = new
         {
@@ -109,7 +114,7 @@ public sealed class OpenAiLikeSpeechClient : ISpeechModelClient
                                 format = MapAudioFormat(request.ReferenceContentType),
                             },
                         },
-                        new { type = "text", text = SpeechPromptBuilder.Build(request) },
+                        new { type = "text", text = SpeechPromptBuilder.Build(request, _defaultLang) },
                     },
                 },
             },

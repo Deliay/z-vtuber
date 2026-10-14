@@ -12,6 +12,7 @@ namespace Z.Vtuber.Training.Ai;
 public sealed class SpeechModelClientFactory(
     IHttpClientFactory httpClientFactory,
     IOptions<AiOptions> options,
+    IOptions<SpeechOptions> speechOptions,
     ILoggerFactory loggerFactory) : ISpeechModelClientFactory
 {
     public ISpeechModelClient Create(string providerType)
@@ -20,7 +21,8 @@ public sealed class SpeechModelClientFactory(
         return providerType?.Trim().ToLowerInvariant() switch
         {
             TrainingProviderTypes.OpenAi => new OpenAiLikeSpeechClient(
-                client, options.Value, loggerFactory.CreateLogger<OpenAiLikeSpeechClient>()),
+                client, options.Value, speechOptions.Value,
+                loggerFactory.CreateLogger<OpenAiLikeSpeechClient>()),
             _ => throw new ModelAudioOutputNotSupportedException(),
         };
     }
