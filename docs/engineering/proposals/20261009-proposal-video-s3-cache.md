@@ -30,6 +30,7 @@ crawler 服务已具备 B 站投稿视频实时取流下载能力（见 [[202610
   - **未命中**：沿用现有回源链路，**完整 200 且调用方未携带 Range** 时边透传给客户端边写入 S3（multipart），成功后对象可被后续请求命中；
   - **不缓存**：带 `Range` 的请求（上游 206）、416、错误响应一律不写缓存；
 - 缓存读写失败（S3 不可达/超时/无权限）**只记日志、降级为无缓存**，下载仍按原语义成功；
+- **启用缓存时启动前探测 S3 可用性**：`ListObjectsV2(MaxKeys=1)` 探测目标 Bucket，不可用则拒绝启动（进程非零退出），避免带病运行；
 - 不引入本地磁盘落盘（沿用 crawler 视频链路「不落盘」硬约束，缓存只写远端 S3）。
 
 ### 1.3 范围
@@ -78,6 +79,7 @@ graph LR
 | 模块 | 职责 | 关键技术点 |
 |------|------|-----------|
 | crawler: `Configuration/S3Options` | S3 配置节 `S3`：Enabled/ServiceUrl/Bucket/凭据/Region/ForcePathStyle/Prefix | `ValidateOnStart`；仅 Enabled=true 时校验必填项 |
+| crawler: `Video/S3AvailabilityProbe` | 启动期可用性探测：`ListObjectsV2(MaxKeys=1)` 探测 Bucket | 不可用抛 `S3UnavailableException` → 拒绝启动 |
 | crawler: `Video/IVideoObjectCache` | 缓存端口：`TryReadAsync` / `BeginUploadAsync` / `Enabled` | 与具体 S3 SDK 解耦，便于桩测 |
 | crawler: `Video/S3VideoObjectCache` | S3 实现：Head+Get 读、multipart 写、abort | 全部异常降级；If-Range 匹配、416 由 Head 总长判定 |
 | crawler: `Video/NoOpVideoObjectCache` | 未启用缓存时的空实现 | `Enabled=false`，方法不参与主链路 |
@@ -196,6 +198,12 @@ sequenceDiagram
 - **技术细节**: `If-Range` 匹配、字节区间与 416 判定为纯函数，单测覆盖；S3 调用薄封装。
 - **风险点**: S3 不支持原生 If-Range，故以 Head 元数据自行判定，语义与 HTTP 一致。
 
+#### 实现点 5: 启动期 S3 可用性探测（不可用拒绝启动）
+
+- **描述**: `Program.cs` 在构建宿主后、`app.Run()` 前，若 `S3:Enabled=true` 则调用 `IS3AvailabilityProbe.EnsureAvailableAsync`（`ListObjectsV2(MaxKeys=1)` 访问目标 Bucket）。任一异常（网络不可达、鉴权失败、Bucket 不存在）统一包装为 `S3UnavailableException` 抛出，使宿主启动失败、进程非零退出；`S3:Enabled=false` 时不探测。
+- **技术细节**: S3 客户端为单例，缓存与探测共用；探测与运行时降级互补——启动要求 S3 就绪，运行中 S3 抖动仍降级不阻断下载。
+- **风险点**: 编排环境 S3 与应用并发启动可能瞬时不可达导致启动失败——由编排的重启策略兜底（`WaitFor`/重启），保证最终一致。
+
 ## 6. 技术决策
 
 ### 6.1 决策列表
@@ -209,6 +217,7 @@ sequenceDiagram
 | 部分请求缓存 | 仅完整 200 缓存 | 206 也缓存 | A | 206 是分片，缓存会污染对象完整性 |
 | 缓存键 | bvid+page+kind | bvid | A | 与下载粒度一致；不同 page/kind 内容不同 |
 | 缓存失败处理 | 降级无缓存 | 让下载失败 | A | 缓存是旁路，不得影响主链路 |
+| S3 启动可用性 | 探测不可用即拒绝启动 | 始终启动按需降级 | A | 启用缓存即声明依赖，避免带病运行；关闭缓存则不探测 |
 | 淘汰策略 | S3 生命周期 | 应用层 TTL | A | 本提案不做应用层淘汰，交由运维配置 |
 
 ### 6.2 依赖与约束
@@ -230,7 +239,8 @@ servers/crawler/
 ├── Video/
 │   ├── IVideoObjectCache.cs            # 新增：缓存端口 + IVideoCacheUpload
 │   ├── VideoCacheModels.cs             # 新增：VideoCacheKey/VideoCacheRead/元数据/If-Range 纯函数
-│   ├── S3VideoObjectCache.cs           # 新增：AWSSDK.S3 实现（Head/Get/multipart）
+│   ├── S3VideoObjectCache.cs           # 新增：AWSSDK.S3 实现（GetObjectMetadata/GetObject/multipart）
+│   ├── S3AvailabilityProbe.cs          # 新增：启动期 S3 可用性探测（不可用拒绝启动）
 │   ├── NoOpVideoObjectCache.cs         # 新增：未启用时空实现
 │   ├── CachingReadStream.cs            # 新增：边读边写缓存的流包装
 │   ├── VideoStreamService.cs           # 修改：接入 cache-aside
@@ -246,14 +256,15 @@ contracts/
 tests/Z.Vtuber.Tests/
 ├── VideoCacheKeyTests.cs               # 新增：键与 If-Range/416 纯函数
 ├── VideoObjectCacheTests.cs            # 新增：cache-aside 命中/未命中/tee/降级（假缓存）
-└── S3VideoObjectCacheTests.cs          # 新增：S3 实现（MinIO Testcontainer，可选；或 skip）
+├── S3VideoObjectCacheTests.cs          # 新增：S3 实现（内存 S3 桩）
+└── S3AvailabilityProbeTests.cs         # 新增：启动期探测成功/失败
 ```
 
 ## 8. 测试策略
 
 ### 8.1 测试覆盖要求
 
-- 单元测试覆盖率: ≥80%（核心逻辑：缓存键生成、If-Range 匹配、Range/416 判定、cache-aside 编排、tee 写入/abort、降级）
+- 单元测试覆盖率: ≥80%（核心逻辑：缓存键生成、If-Range 匹配、Range/416 判定、cache-aside 编排、tee 写入/abort、降级、启动可用性探测）
 - API 测试覆盖的端点: `/api/video-download/{bvid}` 在缓存命中/未命中/缓存不可用下的响应头与字节一致性
 
 ### 8.2 测试类型
