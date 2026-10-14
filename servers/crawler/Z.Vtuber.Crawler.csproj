@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="Mikibot.Crawler" Version="1.0.9" />
+    <PackageReference Include="AWSSDK.S3" Version="4.0.104.1" />
     <PackageReference Include="Aspire.MongoDB.Driver" Version="13.4.6" />
     <PackageReference Include="MongoDB.Driver" Version="3.9.0" />
     <PackageReference Include="Aspire.StackExchange.Redis" Version="13.4.6" />

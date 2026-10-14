@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.IO.Compression;
-using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -11,6 +8,7 @@ using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Contracts;
+using Z.Vtuber.Training.Streams;
 using Z.Vtuber.Training.Synthesis;
 
 namespace Z.Vtuber.Training.Controllers;
@@ -170,6 +168,8 @@ public sealed class TrainingDatasetsController(
     /// 逐条取音频（与试听同源）写入 <c>{D6}.mp3</c> + <c>{D6}.txt</c>（UTF-8 无 BOM）成对文件；
     /// 取音频失败或降级非 mp3 的条目跳过且不占编号，下载不中断。
     /// 响应头先行：200 / application/zip / Content-Disposition（UTF-8 文件名）/ Cache-Control: no-store。
+    /// zip 由 <see cref="DatasetExportStream"/> 在后台生成、经异步读回写响应体，
+    /// 避免 ZipArchive 同步写 Kestrel 响应体（Kestrel 默认禁止同步 IO）。
     /// </summary>
     [HttpGet("{datasetId}/export")]
     public async Task<IActionResult> Export(string datasetId, CancellationToken ct = default)
@@ -194,69 +194,16 @@ public sealed class TrainingDatasetsController(
             $"attachment; filename*=UTF-8''{Uri.EscapeDataString(dataset.Name)}.zip";
         Response.Headers.CacheControl = "no-store";
 
-        var encoder = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-        var exported = 0;
-        var skipped = 0;
-
-        using (var zip = new ZipArchive(Response.Body, ZipArchiveMode.Create, leaveOpen: true))
+        // 生成器流：后台用 ZipArchive 同步写 pipe，这里异步读并回写 Response.Body（无同步 IO）。
+        await using (var export = new DatasetExportStream(entries, audio, _logger, id.ToString(), ct))
         {
-            foreach (var item in entries)
-            {
-                if (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-
-                AudioClip clip;
-                try
-                {
-                    clip = await audio.GetClipAsync(item.AudioUri, item.StartMs, item.EndMs, ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    skipped++;
-                    _logger.LogWarning(
-                        "training dataset export skip: datasetId={DatasetId} audioKey={AudioKey} reason={Reason}",
-                        id, item.AudioKey, ex.Message);
-                    continue;
-                }
-
-                // recording 片段端点缺 mp3 编码时降级 audio/wav，此类条目按「音频不可用」跳过，
-                // 不产生与 .mp3 扩展名不符的残缺文件（提案 §6.1 决策 4/5）。
-                if (!string.Equals(clip.ContentType, "audio/mpeg", StringComparison.OrdinalIgnoreCase))
-                {
-                    skipped++;
-                    _logger.LogWarning(
-                        "training dataset export skip: datasetId={DatasetId} audioKey={AudioKey} reason={Reason}",
-                        id, item.AudioKey, $"content type {clip.ContentType}");
-                    continue;
-                }
-
-                // 成功写入后才分配编号：失败条目跳过不占号，编号保持连续。
-                exported++;
-                var stem = exported.ToString("D6", CultureInfo.InvariantCulture);
-
-                var mp3 = zip.CreateEntry(stem + ".mp3");
-                await using (var stream = mp3.Open())
-                {
-                    await stream.WriteAsync(clip.Bytes, ct);
-                }
-
-                var txt = zip.CreateEntry(stem + ".txt");
-                await using (var stream = txt.Open())
-                {
-                    // 容忍历史/上游脏数据 text=null：单条缺失文本不应击穿整个导出（写空 txt，保持配对）。
-                    await stream.WriteAsync(encoder.GetBytes(item.Text ?? string.Empty), ct);
-                }
-
-                // 单条写入后立即冲刷，保证流式即时下行（响应头已先行，首字节即时产出）。
-                await Response.Body.FlushAsync(ct);
-            }
+            await export.CopyToAsync(Response.Body, ct);
+            await export.Completion;
+            _logger.LogInformation(
+                "training dataset export: datasetId={DatasetId} exported={Exported} skipped={Skipped}",
+                id, export.Exported, export.Skipped);
         }
 
-        _logger.LogInformation(
-            "training dataset export: datasetId={DatasetId} exported={Exported} skipped={Skipped}",
-            id, exported, skipped);
         return new EmptyResult();
     }
 

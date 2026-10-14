@@ -24,8 +24,9 @@ public sealed class VideoDownloadException : Exception
 
 /// <summary>
 /// 一次下载的就绪结果：上游状态码与透传响应头元数据，以及可供逐段拷贝的上游流（不落盘）。
+/// 支持同步/异步释放：缓存写入未完成时由流在释放阶段兜底中止。
 /// </summary>
-public sealed class VideoDownloadResult : IDisposable
+public sealed class VideoDownloadResult : IDisposable, IAsyncDisposable
 {
     public int StatusCode { get; init; }
     public string ContentType { get; init; } = "application/octet-stream";
@@ -36,9 +37,37 @@ public sealed class VideoDownloadResult : IDisposable
     public Stream? Content { get; init; }
     internal HttpResponseMessage? Upstream { get; init; }
 
+    private bool _disposed;
+
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         Content?.Dispose();
+        Upstream?.Dispose();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (Content is IAsyncDisposable asyncDisposable)
+        {
+            await asyncDisposable.DisposeAsync();
+        }
+        else
+        {
+            Content?.Dispose();
+        }
+
         Upstream?.Dispose();
     }
 }
