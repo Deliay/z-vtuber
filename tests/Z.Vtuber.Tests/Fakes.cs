@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Text.Json;
 using Mikibot.Crawler.Http.Bilibili.Model;
 using Z.Vtuber.Crawler.Crawlers;
@@ -80,9 +81,11 @@ public sealed class FakeBrowserSessionManager : IBrowserSessionManager
     public Func<string, Task<string>>? ExtractCookiesAsyncFunc { get; set; }
     public Func<string, Task>? DeleteSessionAsyncFunc { get; set; }
     public Func<string, Task>? RefreshSessionAsyncFunc { get; set; }
+    public Func<string, string, CancellationToken, Task<Z.Vtuber.Cookie.Browser.ProxyFetchResult>>? ProxyRequestAsyncFunc { get; set; }
     public List<string> CreatedSessions { get; } = [];
     public List<string> DeletedSessions { get; } = [];
     public List<string> RefreshedSessions { get; } = [];
+    public List<(string AccountId, string Path)> ProxyRequests { get; } = [];
 
     public Task<Z.Vtuber.Cookie.Browser.LoginSessionResult> CreateLoginSessionAsync(string accountId, CancellationToken ct = default)
     {
@@ -116,6 +119,13 @@ public sealed class FakeBrowserSessionManager : IBrowserSessionManager
     {
         RefreshedSessions.Add(accountId);
         return RefreshSessionAsyncFunc?.Invoke(accountId) ?? Task.CompletedTask;
+    }
+
+    public Task<Z.Vtuber.Cookie.Browser.ProxyFetchResult> ProxyRequestAsync(string accountId, string path, CancellationToken ct = default)
+    {
+        ProxyRequests.Add((accountId, path));
+        return ProxyRequestAsyncFunc?.Invoke(accountId, path, ct)
+            ?? Task.FromResult(new Z.Vtuber.Cookie.Browser.ProxyFetchResult { Status = 200, Body = "{}" });
     }
 }
 
@@ -321,6 +331,21 @@ public sealed class FakeCookieServiceClient : ICookieServiceClient
         CooldownWeiboCalls.Add((cookieId, duration));
         return Task.CompletedTask;
     }
+
+    public Func<string, string, CancellationToken, Task<WeiboProxyResult>>? ProxyWeiboFunc { get; set; }
+    public List<(string CookieId, string Path)> ProxyWeiboCalls { get; } = [];
+
+    public Task<WeiboProxyResult> ProxyWeiboAsync(string cookieId, string path, CancellationToken ct = default)
+    {
+        ProxyWeiboCalls.Add((cookieId, path));
+        return ProxyWeiboFunc?.Invoke(cookieId, path, ct)
+            ?? Task.FromResult(new WeiboProxyResult
+            {
+                Status = WeiboProxyStatus.Ok,
+                StatusCode = 200,
+                Body = """{"ok":1,"data":{"cards":[]}}""",
+            });
+    }
 }
 
 public sealed class FakeWeiboLoginCookieProvider : IWeiboLoginCookieProvider
@@ -419,5 +444,24 @@ public sealed class FakeWeiboApiClient : IWeiboApiClient
         return Task.FromResult(provider?.Invoke(sinceId)
             ?? PageProvider?.Invoke(sinceId)
             ?? new WeiboTimelinePage());
+    }
+}
+
+/// <summary>基于 <see cref="DispatchProxy"/> 的接口动态桩，用于打桩 Playwright 等大型接口。</summary>
+public class DispatchProxyHandler : DispatchProxy
+{
+    public Func<string, object?[], object?>? HandlerFunc { get; set; }
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        => HandlerFunc!(targetMethod!.Name, args ?? []);
+}
+
+public static class TestProxy
+{
+    public static T Create<T>(Func<string, object?[], object?> handler) where T : class
+    {
+        var proxy = DispatchProxy.Create<T, DispatchProxyHandler>();
+        ((DispatchProxyHandler)(object)proxy).HandlerFunc = handler;
+        return proxy;
     }
 }

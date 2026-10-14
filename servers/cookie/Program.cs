@@ -64,6 +64,7 @@ builder.Services.AddKeyedSingleton<ICookiePlatformProfile>(Weibo, weiboProfile);
 builder.Services.AddSingleton<IBrowserSessionManager>(sp => new BrowserSessionManager(
     bilibiliProfile,
     sp.GetRequiredService<IBrowserType>(),
+    sp.GetRequiredService<ICookieSessionRepository>(),
     sp.GetRequiredService<IOptions<CookieServiceOptions>>(),
     sp.GetRequiredService<ILogger<BrowserSessionManager>>()));
 builder.Services.AddSingleton<ICookieSessionRepository>(sp => new CookieSessionRepository(
@@ -92,6 +93,7 @@ builder.Services.AddSingleton<IInvalidationService>(sp => new InvalidationServic
 builder.Services.AddKeyedSingleton<IBrowserSessionManager>(Weibo, (sp, _) => new BrowserSessionManager(
     weiboProfile,
     sp.GetRequiredService<IBrowserType>(),
+    sp.GetRequiredKeyedService<ICookieSessionRepository>(Weibo),
     sp.GetRequiredService<IOptions<CookieServiceOptions>>(),
     sp.GetRequiredService<ILogger<BrowserSessionManager>>()));
 builder.Services.AddKeyedSingleton<ICookieSessionRepository>(Weibo, (sp, _) => new CookieSessionRepository(

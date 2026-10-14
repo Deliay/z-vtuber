@@ -212,6 +212,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cookie/weibo/proxy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 在登录浏览器会话内代理发起微博请求（页面上下文 XHR）
+         * @description 在 cookieId 所属帐号的登录浏览器会话页面上下文内向微博发起 GET 请求，原样回传微博
+         *     原始状态码与响应体（含风控响应）。白名单约束目标为 m.weibo.cn 的 /api/* 路径，
+         *     端点不得成为开放代理。v1 仅支持 GET 语义（path 含 query）。
+         */
+        post: operations["proxyWeiboRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -228,6 +250,8 @@ export interface components {
             /** Format: int64 */
             mid?: number;
             uname?: string;
+            /** @description 当前关联的 Cookie 池记录 ID（无关联时为空） */
+            cookieId?: string;
             cookieStatus?: string;
             /** Format: date-time */
             lastRefreshAt?: string;
@@ -298,6 +322,18 @@ export interface components {
         CooldownRequest: {
             cookieId: string;
             durationSeconds: number;
+        };
+        ProxyWeiboRequest: {
+            /** @description 微博 Cookie 池记录 ID */
+            cookieId: string;
+            /** @description 目标 API 路径（含 query），必须以 /api/ 开头且不含 scheme/host/回溯符 */
+            path: string;
+        };
+        ProxyWeiboResponse: {
+            /** @description 微博原始 HTTP 状态码 */
+            status?: number;
+            /** @description 微博原始响应体文本 */
+            body?: string;
         };
         ErrorResponse: {
             error?: string;
@@ -756,6 +792,75 @@ export interface operations {
             };
             /** @description cookieId 不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    proxyWeiboRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProxyWeiboRequest"];
+            };
+        };
+        responses: {
+            /** @description 微博原始响应透传 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyWeiboResponse"];
+                };
+            };
+            /** @description 目标非白名单 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description cookieId 不存在或非 active */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 关联会话已失效 */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionInvalidResponse"];
+                };
+            };
+            /** @description 浏览器侧请求失败 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 超时 */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };

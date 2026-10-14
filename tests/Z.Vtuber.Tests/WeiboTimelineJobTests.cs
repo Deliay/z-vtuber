@@ -91,7 +91,7 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IClassFixture<Mongo
     }
 
     [Fact]
-    public async Task RunOnce_PageAllExisting_Converges_NoSecondFetch()
+    public async Task RunOnce_PageAllExisting_CursorLoopConverges()
     {
         var subscription = SubscribeService(fixture.Database);
         await subscription.SubscribeAsync(Uid);
@@ -100,13 +100,13 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IClassFixture<Mongo
             new() { Uid = Uid, MblogId = "m1", Data = "{}", FetchedAt = DateTime.UtcNow },
         ]);
 
-        var api = new FakeWeiboApiClient { PageProvider = _ => Page("m1", sinceId: "s1", hasMore: true) };
+        // since_id 不推进（PR#91）：页面全部已存在时，游标恒定触发游标循环保护，第二次即收敛。
+        var api = new FakeWeiboApiClient { PageProvider = _ => Page("m1", sinceId: "s-fixed", hasMore: true) };
         var job = CreateJob(api, subscription, repo, new FakeWeiboVisitorCookieProvider());
 
         await job.RunOnceAsync(CancellationToken.None);
 
-        // 第一页 m1 已存在 → 收敛，不再翻页
-        Assert.Equal([null], api.CalledSinceIds);
+        Assert.Equal([null, null], api.CalledSinceIds);
     }
 
     [Fact]
@@ -115,11 +115,15 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IClassFixture<Mongo
         var subscription = SubscribeService(fixture.Database);
         await subscription.SubscribeAsync(Uid);
         var options = new WeiboCrawlerOptions { MaxPagesPerCrawl = 2 };
+        // 页面全部为已存在的动态（无新增落库），驱动逐页回翻直到页数上限。
+        var repo = new WeiboTimelineRepository(fixture.Database);
+        await repo.BulkUpsertAsync([
+            new() { Uid = Uid, MblogId = "m-existing", Data = "{}", FetchedAt = DateTime.UtcNow },
+        ]);
         var api = new FakeWeiboApiClient
         {
-            PageProvider = sinceId => Page($"m{sinceId}", sinceId: $"s{sinceId}", hasMore: true),
+            PageProvider = sinceId => Page("m-existing", sinceId: $"s{sinceId}", hasMore: true),
         };
-        var repo = new WeiboTimelineRepository(fixture.Database);
         var job = CreateJob(api, subscription, repo, new FakeWeiboVisitorCookieProvider(), options: options);
 
         await job.RunOnceAsync(CancellationToken.None);
@@ -268,6 +272,48 @@ public class WeiboTimelineJobTests(MongoDbFixture fixture) : IClassFixture<Mongo
         await job.RunOnceAsync(CancellationToken.None);
 
         Assert.Empty(loginCookies.ReportInvalidCalls);
+        Assert.Equal(0, cookies.RenewCount);
+        Assert.Equal(1, api.CalledSinceIds.Count);
+        Assert.False(backoff.TryAcquire($"weibo:{Uid}", out _));
+    }
+
+    [Fact]
+    public async Task RunOnce_ProxySessionInvalid_BacksOff_NoRenew()
+    {
+        var subscription = SubscribeService(fixture.Database);
+        await subscription.SubscribeAsync(Uid);
+        var backoff = new CrawlBackoffRegistry(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5);
+        var cookies = new FakeWeiboVisitorCookieProvider();
+        var api = new FakeWeiboApiClient
+        {
+            PageProvider = _ => throw new WeiboProxySessionInvalidException("session invalid") { CookieId = "c1" },
+        };
+        var repo = new WeiboTimelineRepository(fixture.Database);
+        var job = CreateJob(api, subscription, repo, cookies, backoff: backoff);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(0, cookies.RenewCount);
+        Assert.Equal(1, api.CalledSinceIds.Count);
+        Assert.False(backoff.TryAcquire($"weibo:{Uid}", out _));
+    }
+
+    [Fact]
+    public async Task RunOnce_ProxyUnavailable_BacksOff_NoRenew()
+    {
+        var subscription = SubscribeService(fixture.Database);
+        await subscription.SubscribeAsync(Uid);
+        var backoff = new CrawlBackoffRegistry(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30), 5);
+        var cookies = new FakeWeiboVisitorCookieProvider();
+        var api = new FakeWeiboApiClient
+        {
+            PageProvider = _ => throw new WeiboProxyUnavailableException("timeout", timedOut: true),
+        };
+        var repo = new WeiboTimelineRepository(fixture.Database);
+        var job = CreateJob(api, subscription, repo, cookies, backoff: backoff);
+
+        await job.RunOnceAsync(CancellationToken.None);
+
         Assert.Equal(0, cookies.RenewCount);
         Assert.Equal(1, api.CalledSinceIds.Count);
         Assert.False(backoff.TryAcquire($"weibo:{Uid}", out _));

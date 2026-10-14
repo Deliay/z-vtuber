@@ -14,6 +14,9 @@ public interface ICookieServiceClient
     Task<WeiboCookieCheckoutResult> CheckoutWeiboAsync(CancellationToken ct = default);
     Task<ReportInvalidResult> ReportWeiboInvalidAsync(string cookieId, CancellationToken ct = default);
     Task CooldownWeiboAsync(string cookieId, TimeSpan duration, CancellationToken ct = default);
+
+    /// <summary>在登录浏览器会话内代理发起微博请求，透传微博原始状态码与响应体。</summary>
+    Task<WeiboProxyResult> ProxyWeiboAsync(string cookieId, string path, CancellationToken ct = default);
 }
 
 public sealed class CookieServiceClient : ICookieServiceClient
@@ -87,6 +90,37 @@ public sealed class CookieServiceClient : ICookieServiceClient
         var payload = new { CookieId = cookieId, DurationSeconds = (int)duration.TotalSeconds };
         var response = await _http.PostAsJsonAsync("/api/cookie/weibo/cooldown", payload, ct);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<WeiboProxyResult> ProxyWeiboAsync(string cookieId, string path, CancellationToken ct = default)
+    {
+        var payload = new { CookieId = cookieId, Path = path };
+        var response = await _http.PostAsJsonAsync("/api/cookie/weibo/proxy", payload, ct);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var result = await response.Content.ReadFromJsonAsync<ProxyWeiboResponse>(ct);
+            if (result is null)
+            {
+                return new WeiboProxyResult { Status = WeiboProxyStatus.Failed };
+            }
+
+            return new WeiboProxyResult
+            {
+                Status = WeiboProxyStatus.Ok,
+                StatusCode = result.Status,
+                Body = result.Body,
+            };
+        }
+
+        return response.StatusCode switch
+        {
+            HttpStatusCode.Gone => new WeiboProxyResult { Status = WeiboProxyStatus.SessionInvalid },
+            HttpStatusCode.NotFound => new WeiboProxyResult { Status = WeiboProxyStatus.NotFound },
+            HttpStatusCode.BadGateway => new WeiboProxyResult { Status = WeiboProxyStatus.Failed },
+            HttpStatusCode.GatewayTimeout => new WeiboProxyResult { Status = WeiboProxyStatus.Timeout },
+            _ => new WeiboProxyResult { Status = WeiboProxyStatus.Failed },
+        };
     }
 
     private async Task<ReportInvalidResult> ReportInvalidCoreAsync(string path, string cookieId, CancellationToken ct)
@@ -172,6 +206,29 @@ public enum ReportInvalidStatus
     SessionInvalid,
     NotFound,
     Timeout,
+}
+
+/// <summary>微博代理请求结果。200 透传为 <see cref="WeiboProxyStatus.Ok"/>；其余映射代理自身失败语义。</summary>
+public sealed class WeiboProxyResult
+{
+    public WeiboProxyStatus Status { get; set; }
+    public int StatusCode { get; set; }
+    public string? Body { get; set; }
+}
+
+public enum WeiboProxyStatus
+{
+    Ok,
+    SessionInvalid,
+    NotFound,
+    Failed,
+    Timeout,
+}
+
+internal sealed class ProxyWeiboResponse
+{
+    public int Status { get; set; }
+    public string? Body { get; set; }
 }
 
 internal sealed class ReportInvalidResponse

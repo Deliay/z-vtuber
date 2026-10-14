@@ -33,11 +33,11 @@ graph LR
   - `CookieAccountController`：B 站帐号 session CRUD（`/api/cookie/accounts*`，列表项 `platform=bilibili`）
   - `CookieDispatchController`：B 站 Cookie 调度（`/api/cookie/{available,checkout,report-invalid,cooldown}`）
   - `WeiboCookieAccountController`：微博帐号 session CRUD（`/api/cookie/weibo/accounts*`，列表项 `platform=weibo`）
-  - `WeiboCookieDispatchController`：微博 Cookie 调度（`/api/cookie/weibo/{available,checkout,report-invalid,cooldown}`）
+  - `WeiboCookieDispatchController`：微博 Cookie 调度（`/api/cookie/weibo/{available,checkout,report-invalid,cooldown,proxy}`）
   - `HealthController`：健康检查（`GET /health`）
 - `Browser/`：Playwright 浏览器 session 管理（Profile 驱动）
-  - `IBrowserSessionManager`：浏览器 session 抽象（创建/等待登录态/提取 cookie/删除/刷新）
-  - `BrowserSessionManager`：按 `ICookiePlatformProfile` 驱动；被动观察（bilibili nav）与主动探测（weibo `api/config`，经 `context.APIRequest`）两种登录态信号；二维码元素等待超时改为告警 + 整页截图兜底（不再抛错，行为变更已在此明示）；提取 cookie 后按 Profile `RequiredCookieNames`（微博 SUB/SUBP）做存在性校验并告警
+  - `IBrowserSessionManager`：浏览器 session 抽象（创建/等待登录态/提取 cookie/删除/刷新/代理 XHR）
+  - `BrowserSessionManager`：按 `ICookiePlatformProfile` 驱动；被动观察（bilibili nav）与主动探测（weibo `api/config`，经 `context.APIRequest`）两种登录态信号；二维码元素等待超时改为告警 + 整页截图兜底（不再抛错，行为变更已在此明示）；提取 cookie 后按 Profile `RequiredCookieNames`（微博 SUB/SUBP）做存在性校验并告警；`GetOrRestoreContextAsync` 提供上下文按需惰性恢复（缓存 miss + session active + UserDataDir 存在时重新 `LaunchPersistentContextAsync`，保鲜/宣告/代理三路径共用；非 active/目录缺失按既有 miss 语义抛错，恢复失败按单次失败计数）；`ProxyRequestAsync` 在页面上下文内 `fetch` 同源相对 URL 并回传 `{status, body}`，整体受 `ProxyRequestTimeoutSeconds` 约束（超时抛 `TimeoutException`、浏览器侧失败抛 `BrowserProxyException`）
   - `LoginSessionWorker`：后台 hosted service，遍历 `CookiePlatformRegistry` 处理双平台扫码登录 session 的 cookie 提取与身份回填入库
 - `Refresh/`：Cookie 刷新与失效检测
   - `SessionRefreshJob`：遍历 `CookiePlatformRegistry` 定时刷新双平台活跃 session 的 Cookie
@@ -77,13 +77,14 @@ graph LR
 | POST | `/api/cookie/weibo/checkout` | 领取一个可用微博 Cookie（round-robin，无可用返回 404） |
 | POST | `/api/cookie/weibo/report-invalid` | 报告微博 Cookie 失效（阻塞式自愈） |
 | POST | `/api/cookie/weibo/cooldown` | 将微博 Cookie 标记为冷却 |
+| POST | `/api/cookie/weibo/proxy` | 在登录浏览器会话页面上下文内代理发起微博请求（白名单 `/api/*`；`200 {status, body}` 透传 / `400` 非白名单 / `404` cookie 不存在或非 active / `410` 会话失效 / `502` 浏览器失败 / `504` 超时/锁未获取） |
 | GET | `/health` | 健康检查 |
 
 ## 配置
 
 - `ConnectionStrings:mongo`：MongoDB 连接串
 - `ConnectionStrings:messaging`：Redis 连接串
-- `CookieService` 节：`BrowserSessionDataDir`（浏览器 session 数据目录，必填）
+- `CookieService` 节：`BrowserSessionDataDir`（浏览器 session 数据目录，必填）、`ProxyRequestTimeoutSeconds`（代理 XHR 超时上限，默认 30s）
 
 ## 开发流程
 

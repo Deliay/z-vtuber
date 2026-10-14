@@ -1,7 +1,7 @@
 # 微博 Cookie 抓取（weibo-cookie-crawl）- 技术提案
 
 - 日期：2026-09-13（v1.1 修订：2026-09-13；v1.2 修订：2026-09-14，实现前评审查缺补漏；v1.3 修订：2026-09-14，实现方案评审打回）
-- 状态：待评审
+- 状态：已实现（详见实现 Plan：../plans/20260913-plan-weibo-cookie-crawl.md）
 - feat-branch：`feat/weibo-cookie-crawl`
 - 关联文档：[PRD](../product/draft/20260913-weibo-cookie-crawl-prd.md)
 

@@ -99,6 +99,20 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
 
                     page = retried;
                 }
+                catch (WeiboProxySessionInvalidException ex)
+                {
+                    // 代理回传会话失效/不存在：cookie-invalid 事件已由 cookie 服务发布，放弃本轮 + 退避。
+                    _logger.LogWarning(ex, "Weibo proxy reported session invalid for uid {Uid} at sinceId {SinceId}; giving up this round.", uid, sinceId);
+                    _backoff.ReportRiskControl(backoffKey);
+                    return;
+                }
+                catch (WeiboProxyUnavailableException ex)
+                {
+                    // 浏览器侧失败/超时：退避但不宣告 cookie 失效。
+                    _logger.LogWarning(ex, "Weibo proxy unavailable for uid {Uid} at sinceId {SinceId} (timedOut={TimedOut}); backing off without invalidating cookie.", uid, sinceId, ex.TimedOut);
+                    _backoff.ReportRiskControl(backoffKey);
+                    return;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Weibo timeline fetch failed for uid {Uid} at sinceId {SinceId}.", uid, sinceId);
@@ -222,6 +236,18 @@ public sealed class WeiboTimelineJob : PeriodicJobBase
         {
             // 只宣告一次：重试仍风控不再 report-invalid，直接退避。
             _logger.LogWarning(retryEx, "Weibo retry still hit risk control for uid {Uid}; not reporting again; backing off.", uid);
+            _backoff.ReportRiskControl(backoffKey);
+            return null;
+        }
+        catch (WeiboProxySessionInvalidException retryEx)
+        {
+            _logger.LogWarning(retryEx, "Weibo retry via proxy reported session invalid for uid {Uid}; backing off.", uid);
+            _backoff.ReportRiskControl(backoffKey);
+            return null;
+        }
+        catch (WeiboProxyUnavailableException retryEx)
+        {
+            _logger.LogWarning(retryEx, "Weibo retry via proxy unavailable for uid {Uid}; backing off without invalidating cookie.", uid);
             _backoff.ReportRiskControl(backoffKey);
             return null;
         }

@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Microsoft.Playwright;
+using MongoDB.Bson;
+using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Cookie.Configuration;
 using Z.Vtuber.Cookie.Platform;
 
@@ -15,17 +18,20 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
     private readonly ConcurrentDictionary<string, TaskCompletionSource<string>> _navResults = new();
     private readonly ICookiePlatformProfile _profile;
     private readonly IBrowserType _browserType;
+    private readonly ICookieSessionRepository _sessionRepository;
     private readonly CookieServiceOptions _options;
     private readonly ILogger<BrowserSessionManager> _logger;
 
     public BrowserSessionManager(
         ICookiePlatformProfile profile,
         IBrowserType browserType,
+        ICookieSessionRepository sessionRepository,
         IOptions<CookieServiceOptions> options,
         ILogger<BrowserSessionManager> logger)
     {
         _profile = profile;
         _browserType = browserType;
+        _sessionRepository = sessionRepository;
         _options = options.Value;
         _logger = logger;
     }
@@ -197,10 +203,7 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
 
     public async Task<string> ExtractCookiesAsync(string accountId, CancellationToken ct = default)
     {
-        if (!_contexts.TryGetValue(accountId, out var context))
-        {
-            throw new InvalidOperationException($"No browser context for account {accountId}");
-        }
+        var context = await GetOrRestoreContextAsync(accountId, ct);
 
         var cookies = await context.CookiesAsync([_profile.CookieDomainUrl]);
         var cookieHeader = string.Join("; ", cookies.Select(c => $"{c.Name}={c.Value}"));
@@ -237,10 +240,7 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
     {
         if (_profile.LoginStateProbeUrl is { } probeUrl)
         {
-            if (!_contexts.TryGetValue(accountId, out var probeContext))
-            {
-                throw new InvalidOperationException($"No browser context for account {accountId}");
-            }
+            var probeContext = await GetOrRestoreContextAsync(accountId, ct);
 
             string body;
             try
@@ -261,10 +261,7 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
             return;
         }
 
-        if (!_contexts.TryGetValue(accountId, out var context))
-        {
-            throw new InvalidOperationException($"No browser context for account {accountId}");
-        }
+        var context = await GetOrRestoreContextAsync(accountId, ct);
 
         var pages = context.Pages;
         if (pages.Count == 0)
@@ -325,6 +322,95 @@ public class BrowserSessionManager : IBrowserSessionManager, IAsyncDisposable
         finally
         {
             page.Response -= handler;
+        }
+    }
+
+    /// <summary>
+    /// 取该帐号浏览器上下文；缓存 miss 时按需惰性恢复（session active 且 UserDataDir 目录存在）。
+    /// 非 active 或目录缺失按既有 miss 语义抛 <see cref="InvalidOperationException"/>；
+    /// 恢复（launch）失败原样上抛，交由调用方既有单次失败计数语义消化，不直接判失效。
+    /// </summary>
+    private async Task<IBrowserContext> GetOrRestoreContextAsync(string accountId, CancellationToken ct)
+    {
+        if (_contexts.TryGetValue(accountId, out var cached))
+        {
+            return cached;
+        }
+
+        var session = ObjectId.TryParse(accountId, out var id)
+            ? await _sessionRepository.GetByIdAsync(id, ct)
+            : null;
+
+        if (session is null || !string.Equals(session.Status, "active", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"No browser context for account {accountId}");
+        }
+
+        var userDataDir = string.IsNullOrEmpty(session.UserDataDir)
+            ? Path.Combine(_options.BrowserSessionDataDir, accountId)
+            : session.UserDataDir;
+
+        if (!Directory.Exists(userDataDir))
+        {
+            throw new InvalidOperationException($"No browser context for account {accountId}");
+        }
+
+        var context = await _browserType.LaunchPersistentContextAsync(userDataDir, new BrowserTypeLaunchPersistentContextOptions
+        {
+            Headless = true,
+        });
+
+        var restored = _contexts.GetOrAdd(accountId, context);
+        if (!ReferenceEquals(restored, context))
+        {
+            // 并发恢复竞态：保留既有上下文，关闭多余实例。
+            await context.CloseAsync();
+            await context.DisposeAsync();
+            return restored;
+        }
+
+        _logger.LogInformation("Restored browser context for account {AccountId} ({Platform}) from {UserDataDir}",
+            accountId, _profile.Platform, userDataDir);
+
+        return restored;
+    }
+
+    public async Task<ProxyFetchResult> ProxyRequestAsync(string accountId, string path, CancellationToken ct = default)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.ProxyRequestTimeoutSeconds));
+        var token = timeoutCts.Token;
+
+        try
+        {
+            var context = await GetOrRestoreContextAsync(accountId, token);
+            var page = context.Pages.Count > 0 ? context.Pages[0] : await context.NewPageAsync();
+
+            if (string.IsNullOrEmpty(page.Url)
+                || !page.Url.Contains(_profile.HomeUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                await page.GotoAsync(_profile.HomeUrl, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
+            }
+
+            var json = await page.EvaluateAsync<string>(
+                "async (p) => { const r = await fetch(p, { credentials: 'same-origin' }); const t = await r.text(); return JSON.stringify({ status: r.status, body: t }); }",
+                path).WaitAsync(token);
+
+            using var doc = JsonDocument.Parse(json);
+            var status = doc.RootElement.GetProperty("status").GetInt32();
+            var body = doc.RootElement.TryGetProperty("body", out var bodyEl) && bodyEl.ValueKind == JsonValueKind.String
+                ? bodyEl.GetString() ?? string.Empty
+                : string.Empty;
+
+            return new ProxyFetchResult { Status = status, Body = body };
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Proxy request timed out for account {accountId}");
+        }
+        catch (PlaywrightException ex)
+        {
+            throw new BrowserProxyException($"Browser proxy request failed for account {accountId}", ex);
         }
     }
 

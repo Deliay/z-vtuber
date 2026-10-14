@@ -11,9 +11,9 @@ public sealed class WeiboCrawlerOptionsTests
     {
         var options = new WeiboCrawlerOptions();
 
-        Assert.Equal(10, options.TimelineIntervalSeconds);
+        Assert.Equal(30, options.TimelineIntervalSeconds);
         Assert.Equal(10, options.HttpTimeoutSeconds);
-        Assert.Equal(60, options.CookieRefreshIntervalMinutes);
+        Assert.Equal(1, options.CookieRefreshIntervalMinutes);
         Assert.Equal(5, options.MaxPagesPerCrawl);
         Assert.Equal(30, options.BackoffBaseSeconds);
         Assert.Equal(15, options.BackoffMaxMinutes);

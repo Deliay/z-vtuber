@@ -15,7 +15,10 @@ public class WeiboCookieReportInvalidTests
     private readonly FakeBrowserSessionManager _browserSessionManager = new();
 
     private WeiboCookieDispatchController CreateController(IInvalidationService invalidationService) =>
-        new(new FakeCookieDispatchService(), invalidationService, NullLogger<WeiboCookieDispatchController>.Instance);
+        new(new FakeCookieDispatchService(), invalidationService, new FakeCookiePoolService(),
+            new FakeCookieSessionRepository(), new FakeBrowserSessionManager(), new WeiboCookiePlatformProfile(),
+            new FakeDistributedLockProvider(), Options.Create(new CookieServiceOptions()),
+            NullLogger<WeiboCookieDispatchController>.Instance);
 
     [Fact]
     public async Task ReportInvalid_RefreshSuccess_Returns200WithNewCookie()

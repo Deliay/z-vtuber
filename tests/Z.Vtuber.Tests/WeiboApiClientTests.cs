@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Z.Vtuber.Crawler.Configuration;
+using Z.Vtuber.Crawler.Services;
 using Z.Vtuber.Crawler.Weibo;
 
 namespace Z.Vtuber.Tests;
@@ -12,11 +13,13 @@ public sealed class WeiboApiClientTests
 
     private static WeiboApiClient CreateClient(
         RecordingHandler handler,
-        IWeiboCookieSource? source = null) => new(
+        IWeiboCookieSource? source = null,
+        FakeCookieServiceClient? cookieServiceClient = null) => new(
         source ?? new FakeWeiboCookieSource { Cookie = "SUB=a; SUBP=b" },
         Options,
         NullLogger<WeiboApiClient>.Instance,
-        handler: handler);
+        handler: handler,
+        cookieServiceClient: cookieServiceClient);
 
     [Fact]
     public async Task GetUserTimeline_SetsHeadersAndContainerId()
@@ -28,7 +31,7 @@ public sealed class WeiboApiClientTests
 
         var req = Assert.Single(handler.Requests);
         Assert.Contains("containerid=10760312345", req.RequestUri!.ToString());
-        Assert.Equal("https://m.weibo.cn/", req.Headers.Referrer?.ToString());
+        Assert.Equal("https://m.weibo.cn/u/12345", req.Headers.Referrer?.ToString());
         Assert.Contains("iPhone", req.Headers.UserAgent.ToString());
         Assert.True(req.Headers.TryGetValues("Cookie", out var cookieValues));
         Assert.Equal(["SUB=a; SUBP=b"], cookieValues.ToArray());
@@ -107,6 +110,114 @@ public sealed class WeiboApiClientTests
         var page = await client.GetUserTimelineAsync(12345);
 
         Assert.Empty(page.Items);
+    }
+
+    private static FakeWeiboCookieSource LoginSource() => new()
+    {
+        Cookie = "SUB=login",
+        IsLoginCookie = true,
+        CookieId = "c1",
+    };
+
+    [Fact]
+    public async Task GetUserTimeline_LoginLease_UsesProxy_NotDirect()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"ok":1,"data":{"cards":[]}}"""));
+        var proxy = new FakeCookieServiceClient
+        {
+            ProxyWeiboFunc = (_, _, _) => Task.FromResult(new WeiboProxyResult
+            {
+                Status = WeiboProxyStatus.Ok,
+                StatusCode = 200,
+                Body = """{"ok":1,"data":{"cards":[]}}""",
+            }),
+        };
+        var client = CreateClient(handler, LoginSource(), proxy);
+
+        await client.GetUserTimelineAsync(12345, "s-abc");
+
+        Assert.Empty(handler.Requests);
+        var call = Assert.Single(proxy.ProxyWeiboCalls);
+        Assert.Equal("c1", call.CookieId);
+        Assert.Contains("containerid=10760312345", call.Path);
+        Assert.Contains("since_id=s-abc", call.Path);
+        Assert.Contains("rnd=", call.Path);
+    }
+
+    [Fact]
+    public async Task GetUserTimeline_LoginLease_ProxyRiskBody_ThrowsRiskControlWithIdentity()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"ok":1,"data":{"cards":[]}}"""));
+        var proxy = new FakeCookieServiceClient
+        {
+            ProxyWeiboFunc = (_, _, _) => Task.FromResult(new WeiboProxyResult
+            {
+                Status = WeiboProxyStatus.Ok,
+                StatusCode = 200,
+                Body = """{"ok":0,"msg":"cookie error"}""",
+            }),
+        };
+        var client = CreateClient(handler, LoginSource(), proxy);
+
+        var ex = await Assert.ThrowsAsync<WeiboRiskControlException>(() => client.GetUserTimelineAsync(12345));
+
+        Assert.True(ex.IsLoginCookie);
+        Assert.Equal("c1", ex.CookieId);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task GetUserTimeline_LoginLease_ProxySessionInvalid_Throws()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"ok":1,"data":{"cards":[]}}"""));
+        var proxy = new FakeCookieServiceClient
+        {
+            ProxyWeiboFunc = (_, _, _) => Task.FromResult(new WeiboProxyResult { Status = WeiboProxyStatus.SessionInvalid }),
+        };
+        var client = CreateClient(handler, LoginSource(), proxy);
+
+        await Assert.ThrowsAsync<WeiboProxySessionInvalidException>(() => client.GetUserTimelineAsync(12345));
+    }
+
+    [Fact]
+    public async Task GetUserTimeline_LoginLease_ProxyTimeout_ThrowsUnavailableTimedOut()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"ok":1,"data":{"cards":[]}}"""));
+        var proxy = new FakeCookieServiceClient
+        {
+            ProxyWeiboFunc = (_, _, _) => Task.FromResult(new WeiboProxyResult { Status = WeiboProxyStatus.Timeout }),
+        };
+        var client = CreateClient(handler, LoginSource(), proxy);
+
+        var ex = await Assert.ThrowsAsync<WeiboProxyUnavailableException>(() => client.GetUserTimelineAsync(12345));
+        Assert.True(ex.TimedOut);
+    }
+
+    [Fact]
+    public async Task GetUserTimeline_LoginLease_ProxyFailed_ThrowsUnavailable()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"ok":1,"data":{"cards":[]}}"""));
+        var proxy = new FakeCookieServiceClient
+        {
+            ProxyWeiboFunc = (_, _, _) => Task.FromResult(new WeiboProxyResult { Status = WeiboProxyStatus.Failed }),
+        };
+        var client = CreateClient(handler, LoginSource(), proxy);
+
+        var ex = await Assert.ThrowsAsync<WeiboProxyUnavailableException>(() => client.GetUserTimelineAsync(12345));
+        Assert.False(ex.TimedOut);
+    }
+
+    [Fact]
+    public async Task GetUserTimeline_AnonymousLease_UsesDirect_NotProxy()
+    {
+        var handler = new RecordingHandler(JsonResponse("""{"ok":1,"data":{"cards":[]}}"""));
+        var proxy = new FakeCookieServiceClient();
+        var client = CreateClient(handler, new FakeWeiboCookieSource { Cookie = "SUB=a", IsLoginCookie = false }, proxy);
+
+        await client.GetUserTimelineAsync(12345);
+
+        Assert.Single(handler.Requests);
+        Assert.Empty(proxy.ProxyWeiboCalls);
     }
 
     private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)

@@ -471,6 +471,7 @@ public class LiveGuardJobTests(MongoDbFixture fixture) : IClassFixture<MongoDbFi
         public Task<WeiboCookieCheckoutResult> CheckoutWeiboAsync(CancellationToken ct = default) => Task.FromResult(new WeiboCookieCheckoutResult { Available = false });
         public Task<ReportInvalidResult> ReportWeiboInvalidAsync(string cookieId, CancellationToken ct = default) => Task.FromResult(new ReportInvalidResult { Status = ReportInvalidStatus.Refreshed, CookieId = cookieId });
         public Task CooldownWeiboAsync(string cookieId, TimeSpan duration, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<WeiboProxyResult> ProxyWeiboAsync(string cookieId, string path, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     private static System.Text.Json.JsonElement JsonDoc(string channelBody)
