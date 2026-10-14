@@ -11,16 +11,15 @@ using Z.Vtuber.Training.Contracts;
 using Z.Vtuber.Training.Controllers;
 using Z.Vtuber.Training.FeaturePoints;
 using Z.Vtuber.Training.Synthesis;
-using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Tests;
 
 /// <summary>
-/// 音频生成端点（控制器直测 + 真 Mongo + 假 embedding/向量库/音频/TTS/模型）：
-/// 200 <c>audio/wav</c> + 命中头、400/404/409/502 错误矩阵、vectors/rebuild。
+/// 音频生成端点（控制器直测 + 真 Mongo + 假音频/语音模型/情绪模型）：
+/// 200 <c>audio/wav</c> + 命中头、400/404/409/502 错误矩阵、语音模型功能点解析。
 /// </summary>
-public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture milvus)
-    : IClassFixture<MongoDbFixture>, IClassFixture<MilvusFixture>, IAsyncLifetime
+public class TrainingSynthesizeApiTests(MongoDbFixture fixture)
+    : IClassFixture<MongoDbFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => fixture.ResetAsync();
 
@@ -51,21 +50,30 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         public IChatModelClient Create(string providerType) => new ApiStubChatClient();
     }
 
+    /// <summary>语音客户端工厂替身：openai 返回固定替身；其他类型按真实派发语义抛不支持（400）。</summary>
+    private sealed class ApiStubSpeechFactory(ISpeechModelClient client) : ISpeechModelClientFactory
+    {
+        public ISpeechModelClient Create(string providerType) =>
+            providerType?.Trim().ToLowerInvariant() == "openai"
+                ? client
+                : throw new ModelAudioOutputNotSupportedException();
+    }
+
     private TrainingSynthesizeController Create(
-        IVectorStore store, FakeEmbeddingClient embedding, StubAudioClient audio,
-        StubTtsClient tts, TtsOptions? ttsOptions = null, SynthesizeOptions? synthesizeOptions = null)
+        StubAudioClient audio, StubSpeechClient speech,
+        SpeechOptions? speechOptions = null, SynthesizeOptions? synthesizeOptions = null)
     {
         var synthesize = new SynthesizeService(
-            Items, SegmentRepository, Providers, new ApiStubChatFactory(), audio, store, tts,
+            Items, SegmentRepository, Providers, new ApiStubChatFactory(), audio,
             synthesizeOptions ?? new SynthesizeOptions(),
             new AiOptions(),
             NullLogger<SynthesizeService>.Instance);
-        var vectors = new VectorSyncService(Items, store, embedding, NullLogger<VectorSyncService>.Instance);
         var resolver = new TrainingModelResolver(
             new TrainingFeaturePointRepository(fixture.Database), Models, Providers);
         var controller = new TrainingSynthesizeController(
-            Datasets, Models, synthesize, vectors,
-            Microsoft.Extensions.Options.Options.Create(ttsOptions ?? new TtsOptions()).Value,
+            Datasets, Models, Providers, synthesize,
+            speechOptions ?? new SpeechOptions(),
+            new ApiStubSpeechFactory(speech),
             resolver,
             NullLogger<TrainingSynthesizeController>.Instance);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
@@ -121,6 +129,25 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         });
     }
 
+    /// <summary>登记一个「输入 audio,text / 输出 audio」的可用语音模型（功能点 speech-synthesize 默认候选）。</summary>
+    private async Task<TrainingModelRecord> SeedSpeechModelAsync(
+        bool enabled = true, string providerType = "openai")
+    {
+        var now = DateTime.UtcNow;
+        var provider = await Providers.InsertAsync(new TrainingProviderRecord
+        {
+            Name = $"speech-{Guid.NewGuid():N}", Type = providerType, Endpoint = "http://llm", ApiKey = "k",
+            CreatedAt = now, UpdatedAt = now,
+        });
+        return await Models.InsertAsync(new TrainingModelRecord
+        {
+            ProviderId = provider.Id, Model = "speech", Enabled = enabled,
+            InputCapabilities = ["audio", "text"],
+            OutputCapabilities = ["audio"],
+            CreatedAt = now, UpdatedAt = now,
+        });
+    }
+
     private static string ErrorOf(IActionResult result, int statusCode)
     {
         var objectResult = Assert.IsAssignableFrom<ObjectResult>(result);
@@ -131,13 +158,11 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     private static string? Header(Microsoft.AspNetCore.Mvc.ControllerBase controller, string name) =>
         controller.Response.Headers.TryGetValue(name, out var value) ? value.ToString() : null;
 
-    private (InMemoryVectorStore Store, StubAudioClient Audio, StubTtsClient Tts) Arrange(
-        ObjectId datasetId, TrainingDatasetItemRecord speaker)
+    private (StubAudioClient Audio, StubSpeechClient Speech) Arrange(TrainingDatasetItemRecord speaker)
     {
-        var store = new InMemoryVectorStore();
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
-        return (store, audio, new StubTtsClient { Bytes = [7, 7] });
+        return (audio, new StubSpeechClient { Bytes = [7, 7] });
     }
 
     [Fact]
@@ -146,8 +171,9 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var datasetId = await SeedDatasetAsync();
         var speaker = await SeedItemAsync(datasetId, "你好");
         var model = await SeedModelAsync();
-        var (store, audio, tts) = Arrange(datasetId, speaker);
-        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+        await SeedSpeechModelAsync();
+        var (audio, speech) = Arrange(speaker);
+        var controller = Create(audio, speech);
 
         var result = await controller.Synthesize(
             datasetId.ToString(), new TrainingSynthesizeRequest("要合成的文本", null, model.Id.ToString()), "llm");
@@ -155,10 +181,10 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var file = Assert.IsType<FileContentResult>(result);
         Assert.Equal("audio/wav", file.ContentType);
         Assert.Equal([7, 7], file.FileContents);
-        var request = Assert.Single(tts.Requests);
+        var request = Assert.Single(speech.Requests);
         Assert.Equal("要合成的文本", request.Text);
         Assert.Equal("ZH", request.Lang);
-        Assert.Equal([1, 2, 3], request.Speaker.Bytes);
+        Assert.Equal([1, 2, 3], request.ReferenceAudio);
         Assert.Equal(speaker.AudioKey, Header(controller, "X-Speaker-Audio-Key"));
     }
 
@@ -168,8 +194,9 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var datasetId = await SeedDatasetAsync();
         var speaker = await SeedItemAsync(datasetId, "你好");
         var model = await SeedModelAsync();
-        var (store, audio, tts) = Arrange(datasetId, speaker);
-        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+        await SeedSpeechModelAsync();
+        var (audio, speech) = Arrange(speaker);
+        var controller = Create(audio, speech);
 
         await controller.Synthesize(
             datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, model.Id.ToString()), "llm");
@@ -183,7 +210,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     {
         var datasetId = await SeedDatasetAsync();
 
-        var result = await Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient())
+        var result = await Create(new StubAudioClient(), new StubSpeechClient())
             .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("   ", null, null));
 
         Assert.Equal("text is required", ErrorOf(result, StatusCodes.Status400BadRequest));
@@ -194,7 +221,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     {
         var datasetId = await SeedDatasetAsync();
 
-        var result = await Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient())
+        var result = await Create(new StubAudioClient(), new StubSpeechClient())
             .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", "FR", null));
 
         Assert.Equal("invalid lang", ErrorOf(result, StatusCodes.Status400BadRequest));
@@ -203,7 +230,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     [Fact]
     public async Task Synthesize_UnknownDataset_Returns404()
     {
-        var result = await Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient())
+        var result = await Create(new StubAudioClient(), new StubSpeechClient())
             .Synthesize(ObjectId.GenerateNewId().ToString(), new TrainingSynthesizeRequest("文本", null, null));
 
         Assert.Equal("dataset not found", ErrorOf(result, StatusCodes.Status404NotFound));
@@ -214,7 +241,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     {
         var datasetId = await SeedDatasetAsync();
         var disabled = await SeedModelAsync(enabled: false);
-        var controller = Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient());
+        var controller = Create(new StubAudioClient(), new StubSpeechClient());
 
         var unknown = await controller.Synthesize(
             datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, ObjectId.GenerateNewId().ToString()), "llm");
@@ -226,13 +253,39 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     }
 
     [Fact]
+    public async Task Synthesize_NoSpeechModelAvailable_Returns409()
+    {
+        var datasetId = await SeedDatasetAsync();
+        await SeedItemAsync(datasetId, "你好");
+        // 未登记任何「输入 audio,text / 输出 audio」可用模型。
+
+        var result = await Create(new StubAudioClient(), new StubSpeechClient())
+            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null));
+
+        Assert.Equal("no speech model available", ErrorOf(result, StatusCodes.Status409Conflict));
+    }
+
+    [Fact]
+    public async Task Synthesize_ModelWithoutAudioOutput_Returns400()
+    {
+        var datasetId = await SeedDatasetAsync();
+        await SeedItemAsync(datasetId, "你好");
+        await SeedSpeechModelAsync(providerType: "claude");
+
+        var result = await Create(new StubAudioClient(), new StubSpeechClient())
+            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null));
+
+        Assert.Equal("model does not support audio output", ErrorOf(result, StatusCodes.Status400BadRequest));
+    }
+
+    [Fact]
     public async Task Synthesize_NoSpeakerReference_Returns409()
     {
         var datasetId = await SeedDatasetAsync();
-        var model = await SeedModelAsync();
+        await SeedSpeechModelAsync();
 
-        var result = await Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient())
-            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, model.Id.ToString()));
+        var result = await Create(new StubAudioClient(), new StubSpeechClient())
+            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null));
 
         Assert.Equal("no speaker reference", ErrorOf(result, StatusCodes.Status409Conflict));
     }
@@ -243,16 +296,14 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var datasetId = await SeedDatasetAsync();
         var similar = await SeedItemAsync(datasetId, "今天天气很好");
         var different = await SeedItemAsync(datasetId, "完全无关的长文本内容");
-        var model = await SeedModelAsync();
-        var store = new InMemoryVectorStore();
+        await SeedSpeechModelAsync();
         var audio = new StubAudioClient();
         audio.Clips[similar.AudioUri] = new AudioClip([1], "audio/mpeg");
         audio.Clips[different.AudioUri] = new AudioClip([2], "audio/mpeg");
-        var tts = new StubTtsClient { Bytes = [7, 7] };
-        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+        var controller = Create(audio, new StubSpeechClient { Bytes = [7, 7] });
 
         var result = await controller.Synthesize(
-            datasetId.ToString(), new TrainingSynthesizeRequest("今天天气真好", null, model.Id.ToString()), "llm");
+            datasetId.ToString(), new TrainingSynthesizeRequest("今天天气真好", null, null));
 
         Assert.IsType<FileContentResult>(result);
         Assert.Equal(similar.AudioKey, Header(controller, "X-Speaker-Audio-Key"));
@@ -263,45 +314,59 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     {
         var datasetId = await SeedDatasetAsync();
         var speaker = await SeedItemAsync(datasetId, "你好");
-        var model = await SeedModelAsync();
-        var (store, audio, tts) = Arrange(datasetId, speaker);
+        await SeedSpeechModelAsync();
+        var (audio, speech) = Arrange(speaker);
         audio.FailingUris.Add(speaker.AudioUri);
 
-        var result = await Create(store, new FakeEmbeddingClient(), audio, tts)
-            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, model.Id.ToString()));
+        var result = await Create(audio, speech)
+            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null));
 
         Assert.Equal("audio unavailable", ErrorOf(result, StatusCodes.Status502BadGateway));
     }
 
     [Fact]
-    public async Task Synthesize_TtsUnavailable_Returns502()
+    public async Task Synthesize_SpeechModelUnavailable_Returns502()
     {
         var datasetId = await SeedDatasetAsync();
         var speaker = await SeedItemAsync(datasetId, "你好");
-        var model = await SeedModelAsync();
-        var (store, audio, tts) = Arrange(datasetId, speaker);
-        tts.Throw = new TtsUnavailableException("down");
+        await SeedSpeechModelAsync();
+        var (audio, speech) = Arrange(speaker);
+        speech.Throw = new SpeechModelUnavailableException("down");
 
-        var result = await Create(store, new FakeEmbeddingClient(), audio, tts)
-            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, model.Id.ToString()));
+        var result = await Create(audio, speech)
+            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null));
 
-        Assert.Equal("tts service unavailable", ErrorOf(result, StatusCodes.Status502BadGateway));
+        Assert.Equal("model service unavailable", ErrorOf(result, StatusCodes.Status502BadGateway));
     }
 
     [Fact]
-    public async Task Synthesize_DatasetMode_SkipsModelResolution_AndUsesMatchedItemEmotion()
+    public async Task Synthesize_InvalidModelOutput_Returns502()
+    {
+        var datasetId = await SeedDatasetAsync();
+        var speaker = await SeedItemAsync(datasetId, "你好");
+        await SeedSpeechModelAsync();
+        var (audio, speech) = Arrange(speaker);
+        speech.Throw = new ModelOutputException("no audio");
+
+        var result = await Create(audio, speech)
+            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null));
+
+        Assert.Equal("invalid model output", ErrorOf(result, StatusCodes.Status502BadGateway));
+    }
+
+    [Fact]
+    public async Task Synthesize_DatasetMode_SkipsEmotionModelResolution_AndUsesMatchedItemEmotion()
     {
         var datasetId = await SeedDatasetAsync();
         var item = await SeedItemAsync(
             datasetId, "你好", emotion: new EmotionResult(5, "开心", 0.9, 0, 0, 0, 0, 0, 0, 0));
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, item.Id, item.AudioKey, [1f, 0f, 0f]);
+        await SeedSpeechModelAsync();
         var audio = new StubAudioClient();
         audio.Clips[item.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
-        var tts = new StubTtsClient { Bytes = [7, 7] };
-        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+        var speech = new StubSpeechClient { Bytes = [7, 7] };
+        var controller = Create(audio, speech);
 
-        // dataset 模式 + 非法 modelId：跳过模型解析，不应返回 404 model not found
+        // dataset 模式 + 非法 modelId：跳过情绪模型解析，不应返回 404 model not found
         var result = await controller.Synthesize(
             datasetId.ToString(),
             new TrainingSynthesizeRequest("文本", null, ObjectId.GenerateNewId().ToString()),
@@ -312,9 +377,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         Assert.Equal([7, 7], file.FileContents);
         Assert.Equal(item.AudioKey, Header(controller, "X-Speaker-Audio-Key"));
         Assert.Equal(item.AudioKey, Header(controller, "X-Emo-Audio-Key"));
-        var request = Assert.Single(tts.Requests);
-        Assert.NotNull(request.Emotion);
-        Assert.Equal(0.9, request.Emotion!.Emotion.Happy, 3);
+        Assert.Contains("开心", Assert.Single(speech.Requests).EmotionInstruction);
     }
 
     [Fact]
@@ -322,7 +385,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     {
         var datasetId = await SeedDatasetAsync();
 
-        var result = await Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient())
+        var result = await Create(new StubAudioClient(), new StubSpeechClient())
             .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null), "bogus");
 
         Assert.Equal("invalid emotion mode", ErrorOf(result, StatusCodes.Status400BadRequest));
@@ -333,56 +396,53 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     {
         var datasetId = await SeedDatasetAsync();
         var item = await SeedItemAsync(datasetId, "你好");
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, item.Id, item.AudioKey, [1f, 0f, 0f]);
+        await SeedSpeechModelAsync();
         var audio = new StubAudioClient();
         audio.Clips[item.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
-        var tts = new StubTtsClient { Bytes = [7, 7] };
-        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+        var speech = new StubSpeechClient { Bytes = [7, 7] };
+        var controller = Create(audio, speech);
 
         var result = await controller.Synthesize(
             datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null), "dataset");
 
         Assert.IsType<FileContentResult>(result);
         Assert.Null(Header(controller, "X-Emo-Audio-Key"));
-        Assert.Null(Assert.Single(tts.Requests).Emotion);
+        Assert.Null(Assert.Single(speech.Requests).EmotionInstruction);
     }
 
     [Fact]
-    public async Task Synthesize_DefaultEmotionMode_IsNone_SkipsModelResolution_NoEmotion()
+    public async Task Synthesize_DefaultEmotionMode_IsNone_SkipsEmotionModelResolution_NoEmotion()
     {
         var datasetId = await SeedDatasetAsync();
         var item = await SeedItemAsync(
             datasetId, "你好", emotion: new EmotionResult(5, "开心", 0.9, 0, 0, 0, 0, 0, 0, 0));
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, item.Id, item.AudioKey, [1f, 0f, 0f]);
+        await SeedSpeechModelAsync();
         var audio = new StubAudioClient();
         audio.Clips[item.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
-        var tts = new StubTtsClient { Bytes = [7, 7] };
-        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+        var speech = new StubSpeechClient { Bytes = [7, 7] };
+        var controller = Create(audio, speech);
 
-        // 不传 emotionMode（默认 none）+ 非法 modelId：跳过模型解析（不 404），且不传情绪参考。
+        // 不传 emotionMode（默认 none）+ 非法 modelId：跳过情绪模型解析（不 404），且不传情绪参考。
         var result = await controller.Synthesize(
             datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, ObjectId.GenerateNewId().ToString()));
 
         var file = Assert.IsType<FileContentResult>(result);
         Assert.Equal([7, 7], file.FileContents);
         Assert.Null(Header(controller, "X-Emo-Audio-Key"));
-        Assert.Null(Assert.Single(tts.Requests).Emotion);
+        Assert.Null(Assert.Single(speech.Requests).EmotionInstruction);
     }
 
     [Fact]
-    public async Task Synthesize_NoneMode_SkipsModelResolution_NoEmotion()
+    public async Task Synthesize_NoneMode_SkipsEmotionModelResolution_NoEmotion()
     {
         var datasetId = await SeedDatasetAsync();
         var item = await SeedItemAsync(
             datasetId, "你好", emotion: new EmotionResult(5, "开心", 0.9, 0, 0, 0, 0, 0, 0, 0));
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, item.Id, item.AudioKey, [1f, 0f, 0f]);
+        await SeedSpeechModelAsync();
         var audio = new StubAudioClient();
         audio.Clips[item.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
-        var tts = new StubTtsClient { Bytes = [7, 7] };
-        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+        var speech = new StubSpeechClient { Bytes = [7, 7] };
+        var controller = Create(audio, speech);
 
         var result = await controller.Synthesize(
             datasetId.ToString(),
@@ -392,7 +452,7 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var file = Assert.IsType<FileContentResult>(result);
         Assert.Equal([7, 7], file.FileContents);
         Assert.Null(Header(controller, "X-Emo-Audio-Key"));
-        Assert.Null(Assert.Single(tts.Requests).Emotion);
+        Assert.Null(Assert.Single(speech.Requests).EmotionInstruction);
     }
 
     [Fact]
@@ -403,15 +463,12 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var emoItem = await SeedItemAsync(
             datasetId, "生气", emotion: new EmotionResult(8, "生气", 0, 0.9, 0, 0, 0, 0, 0, 0));
         var model = await SeedModelAsync();
+        await SeedSpeechModelAsync();
 
-        var store = new InMemoryVectorStore();
-        store.SeedText(datasetId, speaker.Id, speaker.AudioKey, [1f, 0f, 0f]);
-        store.SeedEmotion(datasetId, emoItem.Id, emoItem.AudioKey, [0f, 0.9f, 0f, 0f, 0f, 0f, 0f, 0f]);
         var audio = new StubAudioClient();
         audio.Clips[speaker.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
         audio.Clips[emoItem.AudioUri] = new AudioClip([4, 5, 6], "audio/mpeg");
-        var tts = new StubTtsClient { Bytes = [7, 7] };
-        var controller = Create(store, new FakeEmbeddingClient(), audio, tts);
+        var controller = Create(audio, new StubSpeechClient { Bytes = [7, 7] });
 
         var result = await controller.Synthesize(
             datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, model.Id.ToString()), "llm");
@@ -422,51 +479,18 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
     }
 
     [Fact]
-    public async Task RebuildVectors_ReturnsUpdated()
+    public async Task Synthesize_NoSpeechModel_TakesPrecedenceOverNoSpeakerReference()
     {
         var datasetId = await SeedDatasetAsync();
-        await SeedItemAsync(datasetId, "文本一");
-        await SeedItemAsync(datasetId, "");
-        var store = new InMemoryVectorStore();
+        // 既无语音模型又无参考条目：按校验顺序先返回 409 no speech model available。
 
-        var result = await Create(store, new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient())
-            .RebuildVectors(datasetId.ToString());
+        var result = await Create(new StubAudioClient(), new StubSpeechClient())
+            .Synthesize(datasetId.ToString(), new TrainingSynthesizeRequest("文本", null, null));
 
-        var payload = Assert.IsType<TrainingVectorsRebuildResultDto>(
-            Assert.IsAssignableFrom<ObjectResult>(result.Result).Value);
-        Assert.Equal(1, payload.Updated);
-        Assert.True(store.EnsureCalled);
+        Assert.Equal("no speech model available", ErrorOf(result, StatusCodes.Status409Conflict));
     }
 
-    [Fact]
-    public async Task RebuildVectors_UnknownDataset_Returns404()
-    {
-        var result = await Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), new StubAudioClient(), new StubTtsClient())
-            .RebuildVectors(ObjectId.GenerateNewId().ToString());
-
-        var objectResult = Assert.IsAssignableFrom<ObjectResult>(result.Result);
-        Assert.Equal(StatusCodes.Status404NotFound, objectResult.StatusCode);
-        Assert.Equal("dataset not found", Assert.IsType<ErrorResponse>(objectResult.Value).Error);
-    }
-
-    [Fact]
-    public async Task RebuildVectors_EmbeddingUnavailable_Returns502()
-    {
-        var datasetId = await SeedDatasetAsync();
-        await SeedItemAsync(datasetId, "文本");
-
-        var result = await Create(
-                new InMemoryVectorStore(),
-                new FakeEmbeddingClient { Throw = new EmbeddingUnavailableException("down") },
-                new StubAudioClient(), new StubTtsClient())
-            .RebuildVectors(datasetId.ToString());
-
-        var objectResult = Assert.IsAssignableFrom<ObjectResult>(result.Result);
-        Assert.Equal(StatusCodes.Status502BadGateway, objectResult.StatusCode);
-        Assert.Equal("embedding service unavailable", Assert.IsType<ErrorResponse>(objectResult.Value).Error);
-    }
-
-    // ===== 拼音短句匹配：segments/rebuild 后 synthesize 多命中拼接（假 recording/假 TTS + 真 Mongo）=====
+    // ===== 拼音短句匹配：segments/rebuild 后 synthesize 多命中拼接（假 recording/假语音模型 + 真 Mongo）=====
 
     [Fact]
     public async Task Synthesize_PinyinSegmentsRebuild_EndToEnd_MergesMultipleHits()
@@ -478,10 +502,11 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         var segmentSync = new SegmentSyncService(
             Items, SegmentRepository, NullLogger<SegmentSyncService>.Instance);
         await segmentSync.RebuildAsync(datasetId);
+        await SeedSpeechModelAsync();
 
         var audio = new StubAudioClient();
-        var tts = new StubTtsClient { Bytes = [7, 7] };
-        var controller = Create(new InMemoryVectorStore(), new FakeEmbeddingClient(), audio, tts);
+        var speech = new StubSpeechClient { Bytes = [7, 7] };
+        var controller = Create(audio, speech);
 
         var result = await controller.Synthesize(
             datasetId.ToString(), new TrainingSynthesizeRequest("你好，世界。", null, null));
@@ -490,44 +515,6 @@ public class TrainingSynthesizeApiTests(MongoDbFixture fixture, MilvusFixture mi
         Assert.Equal([7, 7], file.FileContents);
         Assert.Equal($"{first.AudioKey},{second.AudioKey}", Header(controller, "X-Speaker-Audio-Key"));
         Assert.Single(audio.MergeRequests);
-    }
-
-    // ===== 真 Milvus 链路（Testcontainers milvusdb/milvus）：rebuild 重建 + 字符相似 top-1 命中 speaker =====
-
-    [Fact]
-    public async Task Synthesize_RealMilvus_RebuildThenSynthesize_PicksCharSimilarSpeaker()
-    {
-        var datasetId = await SeedDatasetAsync();
-        var target = await SeedItemAsync(datasetId, "target");
-        var other = await SeedItemAsync(datasetId, "other");
-        var model = await SeedModelAsync();
-
-        var store = milvus.CreateStore(dimensions: 3);
-        await store.EnsureCollectionsAsync();
-
-        // 文本→向量（rebuild 仍写文本集合，但音色匹配已改走字符相似）
-        var embedding = new FakeEmbeddingClient
-        {
-            Provider = t => t.Contains("target") ? [1f, 0f, 0f] : [0f, 1f, 0f],
-        };
-
-        var audio = new StubAudioClient();
-        audio.Clips[target.AudioUri] = new AudioClip([1, 2, 3], "audio/mpeg");
-        audio.Clips[other.AudioUri] = new AudioClip([4, 5, 6], "audio/mpeg");
-        var tts = new StubTtsClient { Bytes = [7, 7] };
-
-        // Mongo → embedding → 真 Milvus 重建
-        var sync = new VectorSyncService(Items, store, embedding, NullLogger<VectorSyncService>.Instance);
-        await sync.RebuildAsync(datasetId);
-
-        // 字符相似：query "target query" 与 target（编辑距离最小）比 other 更近 → 命中 target
-        var controller = Create(store, embedding, audio, tts);
-        var result = await controller.Synthesize(
-            datasetId.ToString(), new TrainingSynthesizeRequest("target query", null, model.Id.ToString()));
-
-        var file = Assert.IsType<FileContentResult>(result);
-        Assert.Equal("audio/wav", file.ContentType);
-        Assert.Equal([7, 7], file.FileContents);
-        Assert.Equal(target.AudioKey, Header(controller, "X-Speaker-Audio-Key"));
+        Assert.Equal("你好，世界", Assert.Single(speech.Requests).ReferenceTranscript);
     }
 }
