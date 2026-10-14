@@ -37,12 +37,16 @@ public class OpenAiLikeSpeechClientTests
         }
     }
 
-    private static OpenAiLikeSpeechClient Create(StubHandler handler, Action<AiOptions>? configure = null)
+    private static OpenAiLikeSpeechClient Create(
+        StubHandler handler, Action<AiOptions>? configure = null, Action<SpeechOptions>? configureSpeech = null)
     {
         var options = new AiOptions();
         configure?.Invoke(options);
+        var speechOptions = new SpeechOptions();
+        configureSpeech?.Invoke(speechOptions);
         var client = new HttpClient(handler) { BaseAddress = new Uri("http://llm.test") };
-        return new OpenAiLikeSpeechClient(client, options, NullLogger<OpenAiLikeSpeechClient>.Instance);
+        return new OpenAiLikeSpeechClient(
+            client, options, speechOptions, NullLogger<OpenAiLikeSpeechClient>.Instance);
     }
 
     private static TrainingProviderRecord Provider => new()
@@ -53,8 +57,8 @@ public class OpenAiLikeSpeechClientTests
     private static TrainingModelRecord Model => new() { Model = "gpt-audio" };
 
     private static SpeechSynthesizeRequest Request(
-        string contentType = "audio/mpeg", string? transcript = "参考内容", string? emotion = null) =>
-        new([9, 8, 7], contentType, transcript, "目标文本", "EN", emotion);
+        string contentType = "audio/mpeg", string? transcript = "参考内容", string? emotion = null, string lang = "EN") =>
+        new([9, 8, 7], contentType, transcript, "目标文本", lang, emotion);
 
     private static HttpResponseMessage AudioOk(byte[] bytes)
     {
@@ -108,6 +112,33 @@ public class OpenAiLikeSpeechClientTests
     }
 
     [Fact]
+    public async Task BuildBody_LanguageHintUsesConfiguredDefaultLang()
+    {
+        var handler = new StubHandler { Handler = _ => AudioOk([1]) };
+        // 配置默认语种 EN：EN 请求不附语种提示，ZH 请求附「中文」提示。
+        var client = Create(handler, configureSpeech: o => o.DefaultLang = "EN");
+
+        await client.SynthesizeSpeechAsync(Provider, Model, Request(lang: "EN"));
+
+        using (var document = JsonDocument.Parse(handler.Bodies[0]))
+        {
+            var text = document.RootElement.GetProperty("messages")[0].GetProperty("content")[1]
+                .GetProperty("text").GetString();
+            Assert.DoesNotContain("请使用英文朗读。", text);
+        }
+
+        handler.Bodies.Clear();
+        await client.SynthesizeSpeechAsync(Provider, Model, Request(lang: "ZH"));
+
+        using (var document = JsonDocument.Parse(handler.Bodies[0]))
+        {
+            var text = document.RootElement.GetProperty("messages")[0].GetProperty("content")[1]
+                .GetProperty("text").GetString();
+            Assert.Contains("请使用中文朗读。", text);
+        }
+    }
+
+    [Fact]
     public async Task ResponseWithoutAudio_ThrowsModelOutput()
     {
         var handler = new StubHandler
@@ -153,7 +184,8 @@ public class OpenAiLikeSpeechClientTests
     {
         var client = new HttpClient(new StubHandler()) { BaseAddress = new Uri("http://llm.test") };
         var factory = new SpeechModelClientFactory(
-            new StubHttpClientFactory(client), Options.Create(new AiOptions()), NullLoggerFactory.Instance);
+            new StubHttpClientFactory(client), Options.Create(new AiOptions()),
+            Options.Create(new SpeechOptions()), NullLoggerFactory.Instance);
 
         Assert.IsType<OpenAiLikeSpeechClient>(factory.Create("openai"));
         Assert.IsType<OpenAiLikeSpeechClient>(factory.Create("OpenAI"));
@@ -166,7 +198,8 @@ public class OpenAiLikeSpeechClientTests
     {
         var client = new HttpClient(new StubHandler());
         var factory = new SpeechModelClientFactory(
-            new StubHttpClientFactory(client), Options.Create(new AiOptions()), NullLoggerFactory.Instance);
+            new StubHttpClientFactory(client), Options.Create(new AiOptions()),
+            Options.Create(new SpeechOptions()), NullLoggerFactory.Instance);
 
         Assert.Throws<ModelAudioOutputNotSupportedException>(() => factory.Create(providerType));
     }

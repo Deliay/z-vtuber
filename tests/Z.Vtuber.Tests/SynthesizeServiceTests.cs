@@ -245,6 +245,48 @@ public class SynthesizeServiceTests(MongoDbFixture fixture) : IClassFixture<Mong
     }
 
     [Fact]
+    public async Task ClientCancellationDuringEmotion_Propagates_NotDegraded()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var speaker = await SeedItemAsync(datasetId, "你好");
+        var audio = new StubAudioClient();
+        audio.Clips[speaker.AudioUri] = new AudioClip([1], "audio/mpeg");
+        var speech = new StubSpeechClient();
+        var (_, model) = await SeedProviderAsync();
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var chat = new StubChatClient { Throw = new OperationCanceledException(cts.Token) };
+
+        // 客户端取消（ct.IsCancellationRequested）：不得降级中性继续调模型，须原样上抛。
+        await Assert.ThrowsAsync<OperationCanceledException>(() => Create(
+                audio, speech, new StubChatFactory(chat))
+            .SynthesizeAsync(datasetId, "你好", "ZH", model, Speech(speech), EmotionMode.Llm, cts.Token));
+
+        Assert.Empty(speech.Requests);
+    }
+
+    [Fact]
+    public async Task EmotionTimeoutWithoutClientCancel_DegradesToNeutral()
+    {
+        var datasetId = ObjectId.GenerateNewId();
+        var speaker = await SeedItemAsync(datasetId, "你好");
+        var audio = new StubAudioClient();
+        audio.Clips[speaker.AudioUri] = new AudioClip([1], "audio/mpeg");
+        var speech = new StubSpeechClient();
+        var (_, model) = await SeedProviderAsync();
+
+        // 非客户端取消的 OperationCanceledException（如 HttpClient 超时）→ 降级中性，仍返回语音。
+        var chat = new StubChatClient { Throw = new OperationCanceledException("timeout") };
+
+        var result = await Create(audio, speech, new StubChatFactory(chat))
+            .SynthesizeAsync(datasetId, "你好", "ZH", model, Speech(speech), EmotionMode.Llm);
+
+        Assert.Null(result.EmoAudioKey);
+        Assert.Null(Assert.Single(speech.Requests).EmotionInstruction);
+    }
+
+    [Fact]
     public async Task LlmMode_NoAnnotatedItems_DegradesToNeutral()
     {
         var datasetId = ObjectId.GenerateNewId();
