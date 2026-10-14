@@ -9,8 +9,8 @@ namespace Z.Vtuber.Training.Ai;
 
 /// <summary>
 /// OpenAI-like 语音客户端：<c>POST {endpoint}/chat/completions</c>（Bearer 鉴权），
-/// body 携带 <c>modalities:["text","audio"]</c> 与 <c>audio:{format:"wav"}</c>，
-/// messages 单 user 两段内容（<c>input_audio</c> base64 参考语音 + <c>text</c> 组装 prompt），
+/// body 携带 <c>modalities:["text","audio"]</c> 与 <c>audio:{format:"wav", voice:"data:&lt;mime&gt;;base64,&lt;参考语音&gt;"}</c>，
+/// messages 两段：user 单段文本（<c>SpeechPromptBuilder</c> 组装 prompt）+ assistant 目标文本，
 /// 解析响应 <c>choices[0].message.audio.data</c> base64 → WAV 字节。
 /// 非 2xx/超时/传输失败 → <see cref="SpeechModelUnavailableException"/>（映射 502 model service unavailable）；
 /// 缺音频段/空/非法 base64 → <see cref="ModelOutputException"/>（映射 502 invalid model output）。
@@ -88,35 +88,36 @@ public sealed class OpenAiLikeSpeechClient : ISpeechModelClient
 
     /// <summary>
     /// 组装 <c>/chat/completions</c> 请求体：<c>modalities=["text","audio"]</c>、<c>audio.format="wav"</c>、
-    /// messages 单 user 两段（<c>input_audio</c>（base64 + format 映射）在前、<c>text</c>（prompt）在后）。
+    /// <c>audio.voice</c> 携带参考语音 data URI（<c>ReferenceContentType</c> 映射的 format + base64）、
+    /// messages 两段（user 单段文本 prompt 在前、assistant 目标文本在后）。
     /// prompt 的语种提示以配置的 <c>Speech:DefaultLang</c> 为默认基准（非默认语种才附加朗读语言要求）。
     /// </summary>
     internal string BuildBody(string model, SpeechSynthesizeRequest request)
     {
+        var mineType = MapAudioFormat(request.ReferenceContentType);
+        var audioBase64 = Convert.ToBase64String(request.ReferenceAudio);
+        
         var payload = new
         {
             model,
             modalities = new[] { "text", "audio" },
-            audio = new { format = "wav" },
+            audio = new
+            {
+                format = "wav", 
+                voice = $"data:{mineType};base64,{audioBase64}"
+            },
             messages = new object[]
             {
                 new
                 {
                     role = "user",
-                    content = new object[]
-                    {
-                        new
-                        {
-                            type = "input_audio",
-                            input_audio = new
-                            {
-                                data = Convert.ToBase64String(request.ReferenceAudio),
-                                format = MapAudioFormat(request.ReferenceContentType),
-                            },
-                        },
-                        new { type = "text", text = SpeechPromptBuilder.Build(request, _defaultLang) },
-                    },
+                    content = SpeechPromptBuilder.Build(request, _defaultLang),
                 },
+                new
+                {
+                    role = "assistant",
+                    content = request.Text,
+                }
             },
         };
 
@@ -124,7 +125,7 @@ public sealed class OpenAiLikeSpeechClient : ISpeechModelClient
     }
 
     /// <summary>
-    /// 参考语音 Content-Type → <c>input_audio.format</c>：分号参数归一后
+    /// 参考语音 Content-Type → <c>audio.voice</c> data URI 子类型：分号参数归一后
     /// <c>audio/mpeg</c>→<c>mp3</c>、<c>audio/wav</c>/<c>audio/x-wav</c>/<c>audio/wave</c>→<c>wav</c>，
     /// 未知按 <c>mp3</c>（参考音频多来自 recording 合并结果，多为 <c>audio/mpeg</c>）。
     /// </summary>

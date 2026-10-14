@@ -10,8 +10,8 @@ using Z.Vtuber.Training.Configuration;
 namespace Z.Vtuber.Tests;
 
 /// <summary>
-/// OpenAI-like 语音客户端契约：<c>chat/completions</c> 请求体（model/modalities/audio.format/
-/// messages input_audio+text）、鉴权头、base64 <c>audio.data</c> 解析；缺音频段 → <see cref="ModelOutputException"/>；
+/// OpenAI-like 语音客户端契约：<c>chat/completions</c> 请求体（model/modalities/audio.format/audio.voice
+/// 参考语音 data URI、messages user prompt + assistant 目标文本）、鉴权头、base64 <c>audio.data</c> 解析；缺音频段 → <see cref="ModelOutputException"/>；
 /// 非 2xx/超时 → <see cref="SpeechModelUnavailableException"/>；工厂派发与 Claude-like 不支持。
 /// </summary>
 public class OpenAiLikeSpeechClientTests
@@ -87,15 +87,21 @@ public class OpenAiLikeSpeechClientTests
         Assert.Equal("gpt-audio", root.GetProperty("model").GetString());
         Assert.Equal(["text", "audio"], root.GetProperty("modalities").EnumerateArray().Select(e => e.GetString()));
         Assert.Equal("wav", root.GetProperty("audio").GetProperty("format").GetString());
-
-        var content = root.GetProperty("messages")[0].GetProperty("content");
-        Assert.Equal("input_audio", content[0].GetProperty("type").GetString());
         Assert.Equal(
-            Convert.ToBase64String([9, 8, 7]),
-            content[0].GetProperty("input_audio").GetProperty("data").GetString());
-        Assert.Equal("mp3", content[0].GetProperty("input_audio").GetProperty("format").GetString());
-        Assert.Equal("text", content[1].GetProperty("type").GetString());
-        Assert.Contains("待朗读的文本", content[1].GetProperty("text").GetString());
+            $"data:mp3;base64,{Convert.ToBase64String([9, 8, 7])}",
+            root.GetProperty("audio").GetProperty("voice").GetString());
+
+        // messages[0]：user 单段文本 prompt（SpeechPromptBuilder 产物）
+        var user = root.GetProperty("messages")[0];
+        Assert.Equal("user", user.GetProperty("role").GetString());
+        var prompt = user.GetProperty("content").GetString();
+        Assert.Contains("待朗读的文本", prompt);
+        Assert.Contains("参考内容", prompt);
+
+        // messages[1]：assistant 目标文本
+        var assistant = root.GetProperty("messages")[1];
+        Assert.Equal("assistant", assistant.GetProperty("role").GetString());
+        Assert.Equal("目标文本", assistant.GetProperty("content").GetString());
     }
 
     [Theory]
@@ -122,8 +128,7 @@ public class OpenAiLikeSpeechClientTests
 
         using (var document = JsonDocument.Parse(handler.Bodies[0]))
         {
-            var text = document.RootElement.GetProperty("messages")[0].GetProperty("content")[1]
-                .GetProperty("text").GetString();
+            var text = document.RootElement.GetProperty("messages")[0].GetProperty("content").GetString();
             Assert.DoesNotContain("请使用英文朗读。", text);
         }
 
@@ -132,8 +137,7 @@ public class OpenAiLikeSpeechClientTests
 
         using (var document = JsonDocument.Parse(handler.Bodies[0]))
         {
-            var text = document.RootElement.GetProperty("messages")[0].GetProperty("content")[1]
-                .GetProperty("text").GetString();
+            var text = document.RootElement.GetProperty("messages")[0].GetProperty("content").GetString();
             Assert.Contains("请使用中文朗读。", text);
         }
     }
