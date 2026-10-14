@@ -9,7 +9,7 @@ namespace Z.Vtuber.Tests;
 
 /// <summary>
 /// api 代理新增镜像：<c>synthesize</c>（audio/wav 二进制 + X-* 命中头 + 状态码透传）与
-/// <c>vectors/rebuild</c>；上游不可达 502 <c>training service unavailable</c>。
+/// <c>segments/rebuild</c>；上游不可达 502 <c>training service unavailable</c>。
 /// </summary>
 public class TrainingSynthesizeProxyTests
 {
@@ -90,7 +90,7 @@ public class TrainingSynthesizeProxyTests
         {
             Handler = _ => new HttpResponseMessage(HttpStatusCode.BadGateway)
             {
-                Content = new StringContent("""{"error":"tts service unavailable"}""", Encoding.UTF8, "application/json"),
+                Content = new StringContent("""{"error":"model service unavailable"}""", Encoding.UTF8, "application/json"),
             },
         };
         var controller = CreateController(new HttpClient(handler));
@@ -112,26 +112,6 @@ public class TrainingSynthesizeProxyTests
         var status = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
         Assert.Equal("""{"error":"training service unavailable"}""", JsonSerializer.Serialize(status.Value));
-    }
-
-    [Fact]
-    public async Task RebuildVectors_ForwardsPost()
-    {
-        var handler = new StubHandler
-        {
-            Handler = _ => new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("""{"updated":3}""", Encoding.UTF8, "application/json"),
-            },
-        };
-        var controller = CreateController(new HttpClient(handler));
-
-        var result = await controller.RebuildDatasetVectors("ds1", CancellationToken.None);
-
-        Assert.IsType<EmptyResult>(result);
-        Assert.Equal("POST", handler.Methods[0]);
-        Assert.Equal("/api/training/datasets/ds1/vectors/rebuild", handler.Requests[0]);
-        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
     }
 
     [Fact]

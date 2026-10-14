@@ -1065,29 +1065,9 @@ export interface paths {
         put?: never;
         /**
          * 音频生成（代理训练服务）
-         * @description 代理 training 服务，body 原样透传；成功返回 audio/wav 二进制（Content-Type 与响应体透传）， X-Speaker-Audio-Key / X-Emo-Audio-Key 命中头一并透传；错误码（400/404/409/502）与错误体透传。 query emotionMode（llm/dataset/none）原样透传。
+         * @description 代理 training 服务，body 原样透传；成功返回 audio/wav 二进制（Content-Type 与响应体透传）， X-Speaker-Audio-Key / X-Emo-Audio-Key 命中头一并透传；错误码（400/404/409/502）与错误体透传。 合成由训练侧语音大模型（功能点 speech-synthesize 解析）推理生成。 query emotionMode（llm/dataset/none）原样透传。
          */
         post: operations["synthesizeTrainingDataset"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/training/datasets/{datasetId}/vectors/rebuild": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 重建数据集向量索引（代理训练服务）
-         * @description 代理 training 服务，body 原样透传；返回 updated 条数。
-         */
-        post: operations["rebuildTrainingDatasetVectors"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1854,9 +1834,6 @@ export interface components {
             text: string;
             image: string[];
             modelId?: string | null;
-        };
-        TrainingVectorsRebuildResult: {
-            updated: number;
         };
         TrainingSegmentsRebuildResult: {
             rebuilt: number;
@@ -4606,7 +4583,7 @@ export interface operations {
                     "application/json": components["schemas"]["TrainingErrorResponse"];
                 };
             };
-            /** @description training 服务不可达（或上游音频/TTS 不可用） */
+            /** @description training 服务不可达（或上游音频/语音模型不可用） */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -4614,45 +4591,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["TrainingErrorResponse"];
                 };
-            };
-        };
-    };
-    rebuildTrainingDatasetVectors: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 数据集 id（ObjectId） */
-                datasetId: components["parameters"]["TrainingDatasetId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 重建结果 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrainingVectorsRebuildResult"];
-                };
-            };
-            /** @description 数据集不存在 */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrainingErrorResponse"];
-                };
-            };
-            /** @description training 服务不可达 */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

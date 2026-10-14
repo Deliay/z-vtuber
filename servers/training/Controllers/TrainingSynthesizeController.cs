@@ -5,43 +5,42 @@ using MongoDB.Bson;
 using Z.Vtuber.Common.Persistence;
 using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Training.Ai;
-using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Configuration;
 using Z.Vtuber.Training.Contracts;
 using Z.Vtuber.Training.FeaturePoints;
 using Z.Vtuber.Training.Synthesis;
-using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Training.Controllers;
 
 /// <summary>
 /// 数据集音频生成 API（契约 <c>contracts/training.openapi.yaml</c>）：
-/// <c>POST synthesize</c>（文本 + 数据集参考池 → <c>audio/wav</c>）、
-/// <c>POST vectors/rebuild</c>（MongoDB 条目 → Milvus 向量索引重建）。错误体统一 <c>{"error": "..."}</c>。
+/// <c>POST synthesize</c>（文本 + 数据集参考池 + 语音大模型 → <c>audio/wav</c>）。错误体统一 <c>{"error": "..."}</c>。
 /// </summary>
 [ApiController]
 [Route("api/training/datasets/{datasetId}")]
 public sealed class TrainingSynthesizeController(
     TrainingDatasetRepository datasets,
     TrainingModelRepository models,
+    TrainingProviderRepository providers,
     SynthesizeService synthesize,
-    VectorSyncService vectors,
-    TtsOptions ttsOptions,
+    SpeechOptions speechOptions,
+    ISpeechModelClientFactory speechFactory,
     ITrainingModelResolver modelResolver,
     ILogger<TrainingSynthesizeController>? logger = null) : ControllerBase
 {
-    /// <summary>上游 index-tts-api 支持的语种白名单（大小写不敏感）。</summary>
-    internal static readonly string[] SupportedLangs = TtsOptions.SupportedLangs;
+    /// <summary>语音合成支持的语种白名单（大小写不敏感）。</summary>
+    internal static readonly string[] SupportedLangs = SpeechOptions.SupportedLangs;
 
     private readonly ILogger<TrainingSynthesizeController> _logger =
         logger ?? NullLogger<TrainingSynthesizeController>.Instance;
 
     /// <summary>
-    /// 音频生成：dataset（404）→ text（400）→ lang（400）→ emotionMode（400）→（llm）model（404/400）校验 →
-    /// <see cref="SynthesizeService"/>（拼音断句多命中拼接/无候选回退字符相似/参考取数/TTS）→ 200 <c>audio/wav</c> +
-    /// <c>X-Speaker-Audio-Key</c>/<c>X-Emo-Audio-Key</c> 命中头。query <c>emotionMode</c> 缺省 <c>none</c>
-    /// （不传情绪参考）；<c>llm</c> 用大模型生成情绪参考；<c>dataset</c> 与 <c>none</c> 均跳过模型解析
-    /// （<c>dataset</c> 用音色命中条目自身情绪）。
+    /// 音频生成：dataset（404）→ text（400）→ lang（400）→ emotionMode（400）→（llm）情绪 model（404/400）→
+    /// 语音模型解析（<c>speech-synthesize</c> 功能点，无可用 409，provider 无音频输出能力 400）→
+    /// <see cref="SynthesizeService"/>（拼音断句多命中拼接/无候选回退字符相似/参考取数/语音大模型）→
+    /// 200 <c>audio/wav</c> + <c>X-Speaker-Audio-Key</c>/<c>X-Emo-Audio-Key</c> 命中头。
+    /// query <c>emotionMode</c> 缺省 <c>none</c>（不传情绪参考）；<c>llm</c> 用大模型生成情绪参考；
+    /// <c>dataset</c> 与 <c>none</c> 均跳过情绪模型解析（<c>dataset</c> 用音色命中条目自身情绪）。
     /// </summary>
     [HttpPost("synthesize")]
     public async Task<IActionResult> Synthesize(
@@ -60,21 +59,21 @@ public sealed class TrainingSynthesizeController(
             return BadRequest(new ErrorResponse("text is required"));
         }
 
-        // 缺省语种取 Tts:DefaultLang，与显式 lang 同样过白名单（脏配置不得直传上游）。
-        var lang = (string.IsNullOrWhiteSpace(request?.Lang) ? ttsOptions.DefaultLang : request.Lang)
+        // 缺省语种取 Speech:DefaultLang，与显式 lang 同样过白名单（脏配置不得直传上游）。
+        var lang = (string.IsNullOrWhiteSpace(request?.Lang) ? speechOptions.DefaultLang : request.Lang)
             .Trim().ToUpperInvariant();
         if (!SupportedLangs.Contains(lang, StringComparer.Ordinal))
         {
             return BadRequest(new ErrorResponse("invalid lang"));
         }
 
-        // 情绪来源：缺省 none（不传情绪参考）；llm 用大模型；dataset 直接用向量命中条目情绪。
+        // 情绪来源：缺省 none（不传情绪参考）；llm 用大模型；dataset 直接用命中条目情绪。
         if (!TryParseEmotionMode(emotionMode, out var mode))
         {
             return BadRequest(new ErrorResponse("invalid emotion mode"));
         }
 
-        TrainingModelRecord? model = null;
+        TrainingModelRecord? emotionModel = null;
         if (mode == EmotionMode.Llm)
         {
             var resolved = await ResolveEmotionModelAsync(request?.ModelId, ct);
@@ -83,12 +82,20 @@ public sealed class TrainingSynthesizeController(
                 return resolved.Error;
             }
 
-            model = resolved.Model;
+            emotionModel = resolved.Model;
+        }
+
+        // 语音合成模型解析（先于音色参考挑选：无语音模型优先于无参考语音返回）。
+        var speech = await ResolveSpeechModelAsync(ct);
+        if (speech.Error is not null)
+        {
+            return speech.Error;
         }
 
         try
         {
-            var result = await synthesize.SynthesizeAsync(datasetObjectId, text, lang, model, mode, ct);
+            var result = await synthesize.SynthesizeAsync(
+                datasetObjectId, text, lang, emotionModel, speech.Speech!, mode, ct);
             if (result.SpeakerAudioKeys.Count > 0)
             {
                 Response.Headers["X-Speaker-Audio-Key"] = string.Join(',', result.SpeakerAudioKeys);
@@ -105,56 +112,55 @@ public sealed class TrainingSynthesizeController(
         {
             return StatusCode(StatusCodes.Status409Conflict, new ErrorResponse("no speaker reference"));
         }
-        catch (EmbeddingUnavailableException ex)
-        {
-            _logger.LogWarning(ex, "training synthesize failed: embedding service unavailable");
-            return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse("embedding service unavailable"));
-        }
-        catch (VectorStoreUnavailableException ex)
-        {
-            _logger.LogWarning(ex, "training synthesize failed: vector store unavailable");
-            return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse("vector store unavailable"));
-        }
         catch (AudioUnavailableException ex)
         {
             _logger.LogWarning(ex, "training synthesize failed: audio unavailable");
             return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse("audio unavailable"));
         }
-        catch (TtsUnavailableException ex)
+        catch (SpeechModelUnavailableException ex)
         {
-            _logger.LogWarning(ex, "training synthesize failed: tts service unavailable");
-            return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse("tts service unavailable"));
+            _logger.LogWarning(ex, "training synthesize failed: model service unavailable");
+            return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse("model service unavailable"));
+        }
+        catch (ModelOutputException ex)
+        {
+            _logger.LogWarning(ex, "training synthesize failed: invalid model output");
+            return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse("invalid model output"));
         }
     }
 
     /// <summary>
-    /// 向量索引重建：dataset（404）校验 → <see cref="VectorSyncService.RebuildAsync"/> →
-    /// 200 <c>{"updated": n}</c>；embedding/向量库不可用 → 502。
+    /// 解析语音合成模型：功能点 <c>speech-synthesize</c>（输入 <c>audio,text</c> / 输出 <c>audio</c>）指定优先 → 默认；
+    /// 无可用 → 409 <c>no speech model available</c>；工厂派发无音频输出能力（Claude-like 等）→ 400
+    /// <c>model does not support audio output</c>。
     /// </summary>
-    [HttpPost("vectors/rebuild")]
-    public async Task<ActionResult<TrainingVectorsRebuildResultDto>> RebuildVectors(
-        string datasetId, CancellationToken ct = default)
+    private async Task<(SpeechSynthesisModel? Speech, ObjectResult? Error)> ResolveSpeechModelAsync(
+        CancellationToken ct)
     {
-        if (!ObjectId.TryParse(datasetId, out var datasetObjectId)
-            || await datasets.GetByIdAsync(datasetObjectId, ct) is null)
+        var definition = FeaturePointIds.SpeechSynthesizeDefinition;
+        var resolution = await modelResolver.ResolveAsync(
+            definition.Slug, definition.Name,
+            definition.InputCapabilities, definition.OutputCapabilities, ct);
+
+        if (resolution.ModelId is not { } resolvedId
+            || await models.GetByIdAsync(resolvedId, ct) is not { } model
+            || await providers.GetByIdAsync(model.ProviderId, ct) is not { } provider)
         {
-            return NotFound(new ErrorResponse("dataset not found"));
+            return (null, StatusCode(StatusCodes.Status409Conflict, new ErrorResponse("no speech model available")));
         }
 
         try
         {
-            var updated = await vectors.RebuildAsync(datasetObjectId, ct);
-            return Ok(new TrainingVectorsRebuildResultDto(updated));
+            var client = speechFactory.Create(provider.Type);
+            return (new SpeechSynthesisModel(client, provider, model), null);
         }
-        catch (EmbeddingUnavailableException ex)
+        catch (ModelAudioOutputNotSupportedException)
         {
-            _logger.LogWarning(ex, "training vectors rebuild failed: embedding service unavailable");
-            return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse("embedding service unavailable"));
+            return (null, BadRequest(new ErrorResponse("model does not support audio output")));
         }
-        catch (VectorStoreUnavailableException ex)
+        catch (ProviderTypeException)
         {
-            _logger.LogWarning(ex, "training vectors rebuild failed: vector store unavailable");
-            return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse("vector store unavailable"));
+            return (null, BadRequest(new ErrorResponse("model does not support audio output")));
         }
     }
 

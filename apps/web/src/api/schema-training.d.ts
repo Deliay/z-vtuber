@@ -431,29 +431,9 @@ export interface paths {
         put?: never;
         /**
          * 音频生成（数据集语音合成）
-         * @description 以数据集为参考池：输入文本按 [，。,.\s] 断句后，每条短句与数据集候选短句按拼音相似度 （音节级归一化编辑距离）匹配取最相似 1 条，命中数据按数据 id 去重后经 recordings 合并为拼接音源 （speaker_prompt）；无候选短句时回退按输入文本与条目文本的字符相似度（归一化编辑距离）匹配单条。 情感向量匹配情绪参考（emo_prompt/emo_vector/emo_text/emo_alpha），调用内网 index-tts-api 合成并返回 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。 emotionMode=none（默认）不传任何情绪参考直接合成；emotionMode=llm 用配置的可用模型生成情感向量后检索； emotionMode=dataset 跳过大模型，直接使用音色命中候选条目自身的 Extensions.emotion （无则沿音色候选向下找，全无则降级中性）。dataset/none 完全跳过 modelId/模型解析。
+         * @description 以数据集为参考池：输入文本按 [，。,.\s] 断句后，每条短句与数据集候选短句按拼音相似度 （音节级归一化编辑距离）匹配取最相似 1 条，命中数据按数据 id 去重后经 recordings 合并为拼接音源 作为参考语音（input_audio）；无候选短句时回退按输入文本与条目文本的字符相似度（归一化编辑距离）匹配单条。 参考语音连同命中条目转写、目标文本、语种提示与可选情绪指令提交语音大模型 （功能点 speech-synthesize 解析，chat/completions + modalities=[text,audio]）推理生成 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。 emotionMode=none（默认）不传任何情绪参考直接合成；emotionMode=llm 用配置的可用模型生成情感向量后 对数据集已标注情绪条目做内存 L2 top-1 匹配（命中转情绪指令注入）；emotionMode=dataset 跳过大模型， 直接使用音色命中候选条目自身的 Extensions.emotion（无则沿音色候选向下找，全无则降级中性）。 dataset/none 完全跳过 modelId/情绪模型解析。超长文本不做本地截断，由模型侧拒绝映射 502。
          */
         post: operations["synthesizeTrainingDataset"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/training/datasets/{datasetId}/vectors/rebuild": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 重建数据集向量索引
-         * @description 从 MongoDB 条目（Text + Extensions.emotion）为 Milvus 重建文本向量与情感向量索引，返回重建条数（updated）。 用于升级后回填存量条目、向量模型变更后重建。
-         */
-        post: operations["rebuildTrainingDatasetVectors"];
         delete?: never;
         options?: never;
         head?: never;
@@ -830,9 +810,9 @@ export interface components {
         TrainingSynthesizeRequest: {
             /** @description 待合成文本（trim 后非空） */
             text: string;
-            /** @description 语种 ZH/EN/JA/ES/AR（大小写不敏感），缺省 Tts:DefaultLang（默认 ZH） */
+            /** @description 语种 ZH/EN/JA/ES/AR（大小写不敏感），缺省 Speech:DefaultLang（默认 ZH）；作为语言提示注入语音模型 prompt */
             lang?: string | null;
-            /** @description 生成情感向量所用可用模型 id；显式指定优先，缺省按功能点 emotion-from-text 解析（指定优先 → 默认选择 → 无则降级中性） */
+            /** @description 生成情感向量所用可用模型 id（仅 emotionMode=llm 生效，语义不变）；语音合成模型由功能点 speech-synthesize 解析，不经此字段 */
             modelId?: string | null;
         };
         TrainingImageGenerateRequest: {
@@ -842,10 +822,6 @@ export interface components {
             image: string[];
             /** @description 指定模型 id；缺省按功能点 image-generate 解析（指定优先 → 默认首候选） */
             modelId?: string | null;
-        };
-        TrainingVectorsRebuildResult: {
-            /** @description 重建（写入 Milvus）的条目数 */
-            updated: number;
         };
         TrainingSegmentsRebuildResult: {
             /** @description 重建的候选短句总数 */
@@ -1977,7 +1953,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 合成音频（mono 16-bit PCM WAV @22.05kHz，上游透传） */
+            /** @description 合成音频（WAV；语音大模型输出透传，采样率/编码以模型输出为准） */
             200: {
                 headers: {
                     /** @description 命中的音色参考条目 audioKey（拼接路径为逗号分隔多值，按拼接顺序；回退路径为单值） */
@@ -1990,7 +1966,7 @@ export interface operations {
                     "audio/wav": string;
                 };
             };
-            /** @description {"error": "text is required"/"invalid lang"/"invalid emotion mode"/"model disabled"} */
+            /** @description {"error": "text is required"/"invalid lang"/"invalid emotion mode"/"model disabled"/"model does not support audio output"} */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2008,7 +1984,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description {"error": "no speaker reference"}（数据集内无任何可用音色参考） */
+            /** @description {"error": "no speaker reference"/"no speech model available"} */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2017,48 +1993,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description {"error": "audio unavailable"/"tts service unavailable"} */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    rebuildTrainingDatasetVectors: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 数据集 id（ObjectId） */
-                datasetId: components["parameters"]["DatasetId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 重建结果 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrainingVectorsRebuildResult"];
-                };
-            };
-            /** @description {"error": "dataset not found"} */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description {"error": "embedding service unavailable"/"vector store unavailable"} */
+            /** @description {"error": "audio unavailable"/"model service unavailable"/"invalid model output"} */
             502: {
                 headers: {
                     [name: string]: unknown;
