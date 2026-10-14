@@ -53,6 +53,7 @@ type: Permanent
 
 - 需求总分支 `prd/training-audio-synthesize-llm`（基于 origin/main 切出，PRD 与技术提案已随 `3446483`/`fc117f7` 提交，需求总 PR #186）：**本 Plan 提交到该分支随 PR 评审**。
 - 实现分支 `feat/training-audio-synthesize-llm`（基于需求总分支切出，提案 §1.3 口径）：实现按 z-coding「编写实现」流程推进（子项目为单位委托 subagent、TDD 红-绿、测试与实现分开提交），实现 PR 回需求总分支评审。
+- **实现记录（已完成）**：实现分支 `feat/training-audio-synthesize-llm`，实现 PR https://github.com/Deliay/z-vtuber/pull/187（目标分支 `prd/training-audio-synthesize-llm`）。契约修订 + 双侧镜像 + `npm run codegen`、training 语音客户端族（`ISpeechModelClient`/`OpenAiLikeSpeechClient`/`SpeechModelClientFactory`）/纯函数（`EmotionMatcher`/`SpeechPromptBuilder`）/编排替换/功能点 `speech-synthesize`/`SpeechOptions`、Milvus 与 TTS 全量移除（`Vectors/`、`vectors/rebuild`、同步钩子、配置节、AppHost 资源与注入）、api 代理与 AppHost 调整、测试改造（新增 `OpenAiLikeSpeechClientTests`/`EmotionMatcherTests`/`SpeechPromptBuilderTests`/`TrainingRemovedEndpointTests` 并重写 `SynthesizeServiceTests`/`TrainingSynthesizeApiTests`）与 AGENTS.md 同步均已落地；全量 UT 无新增失败（仅既有登记 6 例），`TestReport --check` 通过；`Speech:DefaultLang` 已贯通 prompt 语种提示基准。
 - 提交顺序（Conventional Commits）：
   1. `docs(training):` 本实现 Plan（需求总分支）；
   2. `feat(contracts):` 契约修订（synthesize 语义/错误文案 + 移除 `vectors/rebuild`）+ api 镜像同步 + `npm run codegen`；

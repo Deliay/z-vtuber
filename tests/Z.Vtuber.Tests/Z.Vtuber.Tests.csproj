@@ -21,7 +21,6 @@
     </PackageReference>
     <PackageReference Include="Testcontainers.MongoDb" Version="4.13.0" />
     <PackageReference Include="Testcontainers.Redis" Version="4.13.0" />
-    <PackageReference Include="Testcontainers.Milvus" Version="4.13.0" />
   </ItemGroup>
 
   <ItemGroup>

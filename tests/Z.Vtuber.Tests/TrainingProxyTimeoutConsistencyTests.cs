@@ -5,7 +5,7 @@ namespace Z.Vtuber.Tests;
 
 /// <summary>
 /// P2-2 回归：<c>servers/api</c> 代理 training 的请求超时必须**高于** training 各阶段上游预算，
-/// 否则长耗时端点（synthesize 慢 TTS / vectors/rebuild 逐条 embedding）在 training 正常完成时被代理先判超时，
+/// 否则长耗时端点（synthesize 慢语音大模型推理）在 training 正常完成时被代理先判超时，
 /// 成功路径被误报为 502 <c>training service unavailable</c>。
 /// </summary>
 public class TrainingProxyTimeoutConsistencyTests
@@ -15,10 +15,7 @@ public class TrainingProxyTimeoutConsistencyTests
     {
         var stageBudgets = new (string Stage, int Seconds)[]
         {
-            ("Tts", new TtsOptions().RequestTimeoutSeconds),
             ("Ai", new AiOptions().RequestTimeoutSeconds),
-            ("Embedding", new EmbeddingOptions().RequestTimeoutSeconds),
-            ("Milvus", new MilvusOptions().RequestTimeoutSeconds),
             ("Image", new ImageOptions().RequestTimeoutSeconds),
         };
 

@@ -484,15 +484,17 @@ tests/Z.Vtuber.Tests/（变更）
 
 ## 10. 验收标准
 
-- [ ] 技术方案评审通过；契约修订评审通过（含 api 镜像与 `vectors/rebuild` 移除）
-- [ ] `POST /api/training/datasets/{id}/synthesize` 传 `text` 返回 `audio/wav`，由语音大模型（功能点 `speech-synthesize` 解析的模型）推理生成；经 z-vtuber 代理同口径可访问
-- [ ] 参考语音为既有挑选链路产出（口径零回退），参考语音 + 条目转写 + 目标文本提交模型（`input_audio` + `text`）
-- [ ] `emotionMode` 三模式行为不变：命中情绪参考时指令注入、无命中降级中性仍 200；`llm` 模式情绪匹配为 Mongo 情绪标注 + 内存 L2 top-1（结果确定）
-- [ ] **Milvus 彻底移除**：`Vectors/` 全目录、`vectors/rebuild` 端点（含 api 镜像）、同步钩子、Milvus/Embedding 配置节、AppHost Milvus 资源与注入全部删除；链路中无 Milvus/Ollama embedding 调用；残留配置 Warn 忽略不影响启动
-- [ ] 原 TTS 上游整体移除：`ITtsClient`/`IndexTtsClient`/`TtsOptions`/`Tts__BaseUrl` 删除，链路中无对原 TTS 服务的请求
-- [ ] 错误码：400 text 空/非法 lang/非法 emotionMode/模型不支持音频输出；404 数据集/模型；409 无音色参考/无语音模型；502 audio/`model service unavailable`/`invalid model output`
-- [ ] 核心逻辑覆盖率 ≥ 80%；既有匹配/情绪/代理测试不回退
-- [ ] 既有数据集/导入/情绪识别/波形/绘图生成回归不回退
+> **实现记录（已完成）**：实现分支 `feat/training-audio-synthesize-llm`，实现 PR https://github.com/Deliay/z-vtuber/pull/187（目标分支 `prd/training-audio-synthesize-llm`）。契约修订 + 双侧镜像 + web codegen、training 语音客户端族/纯函数/编排/端点/配置、Milvus 与 TTS 全量移除、api 代理与 AppHost 调整、测试改造与 AGENTS.md/PRD/提案/Plan 同步均已落地；全量 UT 无新增失败（仅既有登记 6 例），`TestReport --check` 通过。
+
+- [x] 技术方案评审通过；契约修订评审通过（含 api 镜像与 `vectors/rebuild` 移除）
+- [x] `POST /api/training/datasets/{id}/synthesize` 传 `text` 返回 `audio/wav`，由语音大模型（功能点 `speech-synthesize` 解析的模型）推理生成；经 z-vtuber 代理同口径可访问
+- [x] 参考语音为既有挑选链路产出（口径零回退），参考语音 + 条目转写 + 目标文本提交模型（`input_audio` + `text`）
+- [x] `emotionMode` 三模式行为不变：命中情绪参考时指令注入、无命中降级中性仍 200；`llm` 模式情绪匹配为 Mongo 情绪标注 + 内存 L2 top-1（结果确定）
+- [x] **Milvus 彻底移除**：`Vectors/` 全目录、`vectors/rebuild` 端点（含 api 镜像）、同步钩子、Milvus/Embedding 配置节、AppHost Milvus 资源与注入全部删除；链路中无 Milvus/Ollama embedding 调用；残留配置 Warn 忽略不影响启动
+- [x] 原 TTS 上游整体移除：`ITtsClient`/`IndexTtsClient`/`TtsOptions`/`Tts__BaseUrl` 删除，链路中无对原 TTS 服务的请求
+- [x] 错误码：400 text 空/非法 lang/非法 emotionMode/模型不支持音频输出；404 数据集/模型；409 无音色参考/无语音模型；502 audio/`model service unavailable`/`invalid model output`
+- [x] 核心逻辑覆盖率 ≥ 80%；既有匹配/情绪/代理测试不回退
+- [x] 既有数据集/导入/情绪识别/波形/绘图生成回归不回退
 
 ## 11. 相关文档
 

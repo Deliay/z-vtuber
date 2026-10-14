@@ -10,11 +10,6 @@ var mongo = builder.AddMongoDB("mongo")
 var messaging = builder.AddRedis("messaging")
     .WithDataVolume();
 
-// Milvus 向量库（Aspire Milvus 集成，托管 milvusdb/milvus；向量索引为派生数据，可由 vectors/rebuild 重建）
-var milvusApiKey = builder.AddParameter("milvus-api-key", "Milvus", secret: true);
-var milvus = builder.AddMilvus("milvus", milvusApiKey)
-    .WithLifetime(ContainerLifetime.Persistent);
-
 var api = builder.AddProject<Projects.Z_Vtuber>("api")
     .WithReference(mongo)
     .WaitFor(mongo)
@@ -89,17 +84,8 @@ var training = builder.AddProject<Projects.Z_Vtuber_Training>("training")
     .WaitFor(messaging)
     .WithReference(recording)
     .WaitFor(recording)
-    .WaitFor(milvus)
     .WithEnvironment("TranscriptService__BaseUrl", transcriptApi.GetEndpoint("http"))
     .WithEnvironment("RecordingService__BaseUrl", recording.GetEndpoint("http"))
-    .WithEnvironment("Milvus__Endpoint", ReferenceExpression.Create(
-        $"http://{milvus.Resource.PrimaryEndpoint.Property(EndpointProperty.Host)}:{milvus.Resource.PrimaryEndpoint.Property(EndpointProperty.Port)}"))
-    // Milvus 开启鉴权（COMMON_SECURITY_AUTHORIZATIONENABLED=true，root 密码=apiKey）；
-    // REST 认 Authorization: Bearer <username>:<password>，故 token 必须是 root:{apiKey}（即 milvus.Resource.Token），
-    // 传裸密码会被 ParseUsernamePassword 判为无效 API key → 401。
-    .WithEnvironment("Milvus__Token", milvus.Resource.Token)
-    .WithEnvironment("Embedding__BaseUrl", "https://ollama.internal.fffdan.com/")
-    .WithEnvironment("Tts__BaseUrl", "https://tts.internal.fffdan.com")
     .WithHttpHealthCheck("/health");
 
 api.WithReference(recording)

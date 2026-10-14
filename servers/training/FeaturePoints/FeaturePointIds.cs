@@ -12,7 +12,8 @@ public sealed record FeaturePointDefinition(
 /// <summary>
 /// 本期功能点常量（与 PRD §3.2 能力表一一对应）：
 /// 数据清洗 / 输入语音识别情绪（输入 语音、文本 → 输出 文本）、
-/// 输入文本识别情绪（输入 文本 → 输出 文本）。
+/// 输入文本识别情绪（输入 文本 → 输出 文本）、绘图生成（文本、图片 → 图片）、
+/// 语音合成（语音、文本 → 语音）。
 /// </summary>
 public static class FeaturePointIds
 {
@@ -28,6 +29,9 @@ public static class FeaturePointIds
     /// <summary>绘图生成（文本 + 图片 → 图片）。</summary>
     public const string ImageGenerate = "image-generate";
 
+    /// <summary>语音合成（语音 + 文本 → 语音）。</summary>
+    public const string SpeechSynthesize = "speech-synthesize";
+
     private static readonly string[] AudioTextInput =
         [TrainingModelCapabilities.Audio, TrainingModelCapabilities.Text];
 
@@ -40,6 +44,8 @@ public static class FeaturePointIds
 
     private static readonly string[] ImageOutput = [TrainingModelCapabilities.Image];
 
+    private static readonly string[] AudioOutput = [TrainingModelCapabilities.Audio];
+
     public static readonly FeaturePointDefinition DatasetCleanDefinition =
         new(DatasetClean, "数据清洗", AudioTextInput, TextOutput);
 
@@ -51,4 +57,7 @@ public static class FeaturePointIds
 
     public static readonly FeaturePointDefinition ImageGenerateDefinition =
         new(ImageGenerate, "绘图生成", TextImageInput, ImageOutput);
+
+    public static readonly FeaturePointDefinition SpeechSynthesizeDefinition =
+        new(SpeechSynthesize, "语音合成", AudioTextInput, AudioOutput);
 }
