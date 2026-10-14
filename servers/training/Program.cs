@@ -9,7 +9,6 @@ using Z.Vtuber.Training.Emotion;
 using Z.Vtuber.Training.FeaturePoints;
 using Z.Vtuber.Training.ImageGeneration;
 using Z.Vtuber.Training.Synthesis;
-using Z.Vtuber.Training.Vectors;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,24 +36,14 @@ builder.Services.AddOptions<RecordingServiceOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
-// 音频生成：本地 embedding / Milvus 向量库 / 上游 TTS / 编排配置（ValidateOnStart）
-builder.Services.AddOptions<EmbeddingOptions>()
-    .Bind(builder.Configuration.GetSection(EmbeddingOptions.SectionName))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-builder.Services.AddOptions<MilvusOptions>()
-    .Bind(builder.Configuration.GetSection(MilvusOptions.SectionName))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-builder.Services.AddOptions<TtsOptions>()
-    .Bind(builder.Configuration.GetSection(TtsOptions.SectionName))
+// 音频生成：语音合成语种配置（ValidateOnStart）
+builder.Services.AddOptions<SpeechOptions>()
+    .Bind(builder.Configuration.GetSection(SpeechOptions.SectionName))
     .ValidateDataAnnotations()
     .Validate(
-        o => TtsOptions.SupportedLangs.Contains(
+        o => SpeechOptions.SupportedLangs.Contains(
             o.DefaultLang?.Trim().ToUpperInvariant() ?? string.Empty, StringComparer.Ordinal),
-        "Tts:DefaultLang must be one of ZH/EN/JA/ES/AR")
+        "Speech:DefaultLang must be one of ZH/EN/JA/ES/AR")
     .ValidateOnStart();
 
 builder.Services.AddOptions<SynthesizeOptions>()
@@ -71,9 +60,7 @@ builder.Services.AddOptions<ImageOptions>()
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<AiOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<EmotionTaskOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<RecordingServiceOptions>>().Value);
-builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<EmbeddingOptions>>().Value);
-builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<MilvusOptions>>().Value);
-builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<TtsOptions>>().Value);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SpeechOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SynthesizeOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ImageOptions>>().Value);
 
@@ -103,27 +90,6 @@ builder.Services.AddHttpClient<IRecordingAudioClient, RecordingAudioClient>(clie
             ?? RecordingServiceOptions.DefaultBaseUrl);
 });
 
-// 本地 embedding（named client EmbeddingService，BaseAddress = Embedding:BaseUrl；超时经 EmbeddingOptions 控制）
-builder.Services.AddHttpClient(LocalEmbeddingClient.ClientName, client =>
-{
-    client.BaseAddress = new Uri(
-        builder.Configuration[$"{EmbeddingOptions.SectionName}:BaseUrl"]
-            ?? EmbeddingOptions.DefaultBaseUrl);
-});
-
-// Milvus REST（named client MilvusStore；禁用自动重定向）
-builder.Services.AddHttpClient(MilvusRestClient.ClientName)
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
-
-// 上游 index-tts-api（named client TtsService，BaseAddress = Tts:BaseUrl；IndexTtsClient 每次经 factory 取用）
-builder.Services.AddHttpClient(IndexTtsClient.ClientName, client =>
-{
-    client.BaseAddress = new Uri(
-        builder.Configuration[$"{TtsOptions.SectionName}:BaseUrl"]
-            ?? TtsOptions.DefaultBaseUrl);
-});
-builder.Services.AddSingleton<ITtsClient, IndexTtsClient>();
-
 builder.Services.AddSingleton<IMongoDatabase>(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
 
@@ -140,17 +106,14 @@ builder.Services.AddSingleton<ITrainingModelResolver, TrainingModelResolver>();
 
 builder.Services.AddSingleton<IChatModelClientFactory, ChatModelClientFactory>();
 builder.Services.AddSingleton<IImageModelClientFactory, ImageModelClientFactory>();
+builder.Services.AddSingleton<ISpeechModelClientFactory, SpeechModelClientFactory>();
 builder.Services.AddSingleton<IModelDiscoveryClient, ModelDiscoveryClient>();
 builder.Services.AddSingleton<IEmotionTaskLockProvider, RedisEmotionTaskLockProvider>();
 builder.Services.AddSingleton<EmotionTaskRunner>();
 builder.Services.AddSingleton<EmotionTaskScanner>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EmotionTaskScanner>());
 
-// 音频生成：embedding / Milvus 向量仓储 / 同步 / 编排 / TTS
-builder.Services.AddSingleton<IEmbeddingClient, LocalEmbeddingClient>();
-builder.Services.AddSingleton<IMilvusRestClient, MilvusRestClient>();
-builder.Services.AddSingleton<IVectorStore, MilvusVectorStore>();
-builder.Services.AddSingleton<VectorSyncService>();
+// 音频生成：候选短句同步 / 编排
 builder.Services.AddSingleton<SegmentSyncService>();
 builder.Services.AddSingleton<SynthesizeService>();
 builder.Services.AddSingleton<ImageGenerateService>();
@@ -169,6 +132,18 @@ if (!string.IsNullOrWhiteSpace(legacyEmotionModelId))
         "Synthesize:DefaultEmotionModelId is ignored (removed); configure the emotion-from-text feature point model instead.");
 }
 
+// Tts / Milvus / Embedding 配置节本期整体移除（原 TTS 下游与 Milvus/Ollama 向量链路下线）：
+// 残留任一非空则 Warn 一次并忽略，不影响启动。
+foreach (var legacySection in new[] { "Tts", "Milvus", "Embedding" })
+{
+    if (builder.Configuration.GetSection(legacySection).GetChildren().Any())
+    {
+        app.Logger.LogWarning(
+            "{Section} configuration is ignored (removed); speech synthesis uses the speech-synthesize feature point model instead.",
+            legacySection);
+    }
+}
+
 using (var scope = app.Services.CreateScope())
 {
     var training = scope.ServiceProvider.GetRequiredService<TrainingMongoSetup>();
@@ -176,17 +151,6 @@ using (var scope = app.Services.CreateScope())
     await training.EnsureIndexesAsync();
     await training.BackfillModelCapabilitiesAsync();
     await transcript.EnsureIndexesAsync();
-
-    // Milvus 集合/索引幂等建立（best-effort：Milvus 暂不可用不阻断服务启动，可由 vectors/rebuild 兜底）
-    try
-    {
-        var vectorStore = scope.ServiceProvider.GetRequiredService<IVectorStore>();
-        await vectorStore.EnsureCollectionsAsync();
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogWarning(ex, "Milvus collections initialization failed; synthesize unavailable until Milvus recovers");
-    }
 }
 
 app.MapHealthChecks("/health");

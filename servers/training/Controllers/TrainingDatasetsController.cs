@@ -10,7 +10,6 @@ using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Contracts;
 using Z.Vtuber.Training.Streams;
 using Z.Vtuber.Training.Synthesis;
-using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Training.Controllers;
 
@@ -26,7 +25,6 @@ public sealed class TrainingDatasetsController(
     TrainingDatasetItemRepository items,
     IRecordingAudioClient audio,
     ILogger<TrainingDatasetsController>? logger = null,
-    VectorSyncService? vectors = null,
     SegmentSyncService? segments = null) : ControllerBase
 {
     /// <summary>本期唯一合法数据集类型（预留其他模态）。</summary>
@@ -153,12 +151,6 @@ public sealed class TrainingDatasetsController(
         if (!await datasets.DeleteAsync(id, ct))
         {
             return NotFound(new ErrorResponse("dataset not found"));
-        }
-
-        // 级联清 Milvus 向量（best-effort）。
-        if (vectors is not null)
-        {
-            await vectors.DeleteDatasetAsync(id, ct);
         }
 
         // 级联清候选短句反向索引（best-effort）。

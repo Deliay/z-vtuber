@@ -1680,6 +1680,7 @@ paths:
       description: >-
         代理 training 服务，body 原样透传；成功返回 audio/wav 二进制（Content-Type 与响应体透传），
         X-Speaker-Audio-Key / X-Emo-Audio-Key 命中头一并透传；错误码（400/404/409/502）与错误体透传。
+        合成由训练侧语音大模型（功能点 speech-synthesize 解析）推理生成。
         query emotionMode（llm/dataset/none）原样透传。
       operationId: synthesizeTrainingDataset
       parameters:
@@ -1727,33 +1728,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrainingErrorResponse"
         "502":
-          description: training 服务不可达（或上游音频/TTS 不可用）
+          description: training 服务不可达（或上游音频/语音模型不可用）
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TrainingErrorResponse"
-  /api/training/datasets/{datasetId}/vectors/rebuild:
-    post:
-      summary: 重建数据集向量索引（代理训练服务）
-      description: 代理 training 服务，body 原样透传；返回 updated 条数。
-      operationId: rebuildTrainingDatasetVectors
-      parameters:
-        - $ref: "#/components/parameters/TrainingDatasetId"
-      responses:
-        "200":
-          description: 重建结果
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TrainingVectorsRebuildResult"
-        "404":
-          description: 数据集不存在
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TrainingErrorResponse"
-        "502":
-          description: training 服务不可达
   /api/training/datasets/{datasetId}/segments/rebuild:
     post:
       summary: 重建数据集候选短句拼音反向索引（代理训练服务）
@@ -3407,12 +3386,6 @@ components:
         modelId:
           type: string
           nullable: true
-    TrainingVectorsRebuildResult:
-      type: object
-      required: [updated]
-      properties:
-        updated:
-          type: integer
     TrainingSegmentsRebuildResult:
       type: object
       required: [rebuilt]

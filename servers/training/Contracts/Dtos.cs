@@ -184,10 +184,6 @@ public sealed record TrainingSynthesizeRequest(
     [property: JsonPropertyName("lang")] string? Lang,
     [property: JsonPropertyName("modelId")] string? ModelId);
 
-/// <summary>向量索引重建结果：重建（写入 Milvus）的条目数。</summary>
-public sealed record TrainingVectorsRebuildResultDto(
-    [property: JsonPropertyName("updated")] long Updated);
-
 /// <summary>候选短句反向索引重建结果：重建的候选短句总数。</summary>
 public sealed record TrainingSegmentsRebuildResultDto(
     [property: JsonPropertyName("rebuilt")] long Rebuilt);
