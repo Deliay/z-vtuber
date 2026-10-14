@@ -10,7 +10,7 @@ namespace Z.Vtuber.Training.Ai;
 /// <summary>
 /// OpenAI-like 语音客户端：<c>POST {endpoint}/chat/completions</c>（Bearer 鉴权），
 /// body 携带 <c>modalities:["text","audio"]</c> 与 <c>audio:{format:"wav", voice:"data:&lt;mime&gt;;base64,&lt;参考语音&gt;"}</c>，
-/// messages 两段：user 单段文本（<c>SpeechPromptBuilder</c> 组装 prompt）+ assistant 目标文本，
+/// messages 两段：user 风格/情绪指令（<c>SpeechPromptBuilder</c> 产物，不含目标文本）+ assistant 目标文本，
 /// 解析响应 <c>choices[0].message.audio.data</c> base64 → WAV 字节。
 /// 非 2xx/超时/传输失败 → <see cref="SpeechModelUnavailableException"/>（映射 502 model service unavailable）；
 /// 缺音频段/空/非法 base64 → <see cref="ModelOutputException"/>（映射 502 invalid model output）。
@@ -89,7 +89,7 @@ public sealed class OpenAiLikeSpeechClient : ISpeechModelClient
     /// <summary>
     /// 组装 <c>/chat/completions</c> 请求体：<c>modalities=["text","audio"]</c>、<c>audio.format="wav"</c>、
     /// <c>audio.voice</c> 携带参考语音 data URI（MIME 由 <c>ReferenceContentType</c> 映射 + base64）、
-    /// messages 两段（user 单段文本 prompt 在前、assistant 目标文本在后）。
+    /// messages 两段（user 风格/情绪指令在前、assistant 目标文本在后；目标文本仅放 assistant）。
     /// prompt 的语种提示以配置的 <c>Speech:DefaultLang</c> 为默认基准（非默认语种才附加朗读语言要求）。
     /// </summary>
     internal string BuildBody(string model, SpeechSynthesizeRequest request)

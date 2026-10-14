@@ -431,7 +431,7 @@ export interface paths {
         put?: never;
         /**
          * 音频生成（数据集语音合成）
-         * @description 以数据集为参考池：输入文本按 [，。,.\s] 断句后，每条短句与数据集候选短句按拼音相似度 （音节级归一化编辑距离）匹配取最相似 1 条，命中数据按数据 id 去重后经 recordings 合并为拼接音源 作为参考语音（经 audio.voice data URI 传入）；无候选短句时回退按输入文本与条目文本的字符相似度（归一化编辑距离）匹配单条。 参考语音连同命中条目转写、目标文本、语种提示与可选情绪指令提交语音大模型 （功能点 speech-synthesize 解析，chat/completions + modalities=[text,audio]）推理生成 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。 emotionMode=none（默认）不传任何情绪参考直接合成；emotionMode=llm 用配置的可用模型生成情感向量后 对数据集已标注情绪条目做内存 L2 top-1 匹配（命中转情绪指令注入）；emotionMode=dataset 跳过大模型， 直接使用音色命中候选条目自身的 Extensions.emotion（无则沿音色候选向下找，全无则降级中性）。 dataset/none 完全跳过 modelId/情绪模型解析。超长文本不做本地截断，由模型侧拒绝映射 502。
+         * @description 以数据集为参考池：输入文本按 [，。,.\s] 断句后，每条短句与数据集候选短句按拼音相似度 （音节级归一化编辑距离）匹配取最相似 1 条，命中数据按数据 id 去重后经 recordings 合并为拼接音源 作为参考语音（经 audio.voice data URI 传入）；无候选短句时回退按输入文本与条目文本的字符相似度（归一化编辑距离）匹配单条。 命中条目转写、语种提示与可选情绪指令作为 user 消息、目标文本作为 assistant 消息，提交语音大模型 （功能点 speech-synthesize 解析，chat/completions + modalities=[text,audio]）推理生成 audio/wav。 命中经 X-Speaker-Audio-Key / X-Emo-Audio-Key 响应头可观测。 emotionMode=none（默认）不传任何情绪参考直接合成；emotionMode=llm 用配置的可用模型生成情感向量后 对数据集已标注情绪条目做内存 L2 top-1 匹配（命中转情绪指令注入）；emotionMode=dataset 跳过大模型， 直接使用音色命中候选条目自身的 Extensions.emotion（无则沿音色候选向下找，全无则降级中性）。 dataset/none 完全跳过 modelId/情绪模型解析。超长文本不做本地截断，由模型侧拒绝映射 502。
          */
         post: operations["synthesizeTrainingDataset"];
         delete?: never;

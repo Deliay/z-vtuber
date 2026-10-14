@@ -5,8 +5,8 @@ using Z.Vtuber.Training.Synthesis;
 namespace Z.Vtuber.Tests;
 
 /// <summary>
-/// 语音合成 prompt 组装（纯函数）：角色指令 + 参考转写（可空）+ 语种提示（非默认才附）+ 情绪指令（可空）+ 目标文本；
-/// 情绪指令描述优先、空描述按八维最强维度映射。
+/// 语音合成 user 指令组装（纯函数）：角色指令 + 参考转写（可空）+ 语种提示（非默认才附）+ 情绪指令（可空）；
+/// 目标文本不进 user 指令（由 assistant 消息承载）。情绪指令描述优先、空描述按八维最强维度映射。
 /// </summary>
 public class SpeechPromptBuilderTests
 {
@@ -15,13 +15,14 @@ public class SpeechPromptBuilderTests
         new([1], "audio/mpeg", transcript, "目标文本", lang, emotion);
 
     [Fact]
-    public void Build_IncludesRoleTarget_AndTranscript()
+    public void Build_IncludesRole_AndTranscript_ExcludesTargetText()
     {
         var prompt = SpeechPromptBuilder.Build(Request());
 
         Assert.Contains("参考音频中的音色", prompt);
         Assert.Contains("参考音频的内容是：「参考内容」", prompt);
-        Assert.Contains("待朗读的文本：「目标文本」", prompt);
+        Assert.DoesNotContain("目标文本", prompt);
+        Assert.DoesNotContain("待朗读的文本", prompt);
     }
 
     [Fact]
@@ -30,7 +31,6 @@ public class SpeechPromptBuilderTests
         var prompt = SpeechPromptBuilder.Build(Request(transcript: null));
 
         Assert.DoesNotContain("参考音频的内容是", prompt);
-        Assert.Contains("待朗读的文本：「目标文本」", prompt);
     }
 
     [Fact]
