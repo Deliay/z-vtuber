@@ -8,7 +8,6 @@ using Z.Vtuber.Training.Ai.Prompts;
 using Z.Vtuber.Training.Clients;
 using Z.Vtuber.Training.Configuration;
 using Z.Vtuber.Training.Contracts;
-using Z.Vtuber.Training.Vectors;
 
 namespace Z.Vtuber.Training.Synthesis;
 
@@ -19,16 +18,21 @@ public sealed record SynthesizeResult(
 /// <summary>数据集内无任何可用音色参考（无带文本的条目）→ 映射 409 <c>no speaker reference</c>。</summary>
 public sealed class NoSpeakerReferenceException() : Exception("no speaker reference");
 
+/// <summary>语音合成模型（已按功能点 <c>speech-synthesize</c> 解析并完成工厂派发）。</summary>
+public sealed record SpeechSynthesisModel(
+    ISpeechModelClient Client, TrainingProviderRecord Provider, TrainingModelRecord Model);
+
 /// <summary>
 /// 音频生成编排：音色参考优先「断句 + 拼音相似度多命中 + 多音频拼接」——输入文本按 <c>[，。,.\s]</c> 断句后，
 /// 每条短句与数据集候选短句（<c>training_dataset_item_segments</c>）按音节级归一化编辑距离取最相似 1 条，
 /// 命中按数据 id 去重（输入句序优先、同分 itemId/SegmentIndex 升序）后按条数上限（<see cref="SynthesizeOptions.MergedReferenceLimit"/>）
 /// 与总时长上限（<see cref="SynthesizeOptions.MergedReferenceMaxTotalDurationMs"/>，与 recording 侧同口径）截断，
 /// 再经 recording 合并为拼接音源；无候选短句时回退既有字符相似单条路径。
+/// 参考产物增补转写（参与条目 <c>Text</c> 按序「，」拼接，全空为 null）。
 /// 情绪参考按 <see cref="EmotionMode"/> 取值——<see cref="EmotionMode.None"/>（默认）不传、
-/// <see cref="EmotionMode.Llm"/> 用可用模型生成情感向量后经 Milvus 检索 top-1、
-/// <see cref="EmotionMode.Dataset"/> 沿音色命中条目取首个带 <c>Extensions.emotion</c> 者为参考（best-effort → 中性），
-/// 调上游 TTS 返回 WAV。日志不打文本/音频内容。
+/// <see cref="EmotionMode.Llm"/> 用可用模型生成情感向量后经 <see cref="EmotionMatcher"/> 内存 L2 top-1 匹配、
+/// <see cref="EmotionMode.Dataset"/> 沿音色命中条目取首个带 <c>Extensions.emotion</c> 者（best-effort → 中性），
+/// 情绪转自然语言指令经 <see cref="SpeechPromptBuilder"/> 注入，调语音大模型返回 WAV。日志不打文本/音频内容。
 /// </summary>
 public sealed class SynthesizeService(
     TrainingDatasetItemRepository items,
@@ -36,31 +40,36 @@ public sealed class SynthesizeService(
     TrainingProviderRepository providers,
     IChatModelClientFactory aiFactory,
     IRecordingAudioClient audio,
-    IVectorStore store,
-    ITtsClient tts,
     SynthesizeOptions synthesizeOptions,
     AiOptions aiOptions,
     ILogger<SynthesizeService> logger)
 {
     public async Task<SynthesizeResult> SynthesizeAsync(
         ObjectId datasetId, string text, string lang, TrainingModelRecord? emotionModel,
-        EmotionMode emotionMode = EmotionMode.None, CancellationToken ct = default)
+        SpeechSynthesisModel speech, EmotionMode emotionMode = EmotionMode.None, CancellationToken ct = default)
     {
         var stopwatch = Stopwatch.StartNew();
 
-        // 1) 音色参考：拼音短句多命中拼接优先；无候选回退字符相似单条。
+        // 1) 音色参考：拼音短句多命中拼接优先；无候选回退字符相似单条（含参考转写）。
         var speaker = await ResolveSpeakerAsync(datasetId, text, emotionMode, ct);
 
-        // 2) 情绪参考：llm 用大模型生成查询向量后经 Milvus 检索；dataset 沿音色命中条目取自身 Extensions.emotion。
-        var emotion = emotionMode == EmotionMode.None
-            ? (EmotionMatch?)null
-            : emotionMode == EmotionMode.Dataset
-                ? speaker.DatasetEmotion ?? await TryCaptureDatasetEmotionAsync(speaker.Items, ct)
-                : await TryBuildEmotionReferenceAsync(datasetId, text, emotionModel, ct);
+        // 2) 情绪参考：llm 用大模型生成查询向量后内存 L2 top-1；dataset 沿音色命中条目取自身 Extensions.emotion。
+        var emotion = emotionMode switch
+        {
+            EmotionMode.None => (EmotionReference?)null,
+            EmotionMode.Dataset => speaker.DatasetEmotion,
+            _ => await TryBuildEmotionReferenceAsync(datasetId, text, emotionModel, ct),
+        };
 
-        // 3) 上游合成。
-        var request = new TtsSynthesizeRequest(text, lang, speaker.Reference, emotion?.Reference);
-        var bytes = await tts.SynthesizeAsync(request, ct);
+        // 3) 上游语音大模型合成（情绪转自然语言指令注入）。
+        var request = new SpeechSynthesizeRequest(
+            speaker.Reference.Bytes,
+            speaker.Reference.ContentType,
+            speaker.Transcript,
+            text,
+            lang,
+            SpeechPromptBuilder.BuildEmotionInstruction(emotion?.Emotion));
+        var bytes = await speech.Client.SynthesizeSpeechAsync(speech.Provider, speech.Model, request, ct);
 
         var speakerKeys = speaker.AudioKeys;
         var emoKey = emotion?.AudioKey;
@@ -76,7 +85,7 @@ public sealed class SynthesizeService(
     private async Task<SpeakerOutcome> ResolveSpeakerAsync(
         ObjectId datasetId, string text, EmotionMode emotionMode, CancellationToken ct)
     {
-        var pinyin = await TryResolvePinyinSpeakerAsync(datasetId, text, ct);
+        var pinyin = await TryResolvePinyinSpeakerAsync(datasetId, text, emotionMode, ct);
         return pinyin ?? await ResolveCharSpeakerAsync(datasetId, text, emotionMode, ct);
     }
 
@@ -87,7 +96,7 @@ public sealed class SynthesizeService(
     /// → 合并拼接。无候选/无命中返回 null（回退字符相似）。
     /// </summary>
     private async Task<SpeakerOutcome?> TryResolvePinyinSpeakerAsync(
-        ObjectId datasetId, string text, CancellationToken ct)
+        ObjectId datasetId, string text, EmotionMode emotionMode, CancellationToken ct)
     {
         var sentences = TextSplitter.Split(text);
         if (sentences.Count == 0)
@@ -203,26 +212,29 @@ public sealed class SynthesizeService(
             return null;
         }
 
-        return await MergeOrFallbackAsync(usable, requests, ct);
+        return await MergeOrFallbackAsync(usable, requests, emotionMode, ct);
     }
 
     /// <summary>
-    /// 合并拼接：<see cref="IRecordingAudioClient.MergeClipsAsync"/> 成功 → 拼接音源（多 audioKey）；
-    /// 合并整体失败逐条单片段兜底（按序取首个可用）；全失败抛 <see cref="AudioUnavailableException"/>（502）。
+    /// 合并拼接：<see cref="IRecordingAudioClient.MergeClipsAsync"/> 成功 → 拼接音源（多 audioKey，转写为参与条目按序拼接）；
+    /// 合并整体失败逐条单片段兜底（按序取首个可用，转写取该条目）；全失败抛 <see cref="AudioUnavailableException"/>（502）。
     /// </summary>
     private async Task<SpeakerOutcome> MergeOrFallbackAsync(
         IReadOnlyList<TrainingDatasetItemRecord> usable,
         IReadOnlyList<AudioClipRequest> requests,
+        EmotionMode emotionMode,
         CancellationToken ct)
     {
+        var datasetEmotion = emotionMode == EmotionMode.Dataset ? FindFirstAnnotated(usable) : null;
+
         try
         {
             var merged = await audio.MergeClipsAsync(requests, ct);
             return new SpeakerOutcome(
-                new TtsSpeakerReference(merged.Bytes, merged.ContentType),
+                new ReferenceAudio(merged.Bytes, merged.ContentType),
                 usable.Select(i => i.AudioKey).ToList(),
-                usable,
-                null);
+                JoinTranscript(usable),
+                datasetEmotion);
         }
         catch (AudioUnavailableException ex)
         {
@@ -254,10 +266,10 @@ public sealed class SynthesizeService(
             }
 
             return new SpeakerOutcome(
-                new TtsSpeakerReference(clip.Bytes, clip.ContentType),
+                new ReferenceAudio(clip.Bytes, clip.ContentType),
                 [item.AudioKey],
-                [item],
-                null);
+                SingleTranscript(item),
+                datasetEmotion);
         }
 
         throw new AudioUnavailableException("no speaker reference audio available");
@@ -266,7 +278,7 @@ public sealed class SynthesizeService(
     /// <summary>
     /// 回退路径（无候选短句）：读数据集全部带文本条目，按输入文本与条目文本的字符相似度降序、
     /// 同分 itemId 升序稳定排序取前 <see cref="SynthesizeOptions.ReferenceCandidateLimit"/> 条逐候选兜底；
-    /// dataset 模式同轮捕获首个带情绪标注的候选。
+    /// dataset 模式在候选顺序中取首个带情绪标注者为情绪参考。
     /// </summary>
     private async Task<SpeakerOutcome> ResolveCharSpeakerAsync(
         ObjectId datasetId, string text, EmotionMode emotionMode, CancellationToken ct)
@@ -277,61 +289,18 @@ public sealed class SynthesizeService(
             throw new NoSpeakerReferenceException();
         }
 
-        var captureDatasetEmotion = emotionMode == EmotionMode.Dataset;
-        var (speaker, datasetEmotion) = await ScanCandidatesAsync(candidates, captureDatasetEmotion, ct);
+        var speaker = await FirstAvailableClipAsync(candidates, ct);
         if (speaker is null)
         {
             throw new AudioUnavailableException("no speaker reference audio available");
         }
 
+        var datasetEmotion = emotionMode == EmotionMode.Dataset ? FindFirstAnnotated(candidates) : null;
         return new SpeakerOutcome(
-            new TtsSpeakerReference(speaker.Value.Clip.Bytes, speaker.Value.Clip.ContentType),
+            new ReferenceAudio(speaker.Value.Clip.Bytes, speaker.Value.Clip.ContentType),
             [speaker.Value.Item.AudioKey],
-            [],
-            BuildDatasetEmotionReference(datasetEmotion));
-    }
-
-    /// <summary>
-    /// dataset 模式（拼音路径）：沿音色命中条目顺序取首个带 <c>Extensions.emotion</c> 者为情绪参考；
-    /// 取音频失败/全无标注 → null（降级中性，best-effort）。
-    /// </summary>
-    private async Task<EmotionMatch?> TryCaptureDatasetEmotionAsync(
-        IReadOnlyList<TrainingDatasetItemRecord> candidates, CancellationToken ct)
-    {
-        foreach (var item in candidates)
-        {
-            var emotion = ReadEmotion(item);
-            if (emotion is null)
-            {
-                continue;
-            }
-
-            AudioClip clip;
-            try
-            {
-                clip = await audio.GetClipAsync(item.AudioUri, item.StartMs, item.EndMs, ct);
-            }
-            catch (ArgumentException ex)
-            {
-                logger.LogWarning(ex, "training synthesize: skip emotion candidate with invalid audio itemId={ItemId}", item.Id);
-                continue;
-            }
-            catch (AudioUnavailableException ex)
-            {
-                logger.LogWarning(ex, "training synthesize: skip emotion candidate with unavailable audio itemId={ItemId}", item.Id);
-                continue;
-            }
-            catch (AudioTooLargeException ex)
-            {
-                logger.LogWarning(ex, "training synthesize: skip oversized emotion candidate audio itemId={ItemId}", item.Id);
-                continue;
-            }
-
-            return new EmotionMatch(
-                new TtsEmotionReference(clip.Bytes, clip.ContentType, emotion), item.AudioKey);
-        }
-
-        return null;
+            SingleTranscript(speaker.Value.Item),
+            datasetEmotion);
     }
 
     /// <summary>
@@ -352,104 +321,10 @@ public sealed class SynthesizeService(
             .ToList();
     }
 
-    /// <summary>
-    /// dataset 模式：把命中候选（音频可取且带 <c>Extensions.emotion</c>）的标注组装为情绪参考；
-    /// 无候选或标注缺失 → null（降级中性）。
-    /// </summary>
-    private static EmotionMatch? BuildDatasetEmotionReference(ReferenceMatch? source)
+    /// <summary>按候选顺序取首个音频可取的条目；全失败 → null。</summary>
+    private async Task<ReferenceMatch?> FirstAvailableClipAsync(
+        IReadOnlyList<TrainingDatasetItemRecord> candidates, CancellationToken ct)
     {
-        if (source is not { } match)
-        {
-            return null;
-        }
-
-        var emotion = ReadEmotion(match.Item);
-        if (emotion is null)
-        {
-            return null;
-        }
-
-        return new EmotionMatch(
-            new TtsEmotionReference(match.Clip.Bytes, match.Clip.ContentType, emotion),
-            match.Item.AudioKey);
-    }
-
-    private async Task<EmotionMatch?> TryBuildEmotionReferenceAsync(
-        ObjectId datasetId, string text, TrainingModelRecord? emotionModel, CancellationToken ct)
-    {
-        if (emotionModel is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            var provider = await providers.GetByIdAsync(emotionModel.ProviderId, ct);
-            if (provider is null)
-            {
-                logger.LogWarning(
-                    "training synthesize: emotion provider not found providerId={ProviderId}",
-                    emotionModel.ProviderId);
-                return null;
-            }
-
-            var prompt = EmotionPromptBuilder.Build(text);
-            var raw = await aiFactory.Create(provider.Type).CompleteJsonAsync(provider, emotionModel, prompt, ct);
-            var generated = ModelJsonParser.ParseEmotion(raw, logger);
-            var vector = EmotionVector.FromEmotion(generated);
-
-            var candidates = await store.SearchEmotionAsync(
-                datasetId, vector, synthesizeOptions.ReferenceCandidateLimit, ct);
-
-            // 情感候选（Milvus 输出）回到 Mongo 事实源取条目，再逐候选兜底音频。
-            var records = new List<TrainingDatasetItemRecord>(candidates.Count);
-            foreach (var candidate in candidates)
-            {
-                var item = await items.GetByIdAsync(datasetId, candidate.ItemId, ct);
-                if (item is not null)
-                {
-                    records.Add(item);
-                }
-            }
-
-            var (match, _) = await ScanCandidatesAsync(records, captureDatasetEmotion: false, ct);
-            if (match is null)
-            {
-                return null;
-            }
-
-            var matchedEmotion = ReadEmotion(match.Value.Item);
-            if (matchedEmotion is null)
-            {
-                return null;
-            }
-
-            var reference = new TtsEmotionReference(
-                match.Value.Clip.Bytes, match.Value.Clip.ContentType, matchedEmotion);
-            return new EmotionMatch(reference, match.Value.Item.AudioKey);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // 客户端断连 / 请求取消：不得降级为中性继续调 TTS，须原样上抛交由框架处理。
-            throw;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "training synthesize: emotion reference unavailable; degrade to neutral");
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 单轮遍历候选（已按匹配度有序）：首个音频可取者为 speaker；<paramref name="captureDatasetEmotion"/> 为真时
-    /// 同轮记录首个「音频可取且带情绪标注」的候选为 dataset 模式情绪来源。两者就绪（或仅需 speaker）即提前退出。
-    /// </summary>
-    private async Task<(ReferenceMatch? Speaker, ReferenceMatch? DatasetEmotion)> ScanCandidatesAsync(
-        IReadOnlyList<TrainingDatasetItemRecord> candidates, bool captureDatasetEmotion, CancellationToken ct)
-    {
-        ReferenceMatch? speaker = null;
-        ReferenceMatch? datasetEmotion = null;
-
         foreach (var item in candidates)
         {
             AudioClip clip;
@@ -473,22 +348,103 @@ public sealed class SynthesizeService(
                 continue;
             }
 
-            speaker ??= new ReferenceMatch(item, clip);
+            return new ReferenceMatch(item, clip);
+        }
 
-            // dataset 模式：命中条目自身无情绪标注时继续沿候选向下找。
-            if (captureDatasetEmotion && datasetEmotion is null && ReadEmotion(item) is not null)
+        return null;
+    }
+
+    /// <summary>
+    /// llm 模式：既有链路生成八维情感向量（<see cref="EmotionPromptBuilder"/> + <see cref="IChatModelClient"/>）→
+    /// 改由 <see cref="EmotionMatcher"/> 对该数据集已标注情绪条目做内存 L2 top-1（候选从 Mongo 直读，
+    /// 无音频取数要求）；无候选/生成失败 → null（降级中性）。
+    /// </summary>
+    private async Task<EmotionReference?> TryBuildEmotionReferenceAsync(
+        ObjectId datasetId, string text, TrainingModelRecord? emotionModel, CancellationToken ct)
+    {
+        if (emotionModel is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var provider = await providers.GetByIdAsync(emotionModel.ProviderId, ct);
+            if (provider is null)
             {
-                datasetEmotion = new ReferenceMatch(item, clip);
+                logger.LogWarning(
+                    "training synthesize: emotion provider not found providerId={ProviderId}",
+                    emotionModel.ProviderId);
+                return null;
             }
 
-            if (speaker is not null && (!captureDatasetEmotion || datasetEmotion is not null))
+            var prompt = EmotionPromptBuilder.Build(text);
+            var raw = await aiFactory.Create(provider.Type).CompleteJsonAsync(provider, emotionModel, prompt, ct);
+            var generated = ModelJsonParser.ParseEmotion(raw, logger);
+            var vector = EmotionVector.FromEmotion(generated);
+
+            // 候选 = 该数据集带 Extensions.emotion 的条目（内存向量化），直读 Mongo 事实源。
+            var records = await items.ListAsync(datasetId, ct: ct);
+            var annotated = new List<(TrainingDatasetItemRecord Item, EmotionResult Emotion)>();
+            foreach (var record in records)
             {
-                break;
+                if (ReadEmotion(record) is { } emotion)
+                {
+                    annotated.Add((record, emotion));
+                }
+            }
+
+            var candidates = annotated
+                .Select(x => new EmotionCandidate(x.Item.Id, x.Item.AudioKey, EmotionVector.FromEmotion(x.Emotion)))
+                .ToList();
+            var match = EmotionMatcher.SelectTop1(candidates, vector);
+            if (match is null)
+            {
+                return null;
+            }
+
+            var hit = annotated.First(x => x.Item.Id == match.ItemId);
+            return new EmotionReference(hit.Emotion, hit.Item.AudioKey);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 客户端断连 / 请求取消：不得降级为中性继续调模型，须原样上抛交由框架处理。
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "training synthesize: emotion reference unavailable; degrade to neutral");
+            return null;
+        }
+    }
+
+    /// <summary>候选顺序中首个带 <c>Extensions.emotion</c> 的条目（不要求音频可取）；无 → null。</summary>
+    private static EmotionReference? FindFirstAnnotated(IEnumerable<TrainingDatasetItemRecord> candidates)
+    {
+        foreach (var item in candidates)
+        {
+            if (ReadEmotion(item) is { } emotion)
+            {
+                return new EmotionReference(emotion, item.AudioKey);
             }
         }
 
-        return (speaker, datasetEmotion);
+        return null;
     }
+
+    /// <summary>参与合并的条目 <c>Text</c> 按序以「，」拼接（空文本跳过；全空 → null）。</summary>
+    private static string? JoinTranscript(IEnumerable<TrainingDatasetItemRecord> items)
+    {
+        var parts = items
+            .Select(i => i.Text?.Trim())
+            .Where(t => !string.IsNullOrEmpty(t))
+            .ToList();
+        return parts.Count == 0 ? null : string.Join("，", parts);
+    }
+
+    /// <summary>单条回退路径：取该条目 <c>Text</c>（空 → null）。</summary>
+    private static string? SingleTranscript(TrainingDatasetItemRecord item) =>
+        string.IsNullOrWhiteSpace(item.Text) ? null : item.Text.Trim();
 
     internal static bool IsBetterTieBreak(
         TrainingDatasetItemSegmentRecord candidate, TrainingDatasetItemSegmentRecord current) =>
@@ -502,14 +458,18 @@ public sealed class SynthesizeService(
             ? TrainingMapping.FromEmotionDocument(raw.AsBsonDocument)
             : null;
 
-    /// <summary>音色参考解析结果：拼接/单条音源、按序 audioKey、数据集情绪回退条目、同轮已捕获的 dataset 情绪。</summary>
+    /// <summary>参考音源：字节 + Content-Type。</summary>
+    private sealed record ReferenceAudio(byte[] Bytes, string ContentType);
+
+    /// <summary>音色参考解析结果：拼接/单条音源、按序 audioKey、参考转写（可空）、dataset 模式情绪参考。</summary>
     private sealed record SpeakerOutcome(
-        TtsSpeakerReference Reference,
+        ReferenceAudio Reference,
         IReadOnlyList<string> AudioKeys,
-        IReadOnlyList<TrainingDatasetItemRecord> Items,
-        EmotionMatch? DatasetEmotion);
+        string? Transcript,
+        EmotionReference? DatasetEmotion);
+
+    /// <summary>情绪参考：命中条目的情绪标注 + audioKey（带情绪标注的命中条目，不要求音频可取）。</summary>
+    private sealed record EmotionReference(EmotionResult Emotion, string AudioKey);
 
     private readonly record struct ReferenceMatch(TrainingDatasetItemRecord Item, AudioClip Clip);
-
-    private readonly record struct EmotionMatch(TtsEmotionReference Reference, string AudioKey);
 }

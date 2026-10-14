@@ -16,8 +16,8 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
 
     /// <summary>
     /// 代理上游 training 的默认请求超时（秒）。必须**高于** training 各阶段的上游预算
-    /// （<c>Tts</c>/<c>Ai</c>/<c>Embedding</c> 的 <c>RequestTimeoutSeconds</c> 均为 120s），
-    /// 否则 `synthesize`（慢 TTS）/`vectors/rebuild`（逐条串行 embedding）等在 training 侧正常完成时，
+    /// （<c>Ai</c>/<c>Image</c> 的 <c>RequestTimeoutSeconds</c> 均为 120s），
+    /// 否则 `synthesize`（慢语音大模型推理）等在 training 侧正常完成时，
     /// 代理会先超时并把成功路径误报为 502 <c>training service unavailable</c>。
     /// 可由配置 <c>TrainingService:RequestTimeoutSeconds</c> 覆盖；口径见 <c>servers/api/AGENTS.md</c>。
     /// </summary>
@@ -136,10 +136,6 @@ public class TrainingProxyController(IHttpClientFactory httpClientFactory) : Con
     public Task<IActionResult> SynthesizeDataset(
         string datasetId, [FromQuery] string? emotionMode, CancellationToken ct) =>
         ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/synthesize", ct);
-
-    [HttpPost("training/datasets/{datasetId}/vectors/rebuild")]
-    public Task<IActionResult> RebuildDatasetVectors(string datasetId, CancellationToken ct) =>
-        ForwardAsync(HttpMethod.Post, $"api/training/datasets/{Uri.EscapeDataString(datasetId)}/vectors/rebuild", ct);
 
     [HttpPost("training/datasets/{datasetId}/segments/rebuild")]
     public Task<IActionResult> RebuildDatasetSegments(string datasetId, CancellationToken ct) =>
