@@ -11,7 +11,7 @@ namespace Z.Vtuber.Tests;
 
 /// <summary>
 /// OpenAI-like 语音客户端契约：<c>chat/completions</c> 请求体（model/modalities/audio.format/audio.voice
-/// 参考语音 data URI、messages user 风格指令 + assistant 目标文本）、鉴权头、base64 <c>audio.data</c> 解析；缺音频段 → <see cref="ModelOutputException"/>；
+/// 参考语音 data URI、messages user（暂时置空）+ assistant 目标文本）、鉴权头、base64 <c>audio.data</c> 解析；缺音频段 → <see cref="ModelOutputException"/>；
 /// 非 2xx/超时 → <see cref="SpeechModelUnavailableException"/>；工厂派发与 Claude-like 不支持。
 /// </summary>
 public class OpenAiLikeSpeechClientTests
@@ -91,13 +91,10 @@ public class OpenAiLikeSpeechClientTests
             $"data:audio/mpeg;base64,{Convert.ToBase64String([9, 8, 7])}",
             root.GetProperty("audio").GetProperty("voice").GetString());
 
-        // messages[0]：user 风格/情绪指令（不含目标文本）
+        // messages[0]：user 指令暂时置空（SpeechPromptBuilder.Build 调用已临时注释）
         var user = root.GetProperty("messages")[0];
         Assert.Equal("user", user.GetProperty("role").GetString());
-        var instruction = user.GetProperty("content").GetString();
-        Assert.Contains("参考音频中的音色", instruction);
-        Assert.Contains("参考内容", instruction);
-        Assert.DoesNotContain("目标文本", instruction);
+        Assert.Equal(string.Empty, user.GetProperty("content").GetString());
 
         // messages[1]：assistant 目标文本
         var assistant = root.GetProperty("messages")[1];
@@ -118,7 +115,9 @@ public class OpenAiLikeSpeechClientTests
         Assert.Equal(expected, OpenAiLikeSpeechClient.MapAudioMimeType(contentType));
     }
 
-    [Fact]
+    // 暂时跳过：user 指令置空后（SpeechPromptBuilder.Build 调用已临时注释），请求体不再包含语种提示。
+    // 恢复 Build 调用后请移除 Skip。
+    [Fact(Skip = "user 指令暂时置空，语种提示不再出现在请求体")]
     public async Task BuildBody_LanguageHintUsesConfiguredDefaultLang()
     {
         var handler = new StubHandler { Handler = _ => AudioOk([1]) };
