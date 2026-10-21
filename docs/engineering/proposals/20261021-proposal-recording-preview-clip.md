@@ -1,9 +1,12 @@
 # 后台录播预览与切片下载 - 技术提案
 
-- 日期：2026-10-21
+- 日期：2026-10-21（v1.1 返工修订：定位播放改为 mpegts.js + 关键帧预测方案）
 - 状态：待评审
 - feat-branch：`feat/recording-preview-clip`
 - 关联文档：[PRD](../product/draft/20261021-recording-preview-clip-prd.md)
+- 参考实现：[Deliay/sumire](https://github.com/Deliay/sumire/) —— 同一录播上游的成熟播放实现（`apps/bookstore/features/recordings/`、`patches/mpegts.js@1.8.2.patch`）
+
+> v1.1 修订说明：原方案以「服务端 ffmpeg 转码/remux 出 fMP4 窗口流 + 前端换源续播」实现预览与跳转，被评审打回。现改为 **前端 mpegts.js 直读 FLV + 关键帧预测定位播放**（对齐 sumire 的 `player.ts`/`seek.ts`/mpegts.js 补丁方案）：预览零服务端计算、原始画质、进度条任意拖动定位；服务端仅保留切片下载端点。
 
 ## 1. 概述
 
@@ -11,24 +14,31 @@
 
 录播消费链路现状（自外向内）：
 
-- **文件形态**：`servers/recording` 录制产出 FLV 封装双文件——RAW（`-map 0 -c copy -f flv`，原流 H.264+AAC）与 AV1（`av1_nvenc` 二压 + 音频 copy），文件名模板 `[{encode}][{roomId}][{anchor}] {date}-{title}.flv`（`FfmpegProcessBuilder`/`RecordingFileName`）。**浏览器 `<video>` 无法直接播放 FLV**，无论 RAW 还是 AV1；
-- **下载能力**：`GET /api/{roomId}/recordings/{fileName}` → `PhysicalFile(..., enableRangeProcessing: true)`（Range 分段下载已由「recording-download-range」打通 api 代理透传），只能整文件消费；
-- **区间抽取能力（仅音频）**：`GET /api/{roomId}/recordings/{fileName}/audio?startMs&endMs`（`AudioClipExtractor`：`-ss`/`-t` 输入 seek + `-vn` + `pipe:1` 直写输出流，mp3/降级 wav），被转写页 `SegmentAudioPlayer` 与训练波形复用；另有 `POST /api/recordings/audio/merge` 多段合并。**视频侧无任何区间抽取能力**；
-- **后台入口**：`apps/web` 录制状态页 `RecordingStatusPage` 历史录播列表只有「文件名下载」（`recordingDownloadUrl`），无预览、无截取；
-- **代理层**：`servers/api` `BilibiliLiveRecordingController`（`DownloadRecording`/`ProxyRecordingAudio`）统一对外 `/api/b/live/**`，web 只认 `/api`。
+- **文件形态**：`servers/recording` 录制产出 FLV 封装双文件——RAW（`-map 0 -c copy -f flv`，原流 H.264+AAC，文件名 `[RAW]…`）与 AV1（`av1_nvenc` 二压 + 音频 copy，文件名 `[AV1]…`），`FfmpegProcessBuilder`/`RecordingFileName`。浏览器 `<video>` 无法直接播放 FLV；
+- **下载能力**：`GET /api/{roomId}/recordings/{fileName}` → `PhysicalFile(..., enableRangeProcessing: true)`，且 **Range 透传已在 api 代理层打通**（20260914「recording-download-range」：206/416、`Accept-Ranges`/`Content-Range`/`Content-Length` 全透传）——即「按字节区间读录播文件」的能力已具备且被前端可达（`/api/b/live/{roomId}/recordings/{fileName}`）；
+- **区间抽取能力（仅音频）**：`GET /api/{roomId}/recordings/{fileName}/audio?startMs&endMs`（`AudioClipExtractor`）等，视频侧无任何区间抽取能力；
+- **后台入口**：`apps/web` 录制状态页 `RecordingStatusPage` 历史录播列表只有下载链接（`recordingDownloadUrl`），无预览、无截取。
 
-结论：本需求是「**在既有 ffmpeg 区间抽取模式上补齐视频侧**（预览播放流 + 切片下载产物）+ 后台预览/选段交互」。服务端已有全部基础设施（文件解析防护、录制中判定、ffmpeg 进程封装、流式管道、api 流式代理），无新增服务、无存储结构变更。
+**参考实现（打回意见指定）**：[Deliay/sumire](https://github.com/Deliay/sumire/) 的录播页消费的就是本服务同一上游（`/api/b/live/:roomId/recordings/:fileName`），其在线播放方案已稳定运行，要点如下（细节见 5.2）：
+
+- **mpegts.js（MSE）直读 FLV**：`features/recordings/player.ts` 单例播放器，HTTP-FLV 流式加载，零服务端转码；
+- **FLV 无关键帧索引导致未缓冲 seek 死锁**：上游 FLV `onMetaData` 含 `duration/width/height` 但**不含 `keyframes` 索引** → mpegts `MediaInfo.isSeekable() === false` → `TransmuxingController.seek()` 首行 return（静默 no-op）→ 50ms 未缓冲 seek 校正无限重试、整体冻结；
+- **补丁桥接绕过 `isSeekable()` 门**：`patches/mpegts.js@1.8.2.patch` 在播放器实例上暴露 `seekToByteOffset(fileposition, milliseconds)`（从指定字节偏移续播）与 `setBufferLimits(limits)`，并内置 lazyLoad 暂停死锁兜底；
+- **关键帧预测（近似 seek）**：`features/recordings/seek.ts`——码率线性估算字节偏移 → Range 窗口探测（206 校验）→ FLV tag 扫描三重校验、**优先对齐视频关键帧 tag**（`tagType=9` 且 `frameType=1`）→ `seekToByteOffset` 续播。
+
+结论：本需求 =「**预览与定位播放采用 sumire 同构方案（mpegts.js + 补丁桥接 + 客户端关键帧预测）** + 切片下载端点（服务端 ffmpeg `-c copy`）+ 后台预览/选段交互」。服务端零转码、零新预览端点；Range 能力与文件解析防护全部复用既有设施。
 
 ### 1.2 目标
 
-1. recording 服务提供录播**视频窗口**流式端点（在线预览）与**切片下载**端点（起止点 → 独立片段文件）；
-2. api 服务镜像代理两端点，web 录制状态页提供「预览 → 选段 → 下载片段」闭环；
-3. 既有下载/Range/音频试听/录制流程零回归；两份契约同步、测试补齐。
+1. web 录制状态页预览弹窗：mpegts.js 直读录播 FLV 在线播放（画面+声音、原始画质、秒开）；
+2. 进度条/时间输入定位到任意位置（含未加载位置）：关键帧预测 + 字节偏移续播，约 1 秒起播、不卡死；
+3. 选定起止点下载片段：recording 服务 `clip` 端点（ffmpeg `-c copy`，产物 fMP4），api 代理镜像；
+4. 既有下载/Range/音频试听/录制流程零回归；两份契约同步、测试补齐。
 
 ### 1.3 范围
 
-- **内**：`contracts/recording.openapi.yaml`、`contracts/bilibili-crawler.openapi.yaml`；`servers/recording` 视频窗口抽取（预览/切片两端点 + 编码适配）；`servers/api` 两代理路由；`apps/web` 录制状态页预览弹窗（播放 + 选段 + 下载片段）；测试；
-- **外**：录制流程与文件产出、存储/归档结构、既有下载与音频试听/合并端点、转写页与训练页复用（后续可复用本抽取器）、切片持久化与缓存（不落盘，见 6.1-5）、逐帧精确重编码剪切（见 6.1-4）、批量切片任务、多区间合并导出。
+- **内**：`apps/web`（`mpegts.js` 依赖 + 补丁桥接模块 + 播放器封装 + 关键帧预测模块 + 预览弹窗）；`servers/recording` 切片下载端点；`contracts/recording.openapi.yaml`、`contracts/bilibili-crawler.openapi.yaml`（仅 clip）；测试；
+- **外**：服务端转码/remux（明确放弃，见 6.1-1）；FLV 关键帧索引注入（录制端改造，列为后续建议）；逐帧精确剪切；AV1 在线预览（见 6.1-7）；切片持久化/任务队列；转写页/训练页复用；弹幕回放等 sumire 其余能力。
 
 ## 2. 技术架构
 
@@ -36,17 +46,16 @@
 
 ```mermaid
 graph LR
-    subgraph 现状
-        U1[用户] -->|只能下载整文件| W1[web 录制状态页<br/>仅下载链接]
-        W1 --> A1[api 代理]
-        A1 --> R1[recording<br/>PhysicalFile 整文件]
-        U1 -.->|想看内容/想截一段| X1[❌ 必须先下载数 GB<br/>再本地播放/剪切]
+    subgraph v1.0 被打回方案
+        U1[浏览器] -->|preview 窗口流| A1[api 代理]
+        A1 --> R1[recording<br/>ffmpeg remux/转码 fMP4]
+        U1 -.->|跳转 = 换源重开窗口<br/>转码 CPU 高 / AV1 需转码| X1[❌ 定位体验差、服务端成本高]
     end
-    subgraph 目标
-        U2[用户] -->|预览 / 选段 / 下载片段| W2[web 录制状态页<br/>预览弹窗 + 区间选择]
-        W2 --> A2[api 代理<br/>preview / clip 透传]
-        A2 --> R2[recording<br/>视频窗口抽取<br/>preview 流 / clip 片段]
-        R2 -->|video/mp4 流式| W2
+    subgraph v1.1 目标方案
+        U2[浏览器<br/>mpegts.js + 补丁桥接] -->|HTTP-FLV 流式 + Range 字节区间| A2[api 代理<br/>Range 透传（既有）]
+        A2 --> R2[recording 下载端点<br/>PhysicalFile（既有）]
+        U2 -->|未缓冲 seek| S2[seek.ts 关键帧预测<br/>估算 → Range 窗口 → 关键帧 tag 对齐]
+        U2 -->|下载片段| C2[api 代理 clip<br/>→ recording ffmpeg -c copy]
     end
 ```
 
@@ -54,92 +63,80 @@ graph LR
 
 | 项 | 归属 | 说明 |
 |---|---|---|
-| 视频窗口抽取（ffmpeg） | `servers/recording` | 新增 `Video/`（抽取器 + 编码规划 + ffprobe 探测），沿用 `IRecordingProcessFactory` 进程封装 |
-| 文件解析防护 / 录制中判定 | `servers/recording` | 复用 `RecordingController.ResolveRecordingFileAsync`（零改动） |
-| 流式代理 | `servers/api` | `BilibiliLiveRecordingController` 新增两代理动作（照 `ProxyRecordingAudio` 模式） |
-| 预览播放与选段交互 | `apps/web` | `RecordingPreviewPlayer`（Modal + `<video>` + 区间选择），复用 `formatPosition`/`parsePosition` |
-| 契约 | `contracts/` | 两份 OpenAPI 先行 |
-| 测试 | `tests/Z.Vtuber.Tests` | 纯函数单测 + 真 ffmpeg 接口测试（`RecordingAudioClipTests` 模式）+ api 代理测试 |
+| FLV 在线播放 | `apps/web` | `mpegts.js@^1.8.2`（MSE，新增 npm 依赖，仓库第二个新增依赖） |
+| 字节偏移续播/缓冲上限 | `apps/web` | vendored 桥接模块（移植 sumire `mpegts.js@1.8.2.patch`：`seekToByteOffset`/`setBufferLimits` + lazyLoad guard） |
+| 关键帧预测（近似 seek） | `apps/web` | `recordingSeek.ts` 纯函数（估算/扫描/编排，last-wins） |
+| 切片下载 | `servers/recording` | `clip` 端点：ffmpeg `-c copy` 窗口切片 → fMP4 attachment |
+| 流式代理 | `servers/api` | 仅新增 `clip` 代理；预览复用既有下载端点（Range 已透传） |
+| 契约 | `contracts/` | 两份 OpenAPI，仅补 clip |
+| 测试 | `apps/web` Vitest / `tests/Z.Vtuber.Tests` | 纯函数 + 组件 + clip 接口测试 |
 
-### 2.3 关键设计：一个抽取器，两种出口
+### 2.3 关键设计：mpegts.js 直读 FLV + 关键帧预测定位
 
-预览与切片本质同一件事——「从录播文件取 `[startMs, endMs]` 视频窗口，流式写出」。差异只在**出口策略**：
+**播放**：`mpegts.createPlayer({ type: 'flv', isLive: false, url }, bufferConfig)` 直接加载下载 URL（`/api/b/live/{roomId}/recordings/{fileName}`），MSE 边收边播；`seekType: 'range'`（本服务与代理仅支持 Range 语义，禁用 `param` 模式）。
 
-| 维度 | 预览（preview） | 切片下载（clip） |
-|---|---|---|
-| 目的 | 一定播得出来（浏览器 `<video>`） | 原汁原味的片段（可归档/二次加工） |
-| 视频编码 | H.264 → `-c copy`；其他（AV1 等）→ `libx264` 转码 | 恒 `-c copy`（保留原始编码，无损） |
-| 音频编码 | AAC → `-c copy`；其他 → `aac` 转码 | 恒 `-c copy` |
-| 封装 | fragmented MP4（`frag_keyframe+empty_moov`） | 同左 |
-| 响应 | `video/mp4`，无 `Content-Disposition`（内联播放） | `video/mp4` + `Content-Disposition: attachment`（下载） |
-| 时长上限 | 无（窗口流，客户端断开即回收） | `Recording:VideoClipMaxDurationMs`（默认 2 小时） |
-
-两者共用同一 ffmpeg 参数纯函数与进程封装，仅编码规划与响应头不同。
+**定位（未缓冲 seek）**——四步关键帧预测（sumire `seek.ts` 同构）：
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant W as web 预览弹窗
-    participant A as api 代理
-    participant R as recording
+    participant U as 用户拖动进度条
+    participant P as RecordingPreviewPlayer
+    participant S as recordingSeek
+    participant A as api 代理（Range 透传）
+    participant PL as mpegts.js（补丁桥接）
 
-    U->>W: 点击「预览」
-    W->>A: GET .../preview?startMs=0
-    A->>R: 代理（ResponseHeadersRead）
-    R->>R: 文件名防护/录制中判定<br/>ffprobe 探测编码 → 规划 copy/转码
-    R-->>W: 200 video/mp4（fMP4 流式）
-    Note over W: &lt;video&gt; 边收边播<br/>拖动超出已缓冲 → 以新 startMs 重开请求
-    U->>W: 播到起点点「设为起点」<br/>播到终点点「设为终点」
-    U->>W: 点击「下载片段」
-    W->>A: GET .../clip?startMs=120000&endMs=360000
-    A->>R: 代理
-    R->>R: 同上解析 + 时长上限校验<br/>ffmpeg -c copy 切窗口
-    R-->>W: 200 video/mp4 + Content-Disposition: attachment
-    W-->>U: 浏览器下载片段文件（生成即传输，不落盘）
+    U->>P: 目标时间 T（未缓冲）
+    P->>S: seekUnbuffered(url, T, duration, fileSize)
+    S->>S: ① estimateByteOffset：fileSize × T/duration<br/>线性估算目标字节偏移 E
+    S->>S: ② computeScanBytes：码率 × 10s<br/>钳 [256KB, 8MB] 扫描窗口
+    S->>A: ③ Range: bytes=E-(E+W-1)
+    alt 非 206（上游不支持 Range）
+        A-->>S: 200 整文件
+        S-->>P: 取消响应体并降级（绝不整文件 buffer）
+    else 206
+        A-->>S: 窗口字节 + Content-Range（校正基准偏移）
+        S->>S: ④ FLV tag 扫描：三重校验<br/>（tagType∈{8,9,18} / dataSize / PrevTagSize）<br/>优先视频关键帧 tag（tagType=9 & frameType=1）
+        S->>PL: seekToByteOffset(fileposition, milliseconds)
+        PL->>PL: flush MSE → abort 旧 IO → remuxer.insertDiscontinuity<br/>→ _loadSegment(0, fileposition) → directSeek 对齐时间轴
+        PL->>A: 从关键帧字节偏移 Range 续播
+        A-->>PL: FLV 流续传 → 继续播放
+    end
+    Note over P: 并发 seek last-wins：过期探测结果丢弃（先取消响应体）
 ```
+
+**为什么必须补丁桥接**（sumire 源码级结论）：上游 FLV `onMetaData` 不含 `keyframes` 索引 → `MediaInfo.isSeekable() === false` → `TransmuxingController.seek()` 首行 `if (this._mediaInfo == null || !this._mediaInfo.isSeekable()) return;` 静默 no-op → 未缓冲 seek 校正循环每 50ms 重试、画面永久冻结。且 FLV demuxer（`parseChunks`）**无 mid-stream resync**，续播起点必须是 FLV 文件头或 tag 边界——这决定了「估算偏移直连」必须先扫描对齐到**视频关键帧 tag**（若续播起点为音频 tag，mpegts `LoadingController` 会在视频关键帧到达前按 `buffered_end >= currentTime + lazyLoadMaxDuration` 暂停 IO，而恢复条件永假 → 冻死；故优先视频关键帧 + 补丁内 lazyLoad guard 兜底）。
 
 ## 3. API 设计
 
 ### 3.1 契约变更（先行）
 
-**`contracts/recording.openapi.yaml`** 新增两条路径：
+**预览零新增端点**：mpegts.js 经既有下载端点（`GET /api/{roomId}/recordings/{fileName}` / `GET /api/b/live/{roomId}/recordings/{fileName}`）流式加载与 Range 续播，Range/206/`Content-Range` 语义已由 20260914 需求打通，本期契约仅补 **clip**：
+
+**`contracts/recording.openapi.yaml`**：
 
 ```yaml
-/api/{roomId}/recordings/{fileName}/preview:
-  get:
-    summary: 录播窗口预览流
-    description: >
-      按 [startMs, endMs] 抽取视频窗口，输出 fragmented MP4 流式返回（inline 播放）。
-      startMs 缺省 0；endMs 缺省到文件结尾。H.264/AAC 直接 copy，其他编码转码保证可播。
-      忽略 Range 始终 200 整窗口；不缓存。
-    operationId: previewRecording
-    parameters:
-      - $ref: "#/components/parameters/RoomId"
-      - name: fileName
-      - name: startMs
-        in: query
-        required: false
-        schema: { type: integer, format: int64 }
-      - name: endMs
-        in: query
-        required: false
-        schema: { type: integer, format: int64 }
-    responses:
-      "200":
-        content:
-          video/mp4:
-            schema: { type: string, format: binary }
-      "400": { description: 'startMs/endMs 非法、文件名非法或录制中 {"error":"..."}' }
-      "404": { description: 文件不存在 }
-      "500": { description: '{"error": "video preview failed"}' }
-
 /api/{roomId}/recordings/{fileName}/clip:
   get:
     summary: 录播切片下载
     description: >
-      按 [startMs, endMs] 截取片段（-c copy 保留原始编码），流式返回独立可播放片段文件。
-      startMs/endMs 必填；区间 ≤ Recording:VideoClipMaxDurationMs。起点吸附最近关键帧（不晚于所选起点）。
+      按 [startMs, endMs] 截取片段（ffmpeg -c copy 保留原始编码，输出 fragmented MP4），
+      流式返回独立可播放片段文件。startMs/endMs 必填；区间 ≤ Recording:VideoClipMaxDurationMs。
+      起点吸附最近关键帧（不晚于所选起点），与预览定位落点一致。
     operationId: downloadRecordingClip
+    parameters:
+      - $ref: "#/components/parameters/RoomId"
+      - name: fileName
+        in: path
+        required: true
+        schema: { type: string }
+      - name: startMs
+        in: query
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: endMs
+        in: query
+        required: true
+        schema: { type: integer, format: int64 }
     responses:
       "200":
         headers:
@@ -149,163 +146,165 @@ sequenceDiagram
         content:
           video/mp4:
             schema: { type: string, format: binary }
-      "400": { description: '参数非法 / 区间超上限（clip duration must be <= N ms）/ 录制中' }
+      "400": { description: 'startMs and endMs are required / startMs must be >= 0 / endMs must be greater than startMs / clip duration must be <= N ms / 录制中或文件名非法' }
       "404": { description: 文件不存在 }
       "500": { description: '{"error": "video clip failed"}' }
 ```
 
-**`contracts/bilibili-crawler.openapi.yaml`** — `/api/b/live/{roomId}/recordings/{fileName}/preview|clip` 同步上述语义（代理端点，错误码与响应头同口径）。
+**`contracts/bilibili-crawler.openapi.yaml`** — `/api/b/live/{roomId}/recordings/{fileName}/clip` 同步（代理端点，错误码与响应头同口径）。
 
 ### 3.2 端点行为矩阵
 
-| 场景 | recording | api（代理后） |
-|---|---|---|
-| preview 合法窗口 | 200 `video/mp4` fMP4 流 + `Cache-Control: no-store` | 200 透传 `Content-Type`/`Cache-Control`（不设 `Content-Disposition`，同音频试听口径） |
-| preview 缺省参数 | `startMs` 默认 0、`endMs` 默认文件结尾 | 同左 |
-| clip 合法窗口 | 200 `video/mp4` + `Content-Disposition: attachment` | 200 透传 `Content-Type`/`Content-Disposition`/`Cache-Control` |
-| 参数非法（缺参/负数/endMs ≤ startMs） | 400 `{"error":"..."}` | 400 透传响应体（同音频试听口径） |
-| clip 区间超上限 | 400 `{"error":"clip duration must be <= N ms"}` | 400 透传 |
-| 文件名非法 / 录制中 | 400（复用 `ResolveRecordingFileAsync`） | 400 透传 |
-| 文件不存在 | 404 | 404 |
-| 抽取失败（ffmpeg 非零且零字节） | 500 `{"error":"video preview failed"/"video clip failed"}` | 500 透传 |
-| recording 不可达 | — | 502（现状口径） |
-| 请求带 `Range` | 忽略，始终 200 整窗口 | 不转发 Range（同音频试听口径） |
-| 客户端断开 | ct 触发 kill ffmpeg 并回收 | 同左 |
+| 场景 | recording | api（代理后） | 前端 |
+|---|---|---|---|
+| 预览加载/续播（无 Range / 带 Range） | 200 / 206 + `Accept-Ranges`/`Content-Range`（既有） | 透传（既有） | mpegts.js 流式播放、按需 Range |
+| `probeSeekable`（`Range: bytes=0-0`） | 206 + `Accept-Ranges: bytes` | 透传 | 进度条拖动可用；否则置灰降级顺序播放 |
+| 关键帧预测窗口（`Range: bytes=E-…`） | 206 窗口字节 | 透传 | tag 扫描对齐关键帧 |
+| 上游忽略 Range | 200 整文件 | 200 | 取消响应体、放弃未缓冲 seek（绝不整文件 buffer） |
+| clip 合法窗口 | 200 `video/mp4` + `Content-Disposition: attachment` | 200 透传三头 | `<a download>` 浏览器下载 |
+| clip 参数非法 / 超上限 | 400 `{"error":"..."}` | 400 透传响应体 | 提示（沿用 `apiErrorMessage` 口径） |
+| 文件名非法 / 录制中 | 400（复用 `ResolveRecordingFileAsync`） | 400 透传 | 提示 |
+| 文件不存在 | 404 | 404 | 提示 |
+| 抽取失败（ffmpeg 非零且零字节） | 500 `{"error":"video clip failed"}` | 500 透传 | 「片段生成失败，请重试」 |
+| recording 不可达 | — | 502（现状口径） | 提示 |
+| 客户端断开 | ct 触发 kill ffmpeg 并回收 | 同左 | player.destroy 单例清理 |
 
 ## 4. 数据模型
 
-无持久化模型变更、无新增 Mongo 集合、无迁移。片段按需生成、响应后即弃（不落盘、不缓存）。
+无持久化模型变更、无新增集合、无迁移。运行时输入均已有来源：`fileSize` = `listRecordings` 返回的 `files[].size`；`duration` = 播放后 mpegts `onMetaData.duration`（`video.duration`），未知前禁止未缓冲 seek（进度条 max=0 天然门控）。
 
 ## 5. 技术实现方案
 
-### 5.1 核心流程（recording 抽取器）
+### 5.1 核心流程
+
+见 2.3 时序图。关键帧预测扫描流程：
 
 ```mermaid
 flowchart TD
-    A[请求 preview/clip] --> B{startMs/endMs 校验<br/>与音频片段同口径}
-    B -->|非法| C[400]
-    B -->|clip 且超上限| D[400 clip duration must be <= N ms]
-    B --> E[ResolveRecordingFileAsync<br/>平文件名/前缀校验 → 录制中 400 → 不存在 404]
-    E --> F[ffprobe 探测视频/音频编码]
-    F --> G{VideoCodecPlanner 规划}
-    G -->|preview: H.264/AAC| H[-c:v copy / -c:a copy]
-    G -->|preview: 其他编码| I[-c:v libx264 / -c:a aac]
-    G -->|clip| J[-c copy 全流保留]
-    H & I & J --> K["ffmpeg -ss start -t dur -i file<br/>-movflags frag_keyframe+empty_moov -f mp4 pipe:1"]
-    K --> L{已写出字节?}
-    L -->|是| M[200 流式返回<br/>clip 附加 Content-Disposition]
-    L -->|否 且 非零退出| N[500 video preview/clip failed]
+    A[未缓冲 seek 目标 T] --> B[estimateByteOffset<br/>E = fileSize × T / duration]
+    B --> C[computeScanBytes<br/>W = 码率/8 × 10s，钳 256KB~8MB]
+    C --> D["fetch Range: bytes=E-(E+W-1)"]
+    D --> E{status == 206?}
+    E -->|否| F[取消响应体<br/>降级：禁用本次 seek 并提示]
+    E -->|是| G[Content-Range 校正基准偏移<br/>Content-Length/窗口上限保护]
+    G --> H[边读边扫 FLV tag<br/>三重校验：tagType/dataSize/PrevTagSize]
+    H --> I{命中视频关键帧 tag<br/>tagType=9 且 frameType=1?}
+    I -->|是| J["seekToByteOffset(fileposition, milliseconds)<br/>（补丁桥接，last-wins 丢弃过期）"]
+    I -->|窗口内无| K{有任意合法 tag 边界?}
+    K -->|是| J
+    K -->|否| L[降级：估算偏移直试<br/>失败显性提示，不静默冻结]
 ```
 
 ### 5.2 关键实现点
 
-#### 实现点 1: `Video/VideoWindowExtractor`（`servers/recording/Video/`）
+#### 实现点 1: mpegts.js 补丁桥接（`src/pages/recording/mpegtsByteOffsetSeek.ts`，vendored）
 
-- `IVideoWindowExtractor.ExtractAsync(fullPath, startMs, endMs, VideoExtractOptions, Stream output, CancellationToken ct)`；
-- `BuildArguments(...)` 为**纯函数**（供单测断言参数顺序与降级形态，沿用 `AudioClipExtractor.BuildArguments` 口径）：
-  - `-ss <start>`/`-t <end-start>` 前置（输入 seek，小时级文件秒开，与音频片段一致）；`-i <file>`；
-  - 输出 `-movflags frag_keyframe+empty_moov -f mp4 pipe:1`——管道不可 seek，`faststart`（需二次写回）不可用；fMP4 首包即含 `moov`，可边生成边播放/边下载；
-- 进程封装沿用 `IRecordingProcessFactory`（stderr 泵丢弃、取消/释放 kill 并回收）；`exitCode != 0` 且零字节抛 `VideoExtractFailedException`（与 `AudioClipFailedException` 同模式，控制器映射 500）；
-- `endMs` 超文件长度由 ffmpeg 自然输出到结尾（与音频片段一致）。
+- 移植 sumire `patches/mpegts.js@1.8.2.patch` 的 `dist/mpegts-byte-offset-seek.js` 为仓库内 TS 模块（monkey-patch `mpegts.createPlayer`，返回实例附加）：
+  - `seekToByteOffset(fileposition, milliseconds)`：flush MSE 旧缓冲 → `_internalAbort` → `remuxer.seek(ms) + insertDiscontinuity()` → `_loadSegment(0, fileposition)` → `_pendingResolveSeekPoint = ms` → `resumeTransmuxer()` 复位暂停态 → `_seeking_handler.directSeek(ms/1000)` 立即对齐时间轴；
+  - **lazyLoad guard（防死锁，可重入）**：seek 期间置 `config.lazyLoad = false`，首个 `media_segment`/`recommend_seekpoint` 到达或 3s 超时恢复；连续 seek 仅续命、仅最外层捕获/恢复 previous；
+  - **seek 对齐兜底**：DTS→PTS 偏移可能使 `currentTime` 落在新缓冲起点之前而永久 seeking，seek 后数秒周期性把 `currentTime` 夹到覆盖它的缓冲区间起点；
+  - `setBufferLimits(limits)`：运行时调整 `lazyLoadMaxDuration`/`lazyLoadRecoverDuration`/`autoCleanupMaxBackwardDuration`/`autoCleanupMinBackwardDuration`；
+- 内部结构不符（worker 模式/未打补丁构建）时**显性抛错/返回 false**，由 UI 提示「预览暂不可用」，绝不静默冻结；
+- npm 无 `patchedDependencies`（sumire 为 pnpm），故采用 vendored 模块而非 pnpm patch；备选 `patch-package`（评审点 1）。
 
-#### 实现点 2: `Video/VideoCodecPlanner` + `Video/VideoCodecProbe`
+#### 实现点 2: 关键帧预测模块（`src/pages/recording/recordingSeek.ts`）
 
-- `VideoCodecProbe`：`ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 <file>`（音频同理 `a:0`），复用 `RecordingOptions.FfprobePath`；探测失败按「未知编码」处理（preview 走转码保播放、clip 走 copy 保原样）；
-- `VideoCodecPlanner.Plan(mode, videoCodec, audioCodec)` 纯函数 → 编码参数片段：
-  - preview：`h264` → `-c:v copy`，否则 `-c:v libx264 -preset veryfast -crf 23`；`aac` → `-c:a copy`，否则 `-c:a aac -b:a 128k`；
-  - clip：恒 `-c copy`（含 `-bsf:v dump_extra`? 不需要；AV1/H.264 直接 copy 进 fMP4）；
-- **不以文件名 `[RAW]`/`[AV1]` 前缀推断编码**（存量回填文件命名不保证权威，见 6.1-6）。
+纯函数 + 编排（对齐 sumire `seek.ts`，全部可单测）：
 
-#### 实现点 3: `RecordingController` 两动作
+- `estimateByteOffset(targetMs, durationMs, fileSize)`：线性估算，非法输入返回 0，钳 `[0, fileSize-1]`；
+- `computeScanBytes(bitrateBps)`：`bitrate/8 × KEYFRAME_SCAN_SECONDS(10)`，钳 `[SEEK_WINDOW_BYTES=256KB, MAX_KEYFRAME_SCAN_BYTES=8MB]`；
+- `findVideoKeyframeBoundary(window, baseOffset)` / `findNextTagBoundary(window, baseOffset)`：FLV tag 三重校验（`tagType ∈ {8,9,18}`、`0 < dataSize ≤ 8MB`、`PrevTagSize === 11 + dataSize`，不完整候选跳过、窗口增长后重扫），视频关键帧判定 `tagType=9` 且首字节 `frameType=1`；返回 `{ fileposition, milliseconds }`（毫秒取自 tag 时间戳）；
+- `seekUnbuffered({ url, targetSeconds, durationSeconds, fileSize })`：按 5.1 流程编排；**非 206 一律取消响应体并放弃**（上游忽略 Range 时绝不整文件 buffer）；`Content-Range` 校正基准偏移；边读边扫、命中关键帧即取消剩余下载；**seek 代次 last-wins**（过期探测结果丢弃并 cancel body，避免过期落点覆盖最新意图）；
+- 降级链：视频关键帧 tag → 任意合法 tag 边界（补丁 guard 兜底）→ 估算偏移直试 → 显性失败提示。
 
-- `GET {roomId}/recordings/{fileName}/preview`（`long? startMs, long? endMs`）与 `GET {roomId}/recordings/{fileName}/clip`（`long? startMs, long? endMs`）；
-- 校验顺序与音频片段完全一致（先参数后文件）：`startMs and endMs are required`（clip 必填、preview 仅在显式提供时校验）→ `startMs must be >= 0` → `endMs must be greater than startMs` → clip 增 `clip duration must be <= {VideoClipMaxDurationMs} ms`；
-- `ResolveRecordingFileAsync` 复用（平文件名 → 前缀校验 → 录制中 400 → 不存在 404），路径穿越防护零新增；
-- 响应：`Response.ContentType = "video/mp4"`、`Cache-Control: no-store`；clip 另设 `Content-Disposition`（`attachment; filename="{fileName}-{startMs}-{endMs}.mp4"`，文件名经 `ContentDispositionValue` 处理）；零字节失败清掉头信息后 500（照音频片段口径）。
+#### 实现点 3: 播放器封装（`src/pages/recording/recordingPlayer.ts`）
 
-#### 实现点 4: `RecordingOptions` 配置
+- 单例语义（任何时刻至多一路播放；`destroyPlayer(url?)` 按归属清理；代次防加载期被取代）；
+- `isPlaybackSupported()`（`mpegts.isSupported()`，MSE 缺失降级提示）；
+- `probeSeekable(url)`（`Range: bytes=0-0`，`206` 或 `accept-ranges: bytes`）门控进度条拖动；
+- `computeBufferConfig(fileSize, durationSeconds)`（纯函数）：字节预算 `BUFFER_BUDGET_BYTES = 50MB`，前瞻 60% / 回退 40% 折算秒数（`秒数 × 码率 ≤ 预算`，钳 `[0.1s, 300s]`）；duration 未知按保守高码率 50Mbps 兜底，`onMetaData` 到手后 `setBufferLimits` 重算——避免 mpegts 默认 180s 前瞻把数 GB 录播缓冲进 MSE 配额（实测 ~160MB 上限）；
+- `createPlayer` 配置：`{ type: 'flv', isLive: false, url }` + `seekType: 'range'`。
 
-- 新增 `VideoClipMaxDurationMs`（默认 `7_200_000` = 2 小时，`ValidateOnStart` 既有节）：仅约束 clip；preview 为窗口流不设上限，生命周期由请求取消令牌约束；
-- 无新增密钥/外部依赖配置；`FfmpegPath`/`FfprobePath` 复用。
+#### 实现点 4: 预览弹窗（`src/pages/recording/RecordingPreviewPlayer.tsx`）
 
-#### 实现点 5: api 代理两路由
+- `Modal` + `<video>`（自定义控制条：播放/暂停、可拖动进度条、时间显示、音量、全屏）；
+- **定位交互**：拖动/点击进度条或输入时间（复用 `parsePosition`/`formatPosition`）→ 目标在 `video.buffered` 内走原生 `currentTime`，否则走 `seekUnbuffered`；跳转落点为关键帧（UI 提示）；
+- **AV1/能力门控**：文件名 `[AV1]` 前缀或 `!mpegts.isSupported()` 时预览入口 `aria-disabled` 置灰并提示「AV1 编码暂不支持在线预览」/「当前浏览器不支持在线预览」；`probeSeekable` 失败禁用拖动并提示「该文件暂不支持跳转」；
+- **切片区间**：「设为起点」「设为终点」记录当前落点毫秒（即关键帧时间戳）；手输时间经 `parsePosition` 校验（非法或 `start >= end` 拦截提示）；「清空」重置；关键帧对齐提示文案；
+- **下载片段**：`<a href={recordingClipUrl(roomId, fileName, startMs, endMs)} download>`（未选全 `aria-disabled` 置灰 + `preventDefault`，与训练页「下载数据集」同口径），浏览器接管流式下载；
+- UI 规范沿用：antd v6、`App.useApp()` 的 `message`、三态、`aria-label`、禁止野生内联样式；测试用 `renderWithProviders`。
 
-- `BilibiliLiveRecordingController` 新增 `ProxyRecordingPreview`/`ProxyRecordingClip`，完全照 `ProxyRecordingAudio` 模式：显式 `HttpRequestMessage` + `HttpCompletionOption.ResponseHeadersRead` + `CopyToAsync` 流式转发、query 原样透传、不转发 `Range`、成功仅透传 `Content-Type`/`Cache-Control`（clip 多透传 `Content-Disposition`）、400 透传响应体、404→404、不可达/超时/其他非成功→502；
-- 长耗时注意事项：clip 流式下载可持续数十分钟，named client `RecordingService` 超时需与 `CrawlerService`（视频下载）同口径置 `Timeout.InfiniteTimeSpan`（或 `ResponseHeadersRead` 后不受总超时约束，实现时按既有视频下载代理口径对齐）。
+#### 实现点 5: 切片下载端点（`servers/recording` + `servers/api`）
 
-#### 实现点 6: web 预览弹窗与下载片段
-
-- `api/client.ts` 新增 URL 构造器 `recordingPreviewUrl(roomId, fileName, startMs?, endMs?)`、`recordingClipUrl(roomId, fileName, startMs, endMs)`（`encodeURIComponent` + `URLSearchParams`，与 `recordingAudioClipUrl` 同风格）；
-- 新增 `pages/recording/RecordingPreviewPlayer.tsx`：
-  - `Modal` + `<video controls>`（`src` = `recordingPreviewUrl`）；
-  - 区间选择：「设为起点」「设为终点」记录 `video.currentTime`（毫秒）；手动输入复用 `parsePosition`（`m:ss`/`m:ss.S` → ms）/`formatPosition` 展示；非法输入或起点 ≥ 终点提示且不接受；「清空」重置；
-  - **窗口续播**：监听 `seeking`，若目标超出 `video.buffered` 末尾则以 `startMs=目标` 重开请求（换 `src` 并 `load()`/`play()`），实现任意拖动跳转；向后拖动在已缓冲范围内由浏览器原生完成；
-  - 「下载片段」为 `<a href={recordingClipUrl(...)} download>`（未选全区间 `aria-disabled` 置灰 + `preventDefault`，与训练页「下载数据集」同口径），浏览器接管流式下载；
-  - 关键帧提示文案：「起点将对齐到最近关键帧，实际片段可能比所选区间略早开始」；
-- `RecordingStatusPage.tsx` 历史录播行（及录制状态展开行文件链接旁）新增「预览」按钮打开弹窗；录制中的文件不展示预览入口（历史列表本就排除录制中文件，状态行内文件链接处按同一判定禁用并提示）；
-- UI 规范沿用：antd v6、`App.useApp()` 的 `message`/`modal.confirm`、三态、`aria-label`、禁止野生内联样式；测试用 `renderWithProviders`。
+- `RecordingController` 新增 `GET {roomId}/recordings/{fileName}/clip`（`long? startMs, long? endMs`）：校验顺序与音频片段一致（`startMs and endMs are required` → `startMs must be >= 0` → `endMs must be greater than startMs` → `clip duration must be <= {VideoClipMaxDurationMs} ms`）→ `ResolveRecordingFileAsync`（路径穿越防护/录制中 400/不存在 404 复用）；
+- 抽取器 `Video/VideoClipExtractor`：`BuildArguments` 纯函数——`-ss <start> -t <end-start>`（输入 seek）`-i <file>` `-c copy` `-movflags frag_keyframe+empty_moov -f mp4 pipe:1`；沿用 `IRecordingProcessFactory`（stderr 泵、取消 kill 回收）；零字节且非零退出抛 `VideoClipFailedException` → 500 `{"error":"video clip failed"}`；
+- **起点与预览一致**：前端传入预览定位落点的关键帧毫秒，`-c copy` 输入 seek 起点吸附关键帧（≤GOP 偏差），产物即预览所见；`endMs` 超文件长度自然输出到结尾；
+- 响应 `video/mp4` + `Cache-Control: no-store` + `Content-Disposition: attachment; filename="{fileName}-{startMs}-{endMs}.mp4"`；
+- `RecordingOptions` 新增 `VideoClipMaxDurationMs`（默认 `7_200_000` = 2 小时）；
+- api `BilibiliLiveRecordingController` 新增 `ProxyRecordingClip`（照 `ProxyRecordingAudio`：`ResponseHeadersRead` + `CopyToAsync`、query 透传、`Content-Type`/`Content-Disposition`/`Cache-Control` 透传、400 透传响应体、404→404、不可达/超时→502；流式下载可达数十分钟，named client 超时按 `CrawlerService` 视频下载口径置 Infinite）。
 
 ### 5.3 不在本期的事项
 
-- **精确剪切（逐帧）**：需重编码（libx264）才能越过关键帧边界，CPU 成本与时长不可控；本期 `-c copy` 关键帧对齐（起点吸附最近关键帧，不晚于所选点），UI 明示。列为后续演进（见 6.1-4）；
-- **片段落盘/缓存/续传**：流式产物无 `Range`（中断需重新下载）；若后续需要可改为临时文件 + `PhysicalFile(enableRangeProcessing: true)`（见 6.1-5）；
-- **HLS / 预览多码率 / 进度条任意 seek 的毫秒级体验**：窗口续播已覆盖「跳转到任意时间点」，HLS 化收益低复杂度高；
-- **转写页 / 训练页复用视频预览**：音频试听链路不变，视频预览本期只进录制状态页；
-- **批量切片 / 切片任务队列 / 片段管理**：单次请求单片段，按需实时生成。
+- **FLV 关键帧索引注入**（录制端在 `onMetaData` 写 `keyframes` 索引）：可使 mpegts 原生 seekable、免预测扫描，但需改录制/存量迁移，列为后续建议；
+- **服务端转码预览（AV1 回退）**、**逐帧精确剪切**、**切片持久化/缓存/续传**、**HLS 化**、**字节级 FLV 区间切片**（见 6.1-6）、**转写页/训练页复用**、**倍速/快捷键等播放增强**。
 
 ## 6. 技术决策
 
 ### 6.1 决策列表
 
-1. **服务端 ffmpeg 抽取，而非前端 flv.js/MSE 直读 FLV**：FLV（尤其 AV1-in-FLV）浏览器兼容性差、flv.js 为新增前端依赖（现仅 wavesurfer.js 一个先例）且无法服务端截取；服务端方案复用 `AudioClipExtractor` 既有模式，编码适配集中在一处；
-2. **预览输出 fMP4（`frag_keyframe+empty_moov`）而非整 MP4**：输出走 `pipe:1` 不可 seek，`faststart` 需二次写回不可行；fMP4 首包含 `moov` 即可边生成边播放，浏览器 `<video>` 原生可播；
-3. **预览「兼容优先」、切片「原样优先」双策略**：预览必须在浏览器里播得出来（H.264 copy、其余转码）；切片是内容产物，`-c copy` 无损且零转码成本，AV1 源出 AV1 片段（PRD 已提示播放器要求）；
-4. **切片默认关键帧对齐（`-c copy`），不做重编码精确剪切**：`-ss` 输入 seek + copy 的起点吸附最近关键帧（≤1~2 秒偏差），快、无损、CPU 近零；精确剪切需全量重编码，成本与片段时长线性相关，列为后续可选模式（评审点 1）；
-5. **不落盘、按需实时生成、响应后即弃**：沿用「B 站视频下载」评审结论（`docs/engineering/proposals/20261008-proposal-bilibili-video-download.md`，评审后由落盘改实时透传）；片段为有界产物、重试成本低，无需任务队列与清理机制。代价是无断点续传（评审点 2）；
-6. **编码判定用 ffprobe 而非文件名 `[RAW]`/`[AV1]` 推断**：`RecordingBackfillMigration` 回填的存量文件命名不保证含 encode 标记，ffprobe 权威且 `FfprobePath` 已在配置内；探测为纯解析函数可单测；
-7. **任意拖动跳转由前端窗口续播实现，服务端保持无状态窗口语义**：seek 超出已缓冲区即以新 `startMs` 重开请求，服务端无需感知播放会话，横向扩展与回收都简单；
-8. **preview 不设时长上限、clip 设 `VideoClipMaxDurationMs`**：preview 受客户端读取速率天然背压（管道写满即阻塞 ffmpeg），断开即 kill；clip 全速产出，需上限防长时间占用（评审点 3：默认 2 小时是否合适）。
+1. **前端 mpegts.js 直读 FLV，放弃服务端 remux/转码窗口流**（v1.0 被打回点）：零服务端计算（原 AV1 源需 libx264 转码、CPU 不可控）、原始画质、秒开、任意拖动定位；与 sumire 同构——同一上游的成熟实现，风险已在真实环境验证；
+2. **必须绕过 mpegts `isSeekable()` 门（补丁桥接）**：上游 FLV 无 `keyframes` 索引，原生 seek 静默 no-op + 50ms 校正死循环；`seekToByteOffset` 复用 mpegts 跨段加载机制从字节偏移续播，内置 lazyLoad guard/seek 对齐兜底（sumire 实测结论，逐条移植）；
+3. **关键帧预测放客户端（估算 → Range 窗口 → FLV tag 三重校验 → 视频关键帧 tag）**：服务端无关键帧索引、Range 能力已打通、`fileSize`/`duration` 运行时可得；参考实现已验证（GOP≈8s，扫描窗口按码率 10s 覆盖）。续播起点必须 tag 边界（demuxer 无 mid-stream resync），优先视频关键帧 tag 防 lazyLoad 暂停死锁；
+4. **续播/探测一律要求 206，非 206 放弃**：上游忽略 Range（或代理未透传）时绝不整文件 buffer，宁可降级提示也不冻死标签页；
+5. **缓冲按字节预算（50MB：前瞻 60%/回退 40%）而非秒数**：数小时高码率录播下 mpegts 默认 180s 前瞻会击穿 MSE 配额（~160MB）；按 `size/duration` 估算码率折算秒数，duration 到手后重算；
+6. **切片下载保留服务端 ffmpeg `-c copy` 出 fMP4**：产物通用可播（MP4 封装、原始编码）、RAW/AV1 源均可用、起点与预览关键帧落点一致；备选「FLV 字节区间拼接」（FLV header + tag 区间，零转码秒出）产物为 FLV、兼容性弱，列为评审点 3；
+7. **AV1 录播不支持在线预览**（mpegts.js FLV 仅 H.264/AAC）：入口置灰 + 明确文案，切片/完整下载仍可用；服务端转码回退列评审点 2；
+8. **补丁以 vendored TS 模块实现而非 npm patch**：npm 无 pnpm 的 `patchedDependencies`，`patch-package` 需 postinstall 钩子；vendored 桥接可直接单测 guard/降级逻辑，且对 `mpegts.js` 升级不敏感（内部字段访问集中一处、结构不符显性失败）；
+9. **preview 不设时长上限、clip 设 `VideoClipMaxDurationMs`**：预览流量由用户观看时长与字节预算自然约束；clip 全速产出需上限防长时间占用。
 
 ### 6.2 依赖与约束
 
 | 类型 | 内容 | 说明 |
 |------|------|------|
-| 依赖 | ffmpeg / ffprobe | recording 镜像已含（apt 安装）；转码路径需 `libx264`，构建期断言补齐（见 9） |
-| 依赖 | 既有 `ResolveRecordingFileAsync`/`IRecordingProcessFactory`/音频片段端点模式 | 零改动复用 |
-| 约束 | 契约先行 | 先提交两份 OpenAPI 变更，再改实现 |
-| 约束 | 无新增 NuGet/npm 依赖 | flv.js/HLS.js 等明确不用 |
+| 依赖 | `mpegts.js@^1.8.2`（npm） | 仓库第二个新增 npm 依赖（wavesurfer.js 之后），评审点 4 |
+| 依赖 | 既有 Range 下载链路 | 预览与关键帧预测的前提（20260914 已打通） |
+| 依赖 | 既有 `ResolveRecordingFileAsync`/`IRecordingProcessFactory`/音频片段端点模式 | clip 端点复用，零新增防护逻辑 |
+| 约束 | 契约先行 | 先提交两份 OpenAPI 的 clip 变更，再改实现 |
+| 约束 | 服务端零转码、零新预览端点 | 预览全部成本在客户端 |
 | 约束 | 不改录制流程、存储结构与既有端点 | 下载/Range/音频试听/合并行为不回归 |
 
 ## 7. 项目结构
 
 ```
-contracts/（变更）
-├── recording.openapi.yaml                 # 新增 preview / clip 两路径
-└── bilibili-crawler.openapi.yaml          # /api/b/live 代理镜像同步
+contracts/（变更：仅 clip）
+├── recording.openapi.yaml                 # 新增 clip 路径
+└── bilibili-crawler.openapi.yaml          # /api/b/live 代理镜像 clip
+
+apps/web/（主要变更）
+├── package.json                           # 新增 mpegts.js@^1.8.2
+├── src/pages/recording/
+│   ├── mpegtsByteOffsetSeek.ts            # vendored 桥接（移植 sumire mpegts.js 补丁）：seekToByteOffset/setBufferLimits/lazyLoad guard/seek 对齐
+│   ├── mpegtsByteOffsetSeek.test.ts       # guard 可重入/超时恢复/结构不符显性失败
+│   ├── recordingPlayer.ts                 # 单例播放器封装：isSupported/probeSeekable/computeBufferConfig/destroy 归属
+│   ├── recordingPlayer.test.ts            # 字节预算折算纯函数 + 单例/代次语义
+│   ├── recordingSeek.ts                   # 关键帧预测：estimateByteOffset/computeScanBytes/tag 扫描/seekUnbuffered（last-wins）
+│   ├── recordingSeek.test.ts              # 估算/扫描三重校验/非 206 降级/过期丢弃
+│   ├── RecordingPreviewPlayer.tsx         # 预览弹窗：播放 + 定位 + 区间选择 + 下载片段
+│   ├── RecordingPreviewPlayer.test.tsx    # 交互与降级行为
+│   └── RecordingStatusPage.tsx            # 历史录播行「预览」入口（AV1/MSE 门控置灰）
+└── src/api/client.ts                      # recordingClipUrl（下载片段 URL 构造器）
 
 servers/recording/（变更）
-├── Video/
-│   ├── VideoWindowExtractor.cs            # IVideoWindowExtractor + 纯函数 BuildArguments + VideoExtractFailedException
-│   ├── VideoCodecPlanner.cs               # copy/转码规划纯函数
-│   └── VideoCodecProbe.cs                 # ffprobe 编码探测
-├── Controllers/RecordingController.cs     # 新增 preview / clip 两动作（复用 ResolveRecordingFileAsync）
+├── Video/VideoClipExtractor.cs            # IVideoClipExtractor + BuildArguments 纯函数 + VideoClipFailedException
+├── Controllers/RecordingController.cs     # 新增 clip 动作（复用 ResolveRecordingFileAsync）
 └── Configuration/RecordingOptions.cs      # 新增 VideoClipMaxDurationMs
 
 servers/api/（变更）
-└── Controllers/BilibiliLiveRecordingController.cs  # ProxyRecordingPreview / ProxyRecordingClip
-
-apps/web/（变更）
-├── src/api/client.ts                      # recordingPreviewUrl / recordingClipUrl
-├── src/pages/recording/RecordingPreviewPlayer.tsx  # 预览弹窗：播放 + 窗口续播 + 区间选择 + 下载片段
-├── src/pages/recording/RecordingStatusPage.tsx     # 历史录播行「预览」入口
-└── src/pages/recording/RecordingPreviewPlayer.test.tsx
+└── Controllers/BilibiliLiveRecordingController.cs  # ProxyRecordingClip
 
 tests/Z.Vtuber.Tests/（变更）
-├── VideoWindowExtractorTests.cs           # 参数纯函数：copy/转码/时长/降级
-├── VideoCodecPlannerTests.cs              # 编码规划矩阵
-├── RecordingVideoPreviewTests.cs          # 真 ffmpeg 接口测试（lavfi 合成源，无 ffmpeg 跳过）
-├── RecordingVideoClipTests.cs             # 切片下载接口测试（时长/Content-Disposition/上限）
-└── BilibiliLiveRecordingControllerTests.cs # 代理透传（200/400/404/502、Content-Disposition）
+├── VideoClipExtractorTests.cs             # 参数纯函数（-ss/-t/-c copy/fmp4 管道）
+└── RecordingVideoClipTests.cs             # 真 ffmpeg 接口测试（lavfi 合成源，无 ffmpeg 跳过）
 ```
 
 ## 8. 测试策略
@@ -316,46 +315,55 @@ tests/Z.Vtuber.Tests/（变更）
 
 ### 8.2 测试类型
 
-- **纯函数单测**：
-  - `VideoWindowExtractor.BuildArguments`：`-ss`/`-t` 前置顺序、`frag_keyframe+empty_moov`/`-f mp4`/`pipe:1`、preview 转码分支、clip `-c copy` 分支；
-  - `VideoCodecPlanner`：`h264+aac`/`h264+其他`/`av1+…`/未知编码 × preview|clip 全矩阵；
-  - `VideoCodecProbe` 解析（stdout 形态 → codec 字符串，异常回退）；
-- **接口测试（真 ffmpeg，`RecordingAudioClipTests` 模式：lavfi 合成带时间基准的视频源 → 端点请求 → 断言产物，无 ffmpeg/ffprobe 环境按既有模式跳过）**：
-  - preview：200 `video/mp4`、响应头（`Cache-Control: no-store`、无 `Content-Disposition`）、产物为可解析 fMP4（首包 `ftyp`/`moov`）；
-  - clip：200 + `Content-Disposition: attachment`，产物时长与区间一致（关键帧吸附断言：起点 ≤ 请求起点、时长 ≈ `end-start`），AV1 源（若环境有 `av1_nvenc` 则生成，否则用 H.264 源覆盖 copy 路径）；
-  - 参数矩阵 400（缺参/负数/endMs ≤ startMs/超上限）、录制中 400、不存在 404、非法文件名 400、ffmpeg 失败 500（`FakeRecordingProcessFactory` 注入非零退出）；
+- **前端纯函数单测（Vitest）**：
+  - `recordingSeek`：`estimateByteOffset`（线性/钳制/非法输入）、`computeScanBytes`（钳 `[256KB, 8MB]`）、`findVideoKeyframeBoundary`/`findNextTagBoundary`（合成 FLV tag 窗口：三重校验失败跳过、不完整窗口跳过后重扫、`frameType=1` 判定、毫秒时间戳解析）；
+  - `recordingPlayer`：`computeBufferConfig`（字节预算折算、duration 未知保守码率、钳制）；
+  - `mpegtsByteOffsetSeek`：lazyLoad guard（可重入续命、事件/3s 超时恢复、仅最外层恢复 previous）、内部结构不符显性抛错；
+- **前端组件单测（`renderWithProviders` + mock player/seek）**：
+  - 预览弹窗：设起点/终点、非法输入拦截、未选全区间下载置灰、clip URL 拼接、AV1/MSE 不支持置灰提示、`probeSeekable` 失败禁用拖动；
+  - 定位：已缓冲走原生 `currentTime`、未缓冲走 `seekUnbuffered`、非 206 降级提示、并发 seek last-wins（过期结果丢弃）；
+  - `RecordingStatusPage`：预览入口与门控；
+- **服务端（`tests/Z.Vtuber.Tests`）**：
+  - `VideoClipExtractorTests`：`BuildArguments` 纯函数断言（`-ss`/`-t` 前置、`-c copy`、`frag_keyframe+empty_moov`/`-f mp4`/`pipe:1`）；
+  - `RecordingVideoClipTests`（真 ffmpeg，lavfi 合成带时间基准源，无环境跳过——`RecordingAudioClipTests` 模式）：200 + `Content-Disposition`、产物可解析 fMP4、时长 ≈ `end-start`（关键帧吸附断言）、参数矩阵 400、录制中 400、不存在 404、非法文件名 400、ffmpeg 失败 500（`FakeRecordingProcessFactory` 注入）；
+  - `BilibiliLiveRecordingControllerTests`：clip 代理 query/响应头透传、400 透传响应体、404/502 映射；
   - 回归：既有下载 Range、音频试听/合并端点行为不变；
-- **api 代理测试**（`BilibiliLiveRecordingControllerTests` 既有 fake HttpClient 设施）：query 透传、`Content-Type`/`Cache-Control`/`Content-Disposition` 透传、400 透传响应体、404/502 映射、不转发 `Range`；
-- **前端 Vitest**：`RecordingPreviewPlayer`（设起点/终点、非法输入拦截与提示、未选全区间下载置灰、clip URL 拼接、seek 超窗重开窗口请求、清空重选）、`RecordingStatusPage`（历史录播「预览」入口、录制中不展示）；渲染用 `renderWithProviders`；
-- **契约**：codegen 产物一致性由既有构建流程保证。
+- **手工/验收**：真实数小时录播验证拖动定位流畅度、内存稳定（字节预算）、片段与预览一致性。
 
 ## 9. 部署方案
 
-- 随常规版本发布：recording 与 api 同版本滚动更新；web 静态资源随前端流水线发布；
-- **兼容性**：新 web + 旧 api → 新入口请求打到不存在的路由（404），入口灰度随版本一致发布即可；旧 web 不受影响；新 api + 旧 recording → 代理 502，同版本发布规避；无数据迁移、无配置必填项（`VideoClipMaxDurationMs` 有默认值）；
-- **镜像**：recording Dockerfile 已 `apt-get install ffmpeg`；构建期断言扩展 `.github/workflows/build-recording-image.yml`（既有 `ffmpeg -encoders | grep -q mp3` 旁补 `grep -q libx264`），缺编码器即构建失败（与 mp3 断言同口径）；
-- **资源**：AV1 源预览走 `libx264` 转码（CPU），由客户端读取速率背压、断开即回收；无 GPU 环境（`Recording__Av1__Enabled=false`）录播本就只有 RAW（H.264）源，预览全走 copy；
+- 随常规版本发布：api 与 recording 同版本滚动更新，web 静态资源随前端流水线发布（含新增 `mpegts.js` 依赖，注意 bundle 体积与 license 告知——MIT/Apache-2.0 双许可）；
+- **服务端资源零新增**：预览不产生服务端计算；clip 为 `-c copy`（I/O bound，无编码器依赖），recording 镜像无需变更（既有 mp3 构建断言保留，**不再需要 libx264 断言**——v1.0 转码方案的遗留需求一并移除）；
+- **兼容性**：新 web + 旧 api → clip 入口 404（版本一致发布规避）、预览走既有下载端点不受影响；旧 web 不受影响；无数据迁移、无配置必填项（`VideoClipMaxDurationMs` 有默认值）；
 - **回滚**：整体版本回退即可，无残留数据。
 
 ## 10. 验收标准
 
-- [ ] 后台历史录播「预览」可在弹窗内播放画面与声音，可跳转到任意时间点，无需下载完整文件；
-- [ ] 「设为起点/设为终点」与手动输入时间可选定区间，非法输入被拦截并提示；未选全区间不可下载；
-- [ ] 「下载片段」得到所选区间的独立可播放片段（含画面与声音、原始画质），`Content-Disposition` 文件名正确；起点关键帧对齐行为有界面提示；
-- [ ] 参数非法 400（含 clip 超上限）、录制中 400、文件不存在 404、抽取失败 500、代理不可达 502 与契约一致；
+- [ ] 历史录播「预览」约 1 秒内起播（画面+声音、原始画质），无需下载完整文件、无服务端转码；
+- [ ] 拖动进度条/输入时间定位到任意位置（含未加载位置）约 1 秒内继续播放，落点为最近关键帧，全程不卡死；内存占用不随观看时长无上限增长；
+- [ ] 上游不支持 Range/MSE 缺失/AV1 源时按 PRD 边界降级提示，不冻结、不影响下载；
+- [ ] 「设为起点/设为终点」与手动输入选定区间，非法输入拦截；未选全区间不可下载；
+- [ ] 「下载片段」得到所选区间的独立可播放片段（含画面与声音、原始编码、MP4 封装），`Content-Disposition` 文件名正确，与预览所见一致（关键帧落点）；
+- [ ] clip 参数非法 400（含超上限）、录制中 400、不存在 404、抽取失败 500、代理不可达 502 与契约一致；
 - [ ] 既有完整下载/Range/音频试听/合并端点与录制流程零回归；
-- [ ] 两份 OpenAPI 契约同步更新；单测/接口测试通过，核心逻辑覆盖率 ≥ 80%。
+- [ ] 两份 OpenAPI 契约同步更新；前后端测试通过，核心逻辑覆盖率 ≥ 80%。
 
 ## 11. 评审要点
 
-1. 切片精度：关键帧对齐（`-c copy`）是否满足使用预期，是否需要本期就提供「精确剪切（重编码）」模式（6.1-4）；
-2. 片段不落盘 → 无断点续传，是否需要改为临时文件 + Range（6.1-5）；
-3. `VideoClipMaxDurationMs` 默认 2 小时是否合适（6.1-8）；
-4. AV1 源预览转码的 CPU 成本与并发预期是否可接受（9）。
+1. 补丁形态：vendored TS 桥接（推荐）vs `patch-package`（6.1-8）；
+2. AV1 录播是否需要服务端转码回退预览（6.1-7）；
+3. 切片是否需要「FLV 字节区间」零转码模式（产物 FLV）（6.1-6）；
+4. `mpegts.js` 作为仓库第二个新增 npm 依赖的接受度（6.2）；
+5. `VideoClipMaxDurationMs` 默认 2 小时是否合适（6.1-9）。
 
 ## 12. 相关文档
 
 - PRD：`docs/product/draft/20261021-recording-preview-clip-prd.md`
+- 参考实现 [Deliay/sumire](https://github.com/Deliay/sumire/)：
+  - `apps/bookstore/features/recordings/player.ts`（mpegts.js 单例、字节预算缓冲、`probeSeekable`）
+  - `apps/bookstore/features/recordings/seek.ts`（关键帧预测：估算 → Range 窗口 → FLV tag 扫描 → 字节偏移续播）
+  - `patches/mpegts.js@1.8.2.patch`（`seekToByteOffset`/`setBufferLimits` 补丁与 lazyLoad 死锁兜底）
+  - `docs/engineering/proposals/2026-09-15-recordings-seek-fullscreen-proposal.md`（未缓冲 seek 卡死根因分析）
+  - `docs/engineering/proposals/2026-09-18-recordings-play-optimization-proposal.md`（播放优化与缓冲预算）
 - 录播功能技术提案：`docs/engineering/proposals/20260913-proposal-live-recording.md`
 - Range 分段下载提案：`docs/engineering/proposals/20260914-proposal-recording-download-range.md`
-- B 站视频下载提案（不落盘实时透传先例）：`docs/engineering/proposals/20261008-proposal-bilibili-video-download.md`
