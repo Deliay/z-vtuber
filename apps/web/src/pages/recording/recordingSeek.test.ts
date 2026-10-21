@@ -40,9 +40,10 @@ function makeTag({ type, timestamp, data = new Uint8Array([1, 2, 3]) }: TagOptio
   bytes[1] = (data.length >>> 16) & 0xff
   bytes[2] = (data.length >>> 8) & 0xff
   bytes[3] = data.length & 0xff
-  bytes[4] = timestamp & 0xff
+  // FLV TagHeader：UI24 Timestamp（大端）+ UI8 TimestampExtended（高 8 位）
+  bytes[4] = (timestamp >>> 16) & 0xff
   bytes[5] = (timestamp >>> 8) & 0xff
-  bytes[6] = (timestamp >>> 16) & 0xff
+  bytes[6] = timestamp & 0xff
   bytes[7] = (timestamp >>> 24) & 0xff
   bytes.set(data, 11)
   writeUint32BE(bytes, 11 + data.length, 11 + data.length)
@@ -148,6 +149,22 @@ describe('recordingSeek', () => {
       expect(boundary?.fileposition).toBe(boundary!.tagOffset)
     })
 
+    it('should parse FLV 24-bit timestamp + extended byte in mpegts.js order', () => {
+      // 3000ms = 0x000BB8：Tag header 字节 4..7 应为 00 0B B8 00
+      const tag = videoTag(3000, 1)
+      expect(Array.from(tag.subarray(4, 8))).toEqual([0x00, 0x0b, 0xb8, 0x00])
+
+      const boundary = findVideoKeyframeBoundary(concat(new Uint8Array(4), tag), 0)
+      expect(boundary?.milliseconds).toBe(3000)
+
+      // > 24 位：0x01234567，扩展字节为最高 8 位
+      const extendedTag = videoTag(0x01234567, 1)
+      expect(Array.from(extendedTag.subarray(4, 8))).toEqual([0x23, 0x45, 0x67, 0x01])
+
+      const extended = findVideoKeyframeBoundary(concat(new Uint8Array(4), extendedTag), 0)
+      expect(extended?.milliseconds).toBe(0x01234567)
+    })
+
     it('should return the first valid tag of any type for findNextTagBoundary', () => {
       const audio = audioTag(1500)
       const key = videoTag(3000, 1)
@@ -206,6 +223,23 @@ describe('recordingSeek', () => {
       expect((init as RequestInit).headers).toEqual({
         Range: expect.stringMatching(/^bytes=\d+-\d+$/),
       })
+    })
+
+    it('should retry an incomplete tag after more bytes arrive', async () => {
+      const prefix = new Uint8Array(16)
+      const audio = audioTag(100)
+      const key = videoTag(101_000, 1)
+      const window = concat(prefix, audio, key)
+      // 第一块只到 keyframe tag header + 2 字节 data：header 完整、tag 不完整，进入 pending
+      const splitAt = prefix.length + audio.length + 11 + 2
+      const fetchImpl = vi.fn(async () =>
+        streamResponse([window.subarray(0, splitAt), window.subarray(splitAt)]),
+      )
+
+      const result = await seekUnbuffered({ ...baseParams, fetchImpl })
+
+      expect(result?.keyframe).toBe(true)
+      expect(result?.milliseconds).toBe(101_000)
     })
 
     it('should cancel the body and degrade on non-206 responses', async () => {

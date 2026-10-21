@@ -104,12 +104,14 @@ function readUint32BE(bytes: Uint8Array, offset: number): number {
   )
 }
 
-function readTagAt(
-  bytes: Uint8Array,
-  offset: number,
-  baseOffset: number,
-): FlvTagBoundary | null {
-  if (offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES > bytes.length) {
+interface FlvTagHeader {
+  tagType: number
+  dataSize: number
+}
+
+/** 只读取 tag header 的类型/长度（不要求完整 data/PrevTagSize），用于增量扫描识别不完整候选。 */
+function inspectTagHeader(bytes: Uint8Array, offset: number): FlvTagHeader | null {
+  if (offset + FLV_TAG_HEADER_BYTES > bytes.length) {
     return null
   }
 
@@ -124,6 +126,35 @@ function readTagAt(
     return null
   }
 
+  return { tagType, dataSize }
+}
+
+/** header 合法但 data/PrevTagSize 尚未被当前缓冲覆盖：下一轮增量扫描重试。 */
+function isIncompleteTag(bytes: Uint8Array, offset: number): boolean {
+  const header = inspectTagHeader(bytes, offset)
+  if (!header) {
+    return false
+  }
+
+  const tagEnd = offset + FLV_TAG_HEADER_BYTES + header.dataSize
+  return tagEnd + FLV_PREV_TAG_SIZE_BYTES > bytes.length
+}
+
+function readTagAt(
+  bytes: Uint8Array,
+  offset: number,
+  baseOffset: number,
+): FlvTagBoundary | null {
+  if (offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES > bytes.length) {
+    return null
+  }
+
+  const header = inspectTagHeader(bytes, offset)
+  if (!header) {
+    return null
+  }
+
+  const { tagType, dataSize } = header
   const tagEnd = offset + FLV_TAG_HEADER_BYTES + dataSize
   if (tagEnd + FLV_PREV_TAG_SIZE_BYTES > bytes.length) {
     // 窗口尚未覆盖完整 tag：交由下一轮增量扫描
@@ -135,10 +166,11 @@ function readTagAt(
     return null
   }
 
+  // FLV TagHeader: UI24 Timestamp（大端）+ UI8 TimestampExtended（高 8 位），与 mpegts demuxer 同口径
   const milliseconds =
-    (bytes[offset + 4] |
+    ((bytes[offset + 4] << 16) |
       (bytes[offset + 5] << 8) |
-      (bytes[offset + 6] << 16) |
+      bytes[offset + 6] |
       (bytes[offset + 7] << 24)) >>>
     0
 
@@ -190,6 +222,66 @@ export function findNextTagBoundary(
   baseOffset: number,
 ): FlvTagBoundary | null {
   return scanBoundary(window, baseOffset, false)
+}
+
+interface IncrementalScanState {
+  scanStart: number
+  pending: Set<number>
+  firstAnyTag: FlvTagBoundary | null
+}
+
+function createIncrementalScanState(): IncrementalScanState {
+  return { scanStart: 0, pending: new Set<number>(), firstAnyTag: null }
+}
+
+function rememberFirstAnyTag(state: IncrementalScanState, boundary: FlvTagBoundary): void {
+  if (!state.firstAnyTag || boundary.tagOffset < state.firstAnyTag.tagOffset) {
+    state.firstAnyTag = boundary
+  }
+}
+
+/**
+ * 增量扫描：只检查新到达的字节 + 上一轮 header 完整但 data 不完整的候选，
+ * 避免每个 chunk 都从 buffer 起点全量重扫（8MB 窗口下的 O(n²)）。
+ */
+function scanIncremental(
+  buffer: Uint8Array,
+  baseOffset: number,
+  state: IncrementalScanState,
+): FlvTagBoundary | null {
+  // 1. 先重试跨 chunk 的不完整候选（保持文件偏移顺序）
+  for (const offset of [...state.pending].sort((left, right) => left - right)) {
+    const boundary = readTagAt(buffer, offset, baseOffset)
+    if (boundary) {
+      state.pending.delete(offset)
+      rememberFirstAnyTag(state, boundary)
+      if (boundary.keyframe) {
+        return boundary
+      }
+    } else if (!isIncompleteTag(buffer, offset)) {
+      // 已补齐但 PrevTagSize 校验失败 / 被证明是伪 tag：丢弃候选
+      state.pending.delete(offset)
+    }
+  }
+
+  // 2. 扫描新窗口；回退 15 字节覆盖跨 chunk 的 header
+  for (let offset = state.scanStart; offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES <= buffer.length; offset++) {
+    const boundary = readTagAt(buffer, offset, baseOffset)
+    if (boundary) {
+      rememberFirstAnyTag(state, boundary)
+      if (boundary.keyframe) {
+        return boundary
+      }
+    } else if (isIncompleteTag(buffer, offset)) {
+      state.pending.add(offset)
+    }
+  }
+
+  state.scanStart = Math.max(
+    0,
+    buffer.length - (FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES),
+  )
+  return null
 }
 
 function parseContentRange(value: string | null): { start: number; end: number } | null {
@@ -312,7 +404,7 @@ export async function seekUnbuffered(
     }
 
     let buffer: Uint8Array<ArrayBufferLike> = new Uint8Array(0)
-    let firstAnyTag: FlvTagBoundary | null = null
+    const scanState = createIncrementalScanState()
 
     try {
       while (true) {
@@ -323,9 +415,7 @@ export async function seekUnbuffered(
 
         if (value && value.length > 0) {
           buffer = concatBytes(buffer, value)
-          firstAnyTag ??= findNextTagBoundary(buffer, baseOffset)
-
-          const keyframe = findVideoKeyframeBoundary(buffer, baseOffset)
+          const keyframe = scanIncremental(buffer, baseOffset, scanState)
           if (keyframe) {
             await reader.cancel()
             return generation === seekGeneration
@@ -352,11 +442,11 @@ export async function seekUnbuffered(
       return null
     }
 
-    if (firstAnyTag) {
+    if (scanState.firstAnyTag) {
       return {
-        fileposition: firstAnyTag.fileposition,
-        milliseconds: firstAnyTag.milliseconds,
-        keyframe: firstAnyTag.keyframe,
+        fileposition: scanState.firstAnyTag.fileposition,
+        milliseconds: scanState.firstAnyTag.milliseconds,
+        keyframe: scanState.firstAnyTag.keyframe,
       }
     }
 
