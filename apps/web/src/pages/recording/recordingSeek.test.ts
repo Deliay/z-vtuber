@@ -62,6 +62,47 @@ function audioTag(timestamp: number): Uint8Array {
   return makeTag({ type: 8, timestamp, data: new Uint8Array([0xaf, 0x01, 1, 2]) })
 }
 
+/** AVC/HEVC video tag：packetType 0=sequence header，1=NALU，2=end of sequence。 */
+function packetVideoTag(
+  timestamp: number,
+  packetType: 0 | 1 | 2,
+  options: { frameType?: 1 | 2; codecId?: 7 | 12; extra?: number[] } = {},
+): Uint8Array {
+  const frameType = options.frameType ?? 1
+  const codecId = options.codecId ?? 7
+  return makeTag({
+    type: 9,
+    timestamp,
+    data: new Uint8Array([
+      (frameType << 4) | codecId,
+      packetType,
+      0,
+      0,
+      0,
+      ...(options.extra ?? []),
+    ]),
+  })
+}
+
+/** Enhanced header（bit7=1）：0x80 | FrameType<<4 | packetType + FourCC + payload。 */
+function enhancedVideoTag(
+  timestamp: number,
+  fourCc: 'hvc1' | 'av01',
+  packetType: 0 | 1 | 2,
+): Uint8Array {
+  return makeTag({
+    type: 9,
+    timestamp,
+    data: new Uint8Array([
+      0x80 | (1 << 4) | packetType,
+      ...Array.from(fourCc).map((char) => char.charCodeAt(0)),
+      1,
+      2,
+      3,
+    ]),
+  })
+}
+
 function streamResponse(
   chunks: Uint8Array[],
   options: {
@@ -165,6 +206,33 @@ describe('recordingSeek', () => {
       expect(extended?.milliseconds).toBe(0x01234567)
     })
 
+    it('should exclude AVC sequence header and end-of-sequence tags from keyframes', () => {
+      const sequenceHeader = packetVideoTag(0, 0)
+      const endOfSequence = packetVideoTag(29960, 2)
+      const realKeyframe = packetVideoTag(29000, 1, { extra: [9, 9] })
+
+      const window = concat(sequenceHeader, endOfSequence, realKeyframe)
+      const boundary = findVideoKeyframeBoundary(window, 0)
+
+      expect(boundary?.milliseconds).toBe(29000)
+      expect(boundary?.keyframe).toBe(true)
+
+      // 仅 sequence header + EOS：没有任何真实关键帧
+      expect(findVideoKeyframeBoundary(concat(sequenceHeader, endOfSequence), 0)).toBeNull()
+    })
+
+    it('should apply the same NALU-packet rule to enhanced HEVC/AV1 tags', () => {
+      const sequenceHeader = enhancedVideoTag(0, 'hvc1', 0)
+      const endOfSequence = enhancedVideoTag(29960, 'hvc1', 2)
+      const realKeyframe = enhancedVideoTag(29000, 'hvc1', 1)
+      const av1Keyframe = enhancedVideoTag(28000, 'av01', 1)
+
+      const window = concat(sequenceHeader, endOfSequence, realKeyframe)
+      expect(findVideoKeyframeBoundary(window, 0)?.milliseconds).toBe(29000)
+      expect(findVideoKeyframeBoundary(concat(sequenceHeader, endOfSequence), 0)).toBeNull()
+      expect(findVideoKeyframeBoundary(concat(av1Keyframe), 0)?.milliseconds).toBe(28000)
+    })
+
     it('should return the first valid tag of any type for findNextTagBoundary', () => {
       const audio = audioTag(1500)
       const key = videoTag(3000, 1)
@@ -265,32 +333,57 @@ describe('recordingSeek', () => {
       expect(result?.fileposition).toBe(9000 + 10)
     })
 
-    it('should fall back to any valid tag when no keyframe exists in the window', async () => {
-      const window = concat(audioTag(2000), videoTag(2500, 2))
-      const fetchImpl = vi.fn(async () => streamResponse([window]))
+    it('should back-probe once and pick the last real keyframe when estimate passes the tail keyframe', async () => {
+      const header = new Uint8Array(16)
+      const audio = audioTag(29_500)
+      const endOfSequence = packetVideoTag(29_960, 2)
+      // 前向窗口：只剩音频/EOS，没有真实关键帧
+      const forwardWindow = concat(header, audio, endOfSequence)
+      // 回退窗口：包含最后一个真实关键帧 29000ms
+      const backWindow = concat(audioTag(28_000), packetVideoTag(29_000, 1, { extra: [9] }))
 
-      const result = await seekUnbuffered({ ...baseParams, fetchImpl })
-
-      expect(result?.keyframe).toBe(false)
-      expect(result?.milliseconds).toBe(2000)
-    })
-
-    it('should fall back to the estimated offset when no valid tag exists', async () => {
-      const fetchImpl = vi.fn(async () => streamResponse([new Uint8Array(512).fill(0xaa)]))
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockImplementationOnce(async () => streamResponse([forwardWindow], {
+          contentRange: 'bytes 1437818-1440000/1462188',
+        }))
+        .mockImplementationOnce(async () => streamResponse([backWindow], {
+          contentRange: 'bytes 1400000-1437817/1462188',
+        }))
 
       const result = await seekUnbuffered({
         ...baseParams,
-        targetSeconds: 50,
-        durationSeconds: 100,
-        fileSize: 1000,
+        targetSeconds: 29.5,
+        durationSeconds: 30,
+        fileSize: 1_462_188,
         fetchImpl,
       })
 
       expect(result).toEqual({
-        fileposition: 500,
-        milliseconds: 50_000,
-        keyframe: false,
+        fileposition: 1_400_000 + audioTag(0).length,
+        milliseconds: 29_000,
+        keyframe: true,
       })
+      expect(result?.milliseconds).not.toBe(29_960)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      const backRange = (fetchImpl.mock.calls[1][1] as RequestInit).headers as Record<string, string>
+      expect(backRange.Range).toMatch(/^bytes=\d+-1437817$/)
+    })
+
+    it('should degrade explicitly when neither forward nor backward window has a real keyframe', async () => {
+      const noKeyframeWindow = concat(audioTag(29_500), packetVideoTag(29_960, 2))
+      const fetchImpl = vi.fn(async () => streamResponse([noKeyframeWindow]))
+
+      const result = await seekUnbuffered({
+        ...baseParams,
+        targetSeconds: 29.5,
+        durationSeconds: 30,
+        fileSize: 10_000,
+        fetchImpl,
+      })
+
+      expect(result).toBeNull()
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
     })
 
     it('should drop stale results (last-wins) and cancel the superseded body', async () => {

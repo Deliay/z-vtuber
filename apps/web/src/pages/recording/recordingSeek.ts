@@ -140,6 +140,50 @@ function isIncompleteTag(bytes: Uint8Array, offset: number): boolean {
   return tagEnd + FLV_PREV_TAG_SIZE_BYTES > bytes.length
 }
 
+/**
+ * 视频 tag 是否为「真正含 NALU 的关键帧」。
+ *
+ * frameType=1 还出现在无帧数据的 tag 上：
+ * - AVC/HEVC sequence header（AVCPacketType=0，文件开头）；
+ * - AVC end of sequence（AVCPacketType=2，ffmpeg FLV muxer 收尾必写）。
+ * 这两种 tag 被 mpegts demuxer 解析后零样本输出，绝不能作为续播落点。
+ */
+function isVideoKeyframe(
+  tagType: number,
+  dataSize: number,
+  bytes: Uint8Array,
+  payloadOffset: number,
+): boolean {
+  if (tagType !== FLV_TAG_VIDEO || dataSize < 1) {
+    return false
+  }
+
+  const firstByte = bytes[payloadOffset]
+  // FrameType 位于 bit6..4；enhanced header 的 bit7 是独立标志
+  if (((firstByte & 0x70) >> 4) !== 1) {
+    return false
+  }
+
+  const enhanced = (firstByte & 0x80) !== 0
+  if (enhanced) {
+    // Enhanced: UI8(0x80|packetType) + FourCC(4) + payload；packetType=1 才是编码帧
+    if (dataSize < 5) {
+      return false
+    }
+    // hvc1/av01 及未知 enhanced codec 均要求 packetType=1（排除 0 sequence header / 2 EOS）
+    return (firstByte & 0x0f) === 1
+  }
+
+  const codecId = firstByte & 0x0f
+  if (codecId === 7 || codecId === 12) {
+    // AVC/HEVCPacketType: 0=sequence header, 1=NALU, 2=end of sequence
+    return dataSize >= 2 && bytes[payloadOffset + 1] === 1
+  }
+
+  // 其他 legacy codec：frameType=1 即关键帧
+  return true
+}
+
 function readTagAt(
   bytes: Uint8Array,
   offset: number,
@@ -174,8 +218,7 @@ function readTagAt(
       (bytes[offset + 7] << 24)) >>>
     0
 
-  const keyframe =
-    tagType === FLV_TAG_VIDEO && dataSize > 0 && (bytes[offset + FLV_TAG_HEADER_BYTES] >> 4) === 1
+  const keyframe = isVideoKeyframe(tagType, dataSize, bytes, offset + FLV_TAG_HEADER_BYTES)
 
   const tagOffset = baseOffset + offset
   return {
@@ -192,7 +235,11 @@ function scanBoundary(
   baseOffset: number,
   requireKeyframe: boolean,
 ): FlvTagBoundary | null {
-  for (let offset = 0; offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES < bytes.length; offset++) {
+  for (
+    let offset = 0;
+    offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES <= bytes.length;
+    offset++
+  ) {
     const boundary = readTagAt(bytes, offset, baseOffset)
     if (!boundary) {
       continue
@@ -224,20 +271,33 @@ export function findNextTagBoundary(
   return scanBoundary(window, baseOffset, false)
 }
 
+/** 扫描窗口内最后一个真实视频关键帧（用于尾段向前回退探测）；无则返回 null。 */
+export function findLastVideoKeyframeBoundary(
+  window: Uint8Array,
+  baseOffset: number,
+): FlvTagBoundary | null {
+  let last: FlvTagBoundary | null = null
+  for (
+    let offset = 0;
+    offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES <= window.length;
+    offset++
+  ) {
+    const boundary = readTagAt(window, offset, baseOffset)
+    if (boundary?.keyframe) {
+      last = boundary
+    }
+  }
+
+  return last
+}
+
 interface IncrementalScanState {
   scanStart: number
   pending: Set<number>
-  firstAnyTag: FlvTagBoundary | null
 }
 
 function createIncrementalScanState(): IncrementalScanState {
-  return { scanStart: 0, pending: new Set<number>(), firstAnyTag: null }
-}
-
-function rememberFirstAnyTag(state: IncrementalScanState, boundary: FlvTagBoundary): void {
-  if (!state.firstAnyTag || boundary.tagOffset < state.firstAnyTag.tagOffset) {
-    state.firstAnyTag = boundary
-  }
+  return { scanStart: 0, pending: new Set<number>() }
 }
 
 /**
@@ -254,7 +314,6 @@ function scanIncremental(
     const boundary = readTagAt(buffer, offset, baseOffset)
     if (boundary) {
       state.pending.delete(offset)
-      rememberFirstAnyTag(state, boundary)
       if (boundary.keyframe) {
         return boundary
       }
@@ -268,7 +327,6 @@ function scanIncremental(
   for (let offset = state.scanStart; offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES <= buffer.length; offset++) {
     const boundary = readTagAt(buffer, offset, baseOffset)
     if (boundary) {
-      rememberFirstAnyTag(state, boundary)
       if (boundary.keyframe) {
         return boundary
       }
@@ -324,6 +382,48 @@ function concatBytes(
   return merged
 }
 
+/** 读取一个 Range 窗口的完整字节（仅用于尾段向前回退探测，窗口 ≤ 8MB）；非 206 一律降级。 */
+async function readRangeWindow(
+  url: string,
+  start: number,
+  end: number,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal,
+): Promise<{ baseOffset: number; bytes: Uint8Array<ArrayBufferLike> } | null> {
+  const response = await fetchImpl(url, {
+    headers: { Range: `bytes=${start}-${end}` },
+    signal,
+  })
+
+  if (response.status !== 206) {
+    await cancelBody(response)
+    return null
+  }
+
+  const baseOffset = parseContentRange(response.headers.get('content-range'))?.start ?? start
+  const reader = response.body?.getReader()
+  if (!reader) {
+    return null
+  }
+
+  let bytes: Uint8Array<ArrayBufferLike> = new Uint8Array(0)
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      if (value && value.length > 0) {
+        bytes = concatBytes(bytes, value)
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
+
+  return { baseOffset, bytes }
+}
+
 /**
  * 取消当前在途探测（播放器关闭/切源时调用），使过期结果被丢弃。
  * 不改变下一次 seek 的代次语义。
@@ -339,7 +439,8 @@ export function cancelPendingSeek(): void {
  *
  * - 非 206（上游忽略 Range）一律取消响应体并返回 null，绝不整文件 buffer；
  * - 并发调用 last-wins：旧调用被 abort，过期结果返回 null；
- * - 窗口内无关键帧时回退任意合法 tag；完全无 tag 时按估算偏移直试（由调用方显性提示失败）。
+ * - 前向窗口无真实关键帧（尾段估算越过最后关键帧）时，向前补一次 Range 探测取最近真实关键帧；
+ *   仍找不到则返回 null 显性降级，绝不落到 EOS/无 NALU 的 video tag。
  */
 export async function seekUnbuffered(
   params: SeekUnbufferedParams,
@@ -442,20 +543,29 @@ export async function seekUnbuffered(
       return null
     }
 
-    if (scanState.firstAnyTag) {
-      return {
-        fileposition: scanState.firstAnyTag.fileposition,
-        milliseconds: scanState.firstAnyTag.milliseconds,
-        keyframe: scanState.firstAnyTag.keyframe,
+    // 尾段场景：估算偏移越过最后一个关键帧，前向窗口只剩音频/EOS tag。
+    // 向前补一次 Range 探测取最近真实关键帧；找不到则显性降级（null → UI 提示），
+    // 绝不把落点/时间设到 EOS 或无帧 tag 上。
+    if (rangeStart > 0) {
+      const backEnd = rangeStart - 1
+      const backStart = Math.max(0, backEnd - scanBytes + 1)
+      const back = await readRangeWindow(url, backStart, backEnd, fetchImpl, controller.signal)
+
+      if (generation !== seekGeneration) {
+        return null
+      }
+
+      const keyframe = back ? findLastVideoKeyframeBoundary(back.bytes, back.baseOffset) : null
+      if (keyframe && keyframe.milliseconds <= targetMs + 1) {
+        return {
+          fileposition: keyframe.fileposition,
+          milliseconds: keyframe.milliseconds,
+          keyframe: true,
+        }
       }
     }
 
-    // 窗口内无任何合法 tag：按估算偏移直试（调用方失败时显性提示，不静默冻结）
-    return {
-      fileposition: rangeStart,
-      milliseconds: targetMs,
-      keyframe: false,
-    }
+    return null
   } catch {
     // abort / 网络失败：返回 null 由 UI 提示「该文件暂不支持跳转」
     return null
