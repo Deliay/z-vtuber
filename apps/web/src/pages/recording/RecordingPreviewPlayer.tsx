@@ -25,7 +25,7 @@ import {
   destroyPlayer,
   pausePlayer,
   playRecording,
-  probeSeekable,
+  probeSeekableWithStatus,
   resumePlayer,
   seekToByteOffset,
 } from './recordingPlayer'
@@ -37,6 +37,8 @@ export interface RecordingPreviewPlayerProps {
   fileName: string
   fileSize: number
   onClose: () => void
+  /** 预览目标文件已被清理/不存在时回调（页面据此刷新历史录播列表）。 */
+  onFileMissing?: () => void
 }
 
 function isBuffered(video: HTMLVideoElement, seconds: number): boolean {
@@ -55,9 +57,12 @@ export function RecordingPreviewPlayer({
   fileName,
   fileSize,
   onClose,
+  onFileMissing,
 }: RecordingPreviewPlayerProps) {
   const { message } = App.useApp()
   const videoRef = useRef<HTMLVideoElement>(null)
+  const onFileMissingRef = useRef(onFileMissing)
+  onFileMissingRef.current = onFileMissing
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null)
 
   // 稳定 callback ref：Modal 内容在 portal 中挂载，用 state 触发初始化 effect 且避免每次渲染重挂 ref
@@ -125,13 +130,20 @@ export function RecordingPreviewPlayer({
     setLoading(true)
     const initialize = async () => {
       try {
-        const rangeSeekable = await probeSeekable(url)
+        const probe = await probeSeekableWithStatus(url)
         if (cancelled) {
           return
         }
 
-        setSeekable(rangeSeekable)
-        if (!rangeSeekable) {
+        if (probe.status === 404) {
+          // PRD 3.5：文件已被清理/不存在 → 明确提示并刷新历史录播列表
+          setPlaybackError('文件不存在或已被清理')
+          onFileMissingRef.current?.()
+          return
+        }
+
+        setSeekable(probe.seekable)
+        if (!probe.seekable) {
           setSeekNotice('该文件暂不支持跳转')
         }
 
@@ -494,7 +506,7 @@ export function RecordingPreviewPlayer({
         <Button
           type="primary"
           icon={<DownloadOutlined />}
-          aria-disabled={!clipUrl}
+          aria-disabled={!clipUrl ? true : undefined}
           loading={downloading}
           onClick={() => {
             if (!clipUrl) {

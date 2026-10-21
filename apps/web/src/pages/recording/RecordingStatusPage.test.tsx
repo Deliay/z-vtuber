@@ -157,7 +157,7 @@ describe('RecordingStatusPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: /历史录播/ }))
 
     const preview = await screen.findByRole('button', { name: '预览' })
-    expect(preview).toHaveAttribute('aria-disabled', 'false')
+    expect(preview).not.toHaveAttribute('aria-disabled')
 
     fireEvent.click(preview)
 

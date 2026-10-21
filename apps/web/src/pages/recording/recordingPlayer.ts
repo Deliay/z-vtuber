@@ -119,14 +119,20 @@ export function isPlaybackSupported(): boolean {
   )
 }
 
+export interface PlaybackProbeResult {
+  seekable: boolean
+  /** 上游 HTTP 状态码；网络失败/被取消为 0。 */
+  status: number
+}
+
 /**
- * 探测下载端点是否支持 Range：`Range: bytes=0-0` 返回 206，或响应声明 accept-ranges: bytes。
- * 探测失败禁用拖动但保留顺序播放，绝不整文件 buffer。
+ * 探测下载端点是否存在且支持 Range：`Range: bytes=0-0` 返回 206，或响应声明 accept-ranges: bytes。
+ * 探测失败禁用拖动但保留顺序播放，绝不整文件 buffer；404 由弹窗提示文件不存在并刷新列表。
  */
-export async function probeSeekable(
+export async function probeSeekableWithStatus(
   url: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<boolean> {
+): Promise<PlaybackProbeResult> {
   try {
     const response = await fetchImpl(url, {
       method: 'GET',
@@ -135,6 +141,7 @@ export async function probeSeekable(
 
     const acceptRanges = response.headers.get('accept-ranges')?.toLowerCase() ?? ''
     const seekable = response.status === 206 || acceptRanges.includes('bytes')
+    const status = response.status
 
     try {
       await response.body?.cancel()
@@ -142,10 +149,18 @@ export async function probeSeekable(
       // 响应体已关闭：忽略
     }
 
-    return seekable
+    return { seekable, status }
   } catch {
-    return false
+    return { seekable: false, status: 0 }
   }
+}
+
+/** 只关心是否可跳转的便捷封装（既有调用方/测试口径）。 */
+export async function probeSeekable(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  return (await probeSeekableWithStatus(url, fetchImpl)).seekable
 }
 
 async function loadMpegts(): Promise<typeof Mpegts> {

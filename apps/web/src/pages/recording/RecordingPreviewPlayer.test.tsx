@@ -12,6 +12,7 @@ vi.mock('./recordingPlayer', () => ({
   pausePlayer: vi.fn(),
   resumePlayer: vi.fn(async () => undefined),
   probeSeekable: vi.fn(async () => true),
+  probeSeekableWithStatus: vi.fn(async () => ({ seekable: true, status: 206 })),
   seekToByteOffset: vi.fn(() => true),
   configureBufferForBitrate: vi.fn(),
 }))
@@ -33,7 +34,7 @@ vi.mock('../../api/client', () => ({
 
 const mockPlay = vi.mocked(player.playRecording)
 const mockDestroy = vi.mocked(player.destroyPlayer)
-const mockProbe = vi.mocked(player.probeSeekable)
+const mockProbe = vi.mocked(player.probeSeekableWithStatus)
 const mockSeekToByteOffset = vi.mocked(player.seekToByteOffset)
 const mockSeekUnbuffered = vi.mocked(seek.seekUnbuffered)
 const mockIsPlaybackSupported = vi.mocked(player.isPlaybackSupported)
@@ -96,7 +97,7 @@ describe('RecordingPreviewPlayer', () => {
     vi.clearAllMocks()
     mockIsPlaybackSupported.mockReturnValue(true)
     mockPlay.mockResolvedValue(true)
-    mockProbe.mockResolvedValue(true)
+    mockProbe.mockResolvedValue({ seekable: true, status: 206 })
     mockSeekToByteOffset.mockReturnValue(true)
     mockSeekUnbuffered.mockResolvedValue(null)
   })
@@ -123,11 +124,24 @@ describe('RecordingPreviewPlayer', () => {
   })
 
   it('should disable seeking and show a hint when Range probe fails', async () => {
-    mockProbe.mockResolvedValue(false)
+    mockProbe.mockResolvedValue({ seekable: false, status: 200 })
 
     render(<RecordingPreviewPlayer {...defaultProps} />)
 
     expect(await screen.findByText('该文件暂不支持跳转')).toBeInTheDocument()
+  })
+
+  it('should prompt and refresh when the recording file no longer exists', async () => {
+    const onFileMissing = vi.fn()
+    mockProbe.mockResolvedValue({ seekable: false, status: 404 })
+
+    render(
+      <RecordingPreviewPlayer {...defaultProps} onFileMissing={onFileMissing} />,
+    )
+
+    expect(await screen.findByText('文件不存在或已被清理')).toBeInTheDocument()
+    expect(onFileMissing).toHaveBeenCalled()
+    expect(mockPlay).not.toHaveBeenCalled()
   })
 
   it('should use native currentTime when the target is buffered', async () => {
@@ -222,7 +236,7 @@ describe('RecordingPreviewPlayer', () => {
     fireEvent.timeUpdate(getVideo())
     fireEvent.click(screen.getByRole('button', { name: '设为终点' }))
 
-    expect(download).toHaveAttribute('aria-disabled', 'false')
+    expect(download).not.toHaveAttribute('aria-disabled')
   })
 
   it('should preflight the clip and trigger a download on 2xx', async () => {

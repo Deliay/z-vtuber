@@ -103,13 +103,13 @@ export function RecordingStatusPage() {
     }
   }, [])
 
-  const loadRecordings = async (roomId: number) => {
+  const loadRecordings = async (roomId: number, force = false) => {
     setRecordingsError((prev) => {
       const next = { ...prev }
       delete next[roomId]
       return next
     })
-    if (recordingsByRoom[roomId]) {
+    if (!force && recordingsByRoom[roomId]) {
       return
     }
     try {
@@ -159,7 +159,7 @@ export function RecordingStatusPage() {
             <Button
               type="link"
               size="small"
-              aria-disabled={previewDisabled}
+              aria-disabled={previewDisabled ? true : undefined}
               onClick={(event) => {
                 if (previewDisabled) {
                   event.preventDefault()
@@ -333,6 +333,15 @@ export function RecordingStatusPage() {
           fileName={previewFile.fileName}
           fileSize={previewFile.fileSize}
           onClose={() => setPreviewFile(null)}
+          onFileMissing={() => {
+            // 文件已被清理/不存在：清掉缓存并重新拉取该房间历史录播
+            setRecordingsByRoom((prev) => {
+              const next = { ...prev }
+              delete next[previewFile.roomId]
+              return next
+            })
+            void loadRecordings(previewFile.roomId, true)
+          }}
         />
       )}
     </div>
