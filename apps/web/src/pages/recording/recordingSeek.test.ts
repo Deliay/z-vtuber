@@ -144,8 +144,8 @@ describe('recordingSeek', () => {
       expect(boundary?.milliseconds).toBe(3000)
       expect(boundary?.keyframe).toBe(true)
       expect(boundary?.tagOffset).toBe(10_000 + prefix.length + audio.length + nonKey.length)
-      // 交给 mpegts 的偏移指向 tag 头之前的 PrevTagSize
-      expect(boundary?.fileposition).toBe(boundary!.tagOffset - 4)
+      // 交给 mpegts 的偏移就是 tag 头起始位置
+      expect(boundary?.fileposition).toBe(boundary!.tagOffset)
     })
 
     it('should return the first valid tag of any type for findNextTagBoundary', () => {
@@ -200,7 +200,7 @@ describe('recordingSeek', () => {
       expect(result).not.toBeNull()
       expect(result?.keyframe).toBe(true)
       expect(result?.milliseconds).toBe(101_000)
-      expect(result?.fileposition).toBe(5_242_880 + 16 + audioTag(0).length - 4)
+      expect(result?.fileposition).toBe(5_242_880 + 16 + audioTag(0).length)
 
       const [, init] = fetchImpl.mock.calls[0]
       expect((init as RequestInit).headers).toEqual({
@@ -228,7 +228,7 @@ describe('recordingSeek', () => {
 
       const result = await seekUnbuffered({ ...baseParams, fetchImpl })
 
-      expect(result?.fileposition).toBe(9000 + 10 - 4)
+      expect(result?.fileposition).toBe(9000 + 10)
     })
 
     it('should fall back to any valid tag when no keyframe exists in the window', async () => {

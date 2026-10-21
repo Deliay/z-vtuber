@@ -31,9 +31,8 @@ const FLV_TAG_SCRIPT = 18
 
 export interface FlvTagBoundary {
   /**
-   * 交给 mpegts `_loadSegment(0, fileposition)` 的字节偏移。
-   * mpegts 的 FLV demuxer 在非 0 起点会先跳过 4 字节 PrevTagSize，
-   * 因此这里指向 tag 头之前的 PreviousTagSize 字段（tagOffset - 4）。
+   * 交给 mpegts `_loadSegment(0, fileposition)` 的字节偏移：FLV tag 头起始位置。
+   * demuxer 只在首次解析文件头时跳过 4 字节 PrevTagSize0，续播解析直接从 tag 头开始。
    */
   fileposition: number
   /** 绝对字节偏移对应的 FLV tag 时间戳（毫秒）。 */
@@ -148,8 +147,8 @@ function readTagAt(
 
   const tagOffset = baseOffset + offset
   return {
-    // mpegts FLV demuxer 在非 0 起点会先跳过 4 字节（PrevTagSize），故回退到 tag 头之前
-    fileposition: Math.max(0, tagOffset - FLV_PREV_TAG_SIZE_BYTES),
+    // 续播 chunk 必须从 tag 头开始（demuxer 无 mid-stream resync，也不会再次跳过 PrevTagSize）
+    fileposition: tagOffset,
     milliseconds,
     keyframe,
     tagOffset,
