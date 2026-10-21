@@ -21,6 +21,8 @@ import {
 } from '../../api/client'
 import type { components } from '../../api/schema'
 import { PageHeader } from '../../components/PageHeader'
+import { isPlaybackSupported } from './recordingPlayer'
+import { RecordingPreviewPlayer } from './RecordingPreviewPlayer'
 
 type RecordingStatusItem = components['schemas']['RecordingStatusItem']
 type RecordingFile = components['schemas']['RecordingFile']
@@ -69,8 +71,14 @@ export function RecordingStatusPage() {
   const [recordingsByRoom, setRecordingsByRoom] = useState<Record<number, RecordingFile[]>>({})
   const [recordingsLoading, setRecordingsLoading] = useState<number | null>(null)
   const [recordingsError, setRecordingsError] = useState<Record<number, string>>({})
+  const [previewFile, setPreviewFile] = useState<{
+    roomId: number
+    fileName: string
+    fileSize: number
+  } | null>(null)
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const playbackSupported = isPlaybackSupported()
 
   const fetchStatus = async () => {
     try {
@@ -138,13 +146,51 @@ export function RecordingStatusPage() {
 
     return (
       <Space orientation="vertical" size={4}>
-        {files.map((file) => (
-          <Space key={file.name} size={8} wrap>
-            <a href={recordingDownloadUrl(roomId, file.name)}>{file.name}</a>
-            <Typography.Text type="secondary">{file.info.title}</Typography.Text>
-            <Typography.Text type="secondary">{formatBytes(file.size)}</Typography.Text>
-          </Space>
-        ))}
+        {files.map((file) => {
+          const isAv1 = file.name.startsWith('[AV1]')
+          const previewDisabled = isAv1 || !playbackSupported
+          const disabledReason = isAv1
+            ? 'AV1 编码暂不支持在线预览'
+            : !playbackSupported
+              ? '当前浏览器不支持在线预览'
+              : null
+
+          const previewButton = (
+            <Button
+              type="link"
+              size="small"
+              aria-disabled={previewDisabled}
+              onClick={(event) => {
+                if (previewDisabled) {
+                  event.preventDefault()
+                  return
+                }
+                setPreviewFile({
+                  roomId,
+                  fileName: file.name,
+                  fileSize: file.size,
+                })
+              }}
+            >
+              预览
+            </Button>
+          )
+
+          return (
+            <Space key={file.name} size={8} wrap>
+              <a href={recordingDownloadUrl(roomId, file.name)}>{file.name}</a>
+              <Typography.Text type="secondary">{file.info.title}</Typography.Text>
+              <Typography.Text type="secondary">{formatBytes(file.size)}</Typography.Text>
+              {disabledReason ? (
+                <Tooltip title={disabledReason} trigger={['hover', 'focus']}>
+                  {previewButton}
+                </Tooltip>
+              ) : (
+                previewButton
+              )}
+            </Space>
+          )
+        })}
       </Space>
     )
   }
@@ -278,6 +324,16 @@ export function RecordingStatusPage() {
         <Typography.Text type="danger" style={{ display: 'block', marginTop: 8 }}>
           状态刷新失败，展示的是上次结果
         </Typography.Text>
+      )}
+
+      {previewFile && (
+        <RecordingPreviewPlayer
+          open
+          roomId={previewFile.roomId}
+          fileName={previewFile.fileName}
+          fileSize={previewFile.fileSize}
+          onClose={() => setPreviewFile(null)}
+        />
       )}
     </div>
   )

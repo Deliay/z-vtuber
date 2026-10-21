@@ -25,6 +25,7 @@ import {
   recordingAudioUrl,
   recordingDownloadUrl,
   recordingAudioClipUrl,
+  recordingClipUrl,
   apiErrorMessage,
   listWeiboCookieAccounts,
   createWeiboCookieAccount,
@@ -664,6 +665,15 @@ describe('API Client', () => {
       )
       expect(recordingAudioClipUrl(101, 'a.flv', 0, 1000)).toBe(
         '/api/b/live/101/recordings/a.flv/audio?startMs=0&endMs=1000',
+      )
+    })
+
+    it('recordingClipUrl should build the video clip url with encoded file name and ms query', () => {
+      expect(recordingClipUrl(456, '[RAW] a.flv', 1000, 2500)).toBe(
+        '/api/b/live/456/recordings/%5BRAW%5D%20a.flv/clip?startMs=1000&endMs=2500',
+      )
+      expect(recordingClipUrl(101, 'a.flv', 0, 1000)).toBe(
+        '/api/b/live/101/recordings/a.flv/clip?startMs=0&endMs=1000',
       )
     })
   })
@@ -1916,6 +1926,24 @@ describe('API Client', () => {
       expect(
         apiErrorMessage({ serverMessage: '{"error":"transcript service unavailable"}' }),
       ).toBe('识别服务暂不可用，请稍后重试')
+    })
+
+    it('should map recording clip error codes and duration limit', () => {
+      expect(
+        apiErrorMessage({ serverMessage: '{"error":"startMs and endMs are required"}' }),
+      ).toBe('请选择完整的起止时间')
+      expect(
+        apiErrorMessage({ serverMessage: '{"error":"endMs must be greater than startMs"}' }),
+      ).toBe('终点必须晚于起点')
+      expect(
+        apiErrorMessage({ serverMessage: '{"error":"file is still recording and cannot be downloaded"}' }),
+      ).toBe('文件正在录制中，暂不可用')
+      expect(apiErrorMessage({ serverMessage: '{"error":"video clip failed"}' })).toBe(
+        '片段生成失败，请重试',
+      )
+      expect(
+        apiErrorMessage({ serverMessage: '{"error":"clip duration must be <= 7200000 ms"}' }),
+      ).toBe('片段时长超过上限（7200000 ms）')
     })
 
     it('should map the new training provider/model/task error codes', () => {
