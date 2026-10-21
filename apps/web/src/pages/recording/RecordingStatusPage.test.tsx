@@ -3,13 +3,23 @@ import { screen, waitFor, fireEvent } from '@testing-library/react'
 import { renderWithProviders as render } from '../../test/render'
 import { RecordingStatusPage, RECORDING_REFRESH_INTERVAL } from './RecordingStatusPage'
 import * as client from '../../api/client'
+import * as player from './recordingPlayer'
 
 vi.mock('../../api/client')
+vi.mock('./recordingPlayer', () => ({
+  isPlaybackSupported: vi.fn(() => true),
+}))
+vi.mock('./RecordingPreviewPlayer', () => ({
+  RecordingPreviewPlayer: ({ fileName, fileSize }: { fileName: string; fileSize: number }) => (
+    <div data-testid="preview-player">{`${fileName}:${fileSize}`}</div>
+  ),
+}))
 
 const mockListRecordingStatus = vi.mocked(client.listRecordingStatus)
 const mockListRecordings = vi.mocked(client.listRecordings)
 const mockAudioUrl = vi.mocked(client.recordingAudioUrl)
 const mockDownloadUrl = vi.mocked(client.recordingDownloadUrl)
+const mockIsPlaybackSupported = vi.mocked(player.isPlaybackSupported)
 
 describe('RecordingStatusPage', () => {
   beforeEach(() => {
@@ -18,6 +28,7 @@ describe('RecordingStatusPage', () => {
     mockListRecordings.mockResolvedValue([])
     mockAudioUrl.mockReturnValue('/api/b/live/1/live-stream/audio')
     mockDownloadUrl.mockReturnValue('/api/b/live/1/recordings/a.flv')
+    mockIsPlaybackSupported.mockReturnValue(true)
   })
 
   afterEach(() => {
@@ -121,6 +132,108 @@ describe('RecordingStatusPage', () => {
     expect(screen.getByText('往期歌回')).toBeInTheDocument()
     expect(mockListRecordings).toHaveBeenCalledWith(101)
     expect(mockDownloadUrl).toHaveBeenCalledWith(101, '[RAW][101][主播A] 2026-09-01-歌回.flv')
+  })
+
+  it('should open the preview player for a RAW historical recording', async () => {
+    mockListRecordingStatus.mockResolvedValue([
+      { mid: 1, roomId: 101, state: 'not_live', streamer: { name: '主播A' } },
+    ])
+    mockListRecordings.mockResolvedValue([
+      {
+        name: '[RAW][101][主播A] 2026-09-01-歌回.flv',
+        size: 2048,
+        createdAt: '2026-09-01T12:00:00Z',
+        info: {
+          recordingId: 'rec-101',
+          title: '往期歌回',
+          mid: 1,
+          startedAt: '2026-09-01T12:00:00Z',
+          endedAt: '2026-09-01T14:00:00Z',
+        },
+      },
+    ])
+
+    render(<RecordingStatusPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /历史录播/ }))
+
+    const preview = await screen.findByRole('button', { name: '预览' })
+    expect(preview).not.toHaveAttribute('aria-disabled')
+
+    fireEvent.click(preview)
+
+    expect(screen.getByTestId('preview-player')).toHaveTextContent(
+      '[RAW][101][主播A] 2026-09-01-歌回.flv:2048',
+    )
+  })
+
+  it('should disable preview for AV1 and unsupported browsers with a tooltip reason', async () => {
+    mockListRecordingStatus.mockResolvedValue([
+      { mid: 1, roomId: 101, state: 'not_live', streamer: { name: '主播A' } },
+    ])
+    mockListRecordings.mockResolvedValue([
+      {
+        name: '[AV1][101][主播A] 2026-09-01-歌回.flv',
+        size: 1024,
+        createdAt: '2026-09-01T12:00:00Z',
+        info: {
+          recordingId: 'rec-101',
+          title: '往期歌回',
+          mid: 1,
+          startedAt: '2026-09-01T12:00:00Z',
+          endedAt: '2026-09-01T14:00:00Z',
+        },
+      },
+    ])
+
+    render(<RecordingStatusPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /历史录播/ }))
+
+    const preview = await screen.findByRole('button', { name: '预览' })
+    expect(preview).toHaveAttribute('aria-disabled', 'true')
+
+    fireEvent.focus(preview)
+    expect(
+      (await screen.findAllByRole('tooltip')).some(
+        (tip) => tip.textContent === 'AV1 编码暂不支持在线预览',
+      ),
+    ).toBe(true)
+
+    fireEvent.click(preview)
+    expect(screen.queryByTestId('preview-player')).not.toBeInTheDocument()
+  })
+
+  it('should disable preview with a browser capability reason', async () => {
+    mockIsPlaybackSupported.mockReturnValue(false)
+    mockListRecordingStatus.mockResolvedValue([
+      { mid: 1, roomId: 101, state: 'not_live', streamer: { name: '主播A' } },
+    ])
+    mockListRecordings.mockResolvedValue([
+      {
+        name: '[RAW][101][主播A] 2026-09-01-歌回.flv',
+        size: 1024,
+        createdAt: '2026-09-01T12:00:00Z',
+        info: {
+          recordingId: 'rec-101',
+          title: '往期歌回',
+          mid: 1,
+          startedAt: '2026-09-01T12:00:00Z',
+          endedAt: '2026-09-01T14:00:00Z',
+        },
+      },
+    ])
+
+    render(<RecordingStatusPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /历史录播/ }))
+
+    const preview = await screen.findByRole('button', { name: '预览' })
+    expect(preview).toHaveAttribute('aria-disabled', 'true')
+
+    fireEvent.focus(preview)
+    expect(
+      (await screen.findAllByRole('tooltip')).some(
+        (tip) => tip.textContent === '当前浏览器不支持在线预览',
+      ),
+    ).toBe(true)
   })
 
   it('should render unknown state for missing state', async () => {
