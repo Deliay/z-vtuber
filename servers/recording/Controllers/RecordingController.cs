@@ -4,6 +4,7 @@ using Z.Vtuber.Common.Persistence.Entities;
 using Z.Vtuber.Recording.Audio;
 using Z.Vtuber.Recording.Configuration;
 using Z.Vtuber.Recording.Contracts;
+using Z.Vtuber.Recording.Video;
 
 namespace Z.Vtuber.Recording.Controllers;
 
@@ -15,7 +16,8 @@ public sealed class RecordingController(
     AudioStreamHub audio,
     RecordingOptions options,
     IAudioClipExtractor? clipExtractor = null,
-    IAudioClipMerger? clipMerger = null) : ControllerBase
+    IAudioClipMerger? clipMerger = null,
+    IVideoClipExtractor? videoClipExtractor = null) : ControllerBase
 {
     internal const int MaxFileStatsItems = 100;
 
@@ -173,6 +175,66 @@ public sealed class RecordingController(
             // 零字节失败说明尚未写出任何响应体：清掉音频头信息后按契约返回 500
             Response.ContentType = null;
             return StatusCode(StatusCodes.Status500InternalServerError, new { error = "audio clip failed" });
+        }
+
+        return new EmptyResult();
+    }
+
+    [HttpGet("{roomId:long}/recordings/{fileName}/clip")]
+    public async Task<IActionResult> DownloadRecordingClip(
+        long roomId, string fileName, long? startMs, long? endMs, CancellationToken ct)
+    {
+        if (startMs is null || endMs is null)
+        {
+            return BadRequest(new { error = "startMs and endMs are required" });
+        }
+
+        if (startMs < 0)
+        {
+            return BadRequest(new { error = "startMs must be >= 0" });
+        }
+
+        if (endMs <= startMs)
+        {
+            return BadRequest(new { error = "endMs must be greater than startMs" });
+        }
+
+        if (endMs - startMs > options.VideoClipMaxDurationMs)
+        {
+            return BadRequest(new { error = $"clip duration must be <= {options.VideoClipMaxDurationMs} ms" });
+        }
+
+        var (error, fullPath) = await ResolveRecordingFileAsync(roomId, fileName, ct);
+        if (error is not null)
+        {
+            return error;
+        }
+
+        var extractor = videoClipExtractor
+            ?? throw new InvalidOperationException("IVideoClipExtractor is not configured");
+
+        // 片段即最小下载单元：不支持 Range（忽略请求头，始终 200 整片段），每次现算不缓存。
+        // 文件名可能含中文/空格：ASCII FileName 兜底 + RFC 5987 FileNameStar 保留原名。
+        var contentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+        {
+            FileName = $"clip-{startMs}-{endMs}.mp4",
+            FileNameStar = $"{fileName}-{startMs}-{endMs}.mp4",
+        };
+        Response.ContentType = "video/mp4";
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.ContentDisposition = contentDisposition.ToString();
+
+        try
+        {
+            // -ss/-t 输入 seek + -c copy + fMP4 直写响应体；起点吸附最近关键帧，endMs 超长自然输出到结尾
+            await extractor.ExtractAsync(fullPath, startMs.Value, endMs.Value, Response.Body, ct);
+        }
+        catch (VideoClipFailedException)
+        {
+            // 零字节失败说明尚未写出任何响应体：清掉视频头信息后按契约返回 500
+            Response.ContentType = null;
+            Response.Headers.Remove("Content-Disposition");
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "video clip failed" });
         }
 
         return new EmptyResult();

@@ -62,6 +62,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   'task not found': '任务不存在',
   'task not done': '该识别任务尚未完成，无法导入',
   'invalid time range': '时间区间非法（开始不小于 0，结束须晚于开始）',
+  'startMs and endMs are required': '请选择完整的起止时间',
+  'startMs must be >= 0': '起点不能小于 0',
+  'endMs must be greater than startMs': '终点必须晚于起点',
+  'file is still recording and cannot be downloaded': '文件正在录制中，暂不可用',
+  'video clip failed': '片段生成失败，请重试',
   'field cannot be null': '该字段不能为空',
   'item not found': '条目不存在',
   'transcript service unavailable': '识别服务暂不可用，请稍后重试',
@@ -120,6 +125,10 @@ export function apiErrorMessage(error: unknown, fallback = '操作失败'): stri
     }
   } catch {
     // 非 JSON 错误体（代理/网关返回的纯文本），按原文处理
+  }
+
+  if (code.startsWith('clip duration must be <= ')) {
+    return `片段时长超过上限（${code.replace('clip duration must be <= ', '')}）`
   }
 
   return ERROR_MESSAGES[code] ?? (code || fallback)
@@ -254,6 +263,16 @@ export function recordingAudioClipUrl(
 ): string {
   const query = new URLSearchParams({ startMs: String(startMs), endMs: String(endMs) })
   return `${BASE_URL}/b/live/${roomId}/recordings/${encodeURIComponent(fileName)}/audio?${query}`
+}
+
+export function recordingClipUrl(
+  roomId: number,
+  fileName: string,
+  startMs: number,
+  endMs: number,
+): string {
+  const query = new URLSearchParams({ startMs: String(startMs), endMs: String(endMs) })
+  return `${BASE_URL}/b/live/${roomId}/recordings/${encodeURIComponent(fileName)}/clip?${query}`
 }
 
 export function transcriptSubtitleUrl(taskId: string, format: 'srt' | 'ass'): string {

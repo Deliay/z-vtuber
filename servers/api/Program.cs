@@ -53,6 +53,14 @@ builder.Services.AddHttpClient(Z.Vtuber.Controllers.BilibiliLiveRecordingControl
     client.BaseAddress = new Uri(builder.Configuration["RecordingService:BaseUrl"] ?? "http://recording");
 });
 
+// 切片下载代理：片段生成/传输可达数十分钟，整体超时设为 Infinite（以客户端 RequestAborted 联动取消）；
+// 既有 RecordingClientName 保持默认超时，避免状态列表在 recording 悬挂时永久等待。
+builder.Services.AddHttpClient(Z.Vtuber.Controllers.BilibiliLiveRecordingController.RecordingStreamClientName, client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["RecordingService:BaseUrl"] ?? "http://recording");
+    client.Timeout = Timeout.InfiniteTimeSpan;
+});
+
 builder.Services.AddHttpClient(Z.Vtuber.Controllers.RecordingTranscriptProxyController.TranscriptClientName, client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["TranscriptService:BaseUrl"] ?? "http://recording-transcript-api");

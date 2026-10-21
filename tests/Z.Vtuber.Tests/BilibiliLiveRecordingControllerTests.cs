@@ -38,7 +38,13 @@ public class BilibiliLiveRecordingControllerTests(MongoDbFixture fixture) : ICla
 
     private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => client;
+        public List<string> ClientNames { get; } = [];
+
+        public HttpClient CreateClient(string name)
+        {
+            ClientNames.Add(name);
+            return client;
+        }
     }
 
     private static BilibiliLiveRecordingController CreateController(
@@ -500,6 +506,132 @@ public class BilibiliLiveRecordingControllerTests(MongoDbFixture fixture) : ICla
         var controller = CreateController(fixture.Database, new HttpClient(handler));
 
         var result = await controller.ProxyRecordingAudio(900035, "a.flv", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
+    }
+
+    private static HttpResponseMessage VideoClipUpstreamResponse(byte[] payload)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) };
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
+        response.Content.Headers.ContentDisposition =
+            new ContentDispositionHeaderValue("attachment")
+            {
+                FileName = "clip-1000-2500.mp4",
+                FileNameStar = "a.flv-1000-2500.mp4",
+            };
+        response.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
+        return response;
+    }
+
+    [Fact]
+    public async Task ProxyRecordingClip_ForwardsQueryAndUsesLongStreamClient()
+    {
+        var handler = new StubHandler { Handler = _ => VideoClipUpstreamResponse([1, 2, 3]) };
+        var httpClient = new HttpClient(handler);
+        httpClient.BaseAddress = new Uri("http://recording");
+        var factory = new StubHttpClientFactory(httpClient);
+        var controller = new BilibiliLiveRecordingController(
+            new SubscriptionService(fixture.Database),
+            new AccountBasicInfoRepository(fixture.Database),
+            new RecordingStatusRepository(fixture.Database),
+            factory);
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+        controller.HttpContext.Request.QueryString = new QueryString("?startMs=1000&endMs=2500");
+        controller.HttpContext.Request.Headers.Range = "bytes=0-99";
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ProxyRecordingClip(900040, "a b.flv", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(
+            "/api/900040/recordings/a%20b.flv/clip?startMs=1000&endMs=2500",
+            handler.Requests[0]);
+        Assert.Null(handler.RangeHeaders[0]);
+        Assert.Equal([BilibiliLiveRecordingController.RecordingStreamClientName], factory.ClientNames);
+    }
+
+    [Fact]
+    public async Task ProxyRecordingClip_200_StreamsBodyAndPassesThroughHeaders()
+    {
+        var payload = new byte[] { 1, 2, 3, 4, 5 };
+        var handler = new StubHandler { Handler = _ => VideoClipUpstreamResponse(payload) };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+        controller.HttpContext.Response.Body = new MemoryStream();
+
+        var result = await controller.ProxyRecordingClip(900041, "a.flv", CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+        Assert.Equal("video/mp4", controller.Response.ContentType);
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl.ToString());
+        Assert.Contains("attachment", controller.Response.Headers.ContentDisposition.ToString());
+        Assert.Contains("filename*=utf-8''", controller.Response.Headers.ContentDisposition.ToString().ToLowerInvariant());
+        Assert.Equal(payload, await ReadBodyAsync(controller.HttpContext));
+    }
+
+    [Theory]
+    [InlineData("""{"error":"endMs must be greater than startMs"}""")]
+    [InlineData("""{"error":"clip duration must be <= 7200000 ms"}""")]
+    [InlineData("""{"error":"file is still recording and cannot be downloaded"}""")]
+    public async Task ProxyRecordingClip_UpstreamBadRequest_Passthrough(string body)
+    {
+        var handler = new StubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            },
+        };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.ProxyRecordingClip(900042, "a.flv", CancellationToken.None);
+
+        var content = Assert.IsType<ContentResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, content.StatusCode);
+        Assert.Equal(body, content.Content);
+        Assert.Equal("application/json", content.ContentType);
+    }
+
+    [Fact]
+    public async Task ProxyRecordingClip_UpstreamServerError_Passthrough500Not502()
+    {
+        var body = """{"error":"video clip failed"}""";
+        var handler = new StubHandler
+        {
+            Handler = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            },
+        };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.ProxyRecordingClip(900043, "a.flv", CancellationToken.None);
+
+        var content = Assert.IsType<ContentResult>(result);
+        Assert.Equal(StatusCodes.Status500InternalServerError, content.StatusCode);
+        Assert.Equal(body, content.Content);
+    }
+
+    [Fact]
+    public async Task ProxyRecordingClip_NotFound_Passthrough()
+    {
+        var handler = new StubHandler { Handler = _ => new HttpResponseMessage(HttpStatusCode.NotFound) };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.ProxyRecordingClip(900044, "missing.flv", CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task ProxyRecordingClip_RecordingUnreachable_Returns502()
+    {
+        var handler = new StubHandler { Handler = _ => throw new HttpRequestException("boom") };
+        var controller = CreateController(fixture.Database, new HttpClient(handler));
+
+        var result = await controller.ProxyRecordingClip(900045, "a.flv", CancellationToken.None);
 
         var status = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
