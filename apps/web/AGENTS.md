@@ -151,6 +151,12 @@ npm run codegen    # 重新生成 API 类型
 
 Cookie 服务接口（`/api/cookie/*`）由 cookie 服务独立提供，前端通过代理访问。
 
+生产镜像使用 Caddy（见 `Caddyfile`），按前缀将请求转发到后端，地址由环境变量注入：
+
+- `/api/notify` → `NOTIFY_BACKEND`（默认 `notifier:8080`）
+- `/api/cookie` → `COOKIE_BACKEND`（默认 `cookie:8080`）
+- `/api` → `API_BACKEND`（默认 `backend:8080`）
+
 ## 相关规范引用
 
 - `docs/engineering/common-rules.md`
