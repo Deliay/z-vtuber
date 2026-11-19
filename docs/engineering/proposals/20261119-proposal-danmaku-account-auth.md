@@ -1,13 +1,13 @@
 ---
-description: B站弹幕帐号认证技术提案 v2——auth 服务按 RoomIds 订阅多个房间事件源，10 位一次性 token 完成首次注册；以 Casdoor Custom OAuth Provider 接入统一登录，首次注册后跳转 Casdoor，多个站点共享同一组织/用户并通过 Casdoor SSO 漫游
+description: B站弹幕帐号认证技术提案 v2.1——auth 服务按 RoomIds 订阅多个房间事件源，10 位一次性 token 完成首次注册；以 Casdoor Custom OAuth Provider 接入统一登录，首次注册后跳转 Casdoor，多个站点共享同一组织/用户并通过 Casdoor SSO 漫游；弹幕登录/账号中心页面由 auth 服务内嵌托管，不依赖 apps/web
 type: Permanent
 ---
 
 # B站弹幕帐号认证（多站点统一登录） - 技术提案
 
 **功能名称**: B站弹幕帐号认证（多站点统一登录）
-**关联 PRD**: `docs/product/draft/20261119-danmaku-account-auth-prd.md`（v2.0）
-**技术提案版本**: v2.0（返工修订）
+**关联 PRD**: `docs/product/draft/20261119-danmaku-account-auth-prd.md`（v2.1）
+**技术提案版本**: v2.1（返工修订）
 **创建日期**: 2026-11-19
 **作者**: Z.Vtuber Workflow Agent
 **feat-branch**: `feat/danmaku-account-auth`
@@ -23,7 +23,9 @@ type: Permanent
 >
 > - **不修改 crawler、不增加 crawler 默认常驻房间**。auth 服务新增 `Auth:Danmaku:RoomIds`（JSON `Array<string>`，默认 `["30066"]`），为每个配置房间建立独立事件源订阅，可从多个房间拿到登录 token。
 > - **Casdoor 作为统一 IdP/SSO 中心**；把「B 站弹幕」实现为 Casdoor 的 **Custom OAuth Provider**。首次注册成功后页面跳转 Casdoor，由 Casdoor 创建/关联统一用户并建立浏览器 SSO 会话；同一 Casdoor 组织下的多个站点共用该用户，后续访问直接 SSO，不再发弹幕/注册。
-> - **需要一个小页面，但不是 Casdoor 登录页**：平台提供「B 站弹幕验证/注册页」（账号中心），Casdoor 统一登录页仍由 Casdoor 提供；各站点只接 Casdoor 标准登录（跳转/回调/静默登录）。
+> - **需要一个小页面，但不是 Casdoor 登录页**：由 **auth 服务内嵌托管**「B 站弹幕验证/注册页」（账号中心），或后续拆独立登录服务；`apps/web` 是后台管理前端、只有内部 endpoint，不作为互联网登录页，本需求对 `apps/web` 零改动；Casdoor 统一登录页仍由 Casdoor 提供；各站点只接 Casdoor 标准登录（跳转/回调/静默登录）。
+>
+> **v2.1 返工说明**：按 PR inline comment，登录/验证页不再放 `apps/web`，改为 **auth 服务内嵌**（`/connect/bilibili`、`/account` + `wwwroot` 静态资源），同源托管，Provider Session/Ticket 与 API 调用都不跨域；如果后续要做独立品牌/独立发布，可把同一套页面拆成独立 login 服务，接口不变。`apps/web` 零改动。
 
 ## 1. 概述
 
@@ -67,7 +69,7 @@ type: Permanent
   - Casdoor Custom OAuth Provider（授权码 + PKCE + token + userinfo + refresh）；
   - 验证/注册页（账号中心）与注册成功后的 Casdoor 跳转；
   - 多站点接入文档与 Casdoor 配置核对清单；
-  - `contracts/auth.openapi.yaml` 契约与 web codegen；
+  - `contracts/auth.openapi.yaml` 契约（用于 API 文档与外部接入方；**不做 `apps/web` codegen**）；
   - AppHost、Dockerfile、CI、测试。
 - **不做**：
   - 修改 crawler 的订阅模型、增加 crawler 默认常驻房间；
@@ -134,7 +136,7 @@ graph TB
 | 房间事件源 | 既有 SSE（`HttpClient` + `ResponseHeadersRead` + `StreamReader`） | 每个 RoomId 独立连接 |
 | 身份协议 | OAuth 2.0 授权码 + PKCE + Bearer Token + UserInfo | Casdoor Custom OAuth Provider 要求 |
 | 加密 | `RandomNumberGenerator`、`HMACSHA256`、`AES-GCM`（可选） | token/授权码/token 摘要 |
-| 契约 | OpenAPI `contracts/auth.openapi.yaml` + web codegen | 账号中心 API 与 OAuth Provider 端点 |
+| 契约 | OpenAPI `contracts/auth.openapi.yaml` | 账号中心 API 与 OAuth Provider 端点；供文档/外部接入，不生成 `apps/web` 类型 |
 | 测试 | xUnit + Testcontainers MongoDB/Redis + 假房间事件源 + 假 Casdoor 调用 | 覆盖多房间/授权码/SSO 前置链路 |
 | 编排 | .NET Aspire（`infra/apphost/AppHost.cs`） | 新增 auth 项目 |
 
@@ -166,6 +168,7 @@ graph LR
 | `Auth/` | token 生成/摘要、登录请求状态机、用户绑定、Provider Ticket | 原子 CAS、HMAC、一次性票据 |
 | `Danmaku/` | 多房间 SSE、帧解析、补投、去重、选主、健康 | `RoomIds` 字符串数组、每房间独立连接 |
 | `Persistence/` | 集合实体/仓储、索引/TTL | 唯一索引、TTL、原子更新 |
+| `Pages/` + `wwwroot/` | auth 服务内嵌的弹幕验证/注册页、账号中心 | 同源托管；静态 HTML/JS/CSS 或 Razor Pages；无 Node 构建依赖 |
 | `Configuration/` | `AuthOptions`、`DanmakuOptions`、`OAuthProviderOptions`、`CasdoorOptions` | `ValidateOnStart`、密钥长度、RoomIds 非空 |
 
 ### 2.5 多房间事件源与 crawler 边界
@@ -206,6 +209,8 @@ graph LR
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |--|--|--|--|
+| GET | `/connect/bilibili` | 匿名（浏览器页面） | auth 服务内嵌的弹幕验证/注册页；支持 `return_to` |
+| GET | `/account` | Provider Session | auth 服务内嵌的账号中心页 |
 | GET | `/api/auth/danmaku/rooms` | 匿名 | 查询配置房间及连接状态 |
 | POST | `/api/auth/login-requests` | 匿名 + 限流 | 创建一次性弹幕 token |
 | GET | `/api/auth/login-requests/{requestId}` | `X-Poll-Token` | 查询状态 |
@@ -887,19 +892,34 @@ Casdoor 的 Custom OAuth Provider 使用标准授权码流程；它会：
 
 ### 5.7 前端与多站点接入
 
-#### 5.7.1 平台提供：B 站弹幕验证/注册页
+#### 5.7.1 auth 服务内嵌：B 站弹幕验证/注册页
 
-- 页面 URL 建议 `https://auth.example.com/connect/bilibili`（auth 服务同源，便于 Provider Session/Ticket；也可由 `apps/web` 托管，通过 ticket 回跳，不依赖跨域 Cookie）；
+**位置结论：登录页放在 auth 服务内，不放入 `apps/web`。** 原因：
+
+- `apps/web` 目前是**后台管理前端**，只有内部 endpoint，没有互联网 endpoint，不能作为面向公众的登录页；
+- auth 服务本身已经被 Casdoor 通过 `Auth URL`/`Token URL`/`UserInfo URL` 访问，天然是互联网可达服务；
+- 页面与 `/oauth/authorize`、`/api/auth/*` 同源，Provider Session Cookie、Provider Ticket、CSRF/CORS 最简单；
+- 不引入新的前端构建/部署链路；页面用服务端静态 HTML/JS/CSS（`wwwroot`）或 Razor Pages 即可；
+- 如果后续要做独立品牌/独立发布，可把同一套页面拆成独立 `login` 服务，接口与 URL 不变。
+
+实现方式：
+
+- 路由：
+  - `GET /connect/bilibili?return_to=<相对URL>`：弹幕验证/注册页；
+  - `GET /account`：账号中心页（Provider Session）；
+- 资源：`servers/auth/wwwroot/connect/`（`index.html`、`connect.js`、`connect.css`）或 Razor Pages；不依赖 Node/npm；
+- 安全头：`Content-Security-Policy` 仅允许同源脚本/样式；`Referrer-Policy: no-referrer`；`X-Content-Type-Options: nosniff`；
 - 流程：
-  1. 从 `return_to` 读取原 `/oauth/authorize` 相对 URL；
-  2. 调 `GET /api/auth/danmaku/rooms` 展示可发送房间；
-  3. 调 `POST /api/auth/login-requests` 获取 token；
+  1. 服务端校验 `return_to` 必须是本服务 `/oauth/authorize` 相对 URL；非法则回退到 `/account`；
+  2. 页面调 `GET /api/auth/danmaku/rooms` 展示可发送房间；
+  3. 调 `POST /api/auth/login-requests`（带 `returnTo`）获取 token；
   4. 展示 token、复制、倒计时、发送指引；
   5. 串行轮询；`verified` 展示昵称/UID/头像 + 「这是我」「不是我」；
-  6. 确认 → 调 `confirm` → 展示「注册成功」→ `window.location = redirectUrl`（带 ticket 回 `/oauth/authorize`）；
+  6. 确认 → 调 `confirm` → 展示「B 站账号绑定成功」→ `window.location = redirectUrl`（带 ticket 回 `/oauth/authorize`）；
   7. 失败/过期/房间不可用 → 明确提示 + 重新获取；
 - 页面不展示 Casdoor 内部细节；注册成功后跳转 Casdoor 是明确步骤；
-- 页面可使用 antd v6（若在 `apps/web`）或轻量 HTML（若由 auth 服务直接托管）；第一方优先复用 `apps/web` 组件，auth 服务提供兜底页面。
+- 页面不读取/写入站点业务会话；只使用 auth 服务的 Provider Session/Ticket；
+- 不在页面中引入第三方统计/广告脚本，避免 token/return_to 泄露。
 
 #### 5.7.2 各站点
 
@@ -922,9 +942,10 @@ Casdoor 的 Custom OAuth Provider 使用标准授权码流程；它会：
 | 页面/能力 | 谁提供 | 说明 |
 |--|--|--|
 | Casdoor 统一登录页 | Casdoor | 展示登录方式、SSO、账号密码/验证码/第三方 |
-| B 站弹幕验证/注册页 | 平台（auth 服务/`apps/web`） | 获取 token、发送指引、确认、注册成功、跳转 Casdoor |
-| 账号中心 | 平台（auth 服务/`apps/web`） | 查看绑定、重新验证、退出 |
+| B 站弹幕验证/注册页 | **auth 服务内嵌**（或独立 login 服务） | 获取 token、发送指引、确认、注册成功、跳转 Casdoor；**不放入 `apps/web`** |
+| 账号中心 | **auth 服务内嵌**（或独立 login 服务） | 查看绑定、重新验证、退出；**不放入 `apps/web`** |
 | 站点登录入口/回调 | 各站点 | 只接 Casdoor 标准登录，不做弹幕逻辑 |
+| 后台管理前端 `apps/web` | 既有系统 | 只有内部 endpoint，本需求零改动；不承担互联网登录页 |
 | Casdoor 自定义登录页插件 | 不做 | 不修改 Casdoor 前端；避免升级耦合 |
 
 ### 5.8 安全与风控
@@ -1099,7 +1120,8 @@ sequenceDiagram
 |--|--|--|--|--|
 | 统一身份 | 本服务自签 JWT | Casdoor 统一 IdP | **Casdoor** | 多站点共享用户/SSO；标准 OAuth2/OIDC；组织/应用管理 |
 | Casdoor 接入 | Federated credentials | Custom OAuth Provider | **Custom OAuth Provider** | 浏览器 SSO；首次注册跳 Casdoor；多站点漫游；官方标准 |
-| 弹幕验证页 | 改 Casdoor 登录页 | 平台自建验证页 | **平台自建** | Casdoor 不能监听弹幕；避免改 Casdoor 前端/升级耦合 |
+| 弹幕验证页位置 | 放 `apps/web` | auth 服务内嵌 / 独立 login 服务 | **auth 服务内嵌** | `apps/web` 是后台管理、只有内部 endpoint；auth 已互联网可达；同源 Cookie/Ticket 最简单；后续可拆独立服务 |
+| 弹幕验证页实现 | 改 Casdoor 登录页 | 平台自建 | **平台自建（auth 内嵌）** | Casdoor 不能监听弹幕；避免改 Casdoor 前端/升级耦合 |
 | 房间订阅 | 修改 crawler 常驻 30066 | auth 配置 `RoomIds` | **auth 配置** | 评审要求；支持多房间；不污染 crawler 订阅模型 |
 | RoomId 类型 | long | string | **string** | 评审要求；配置 JSON `Array<string>`；事件源数字/字符串兼容 |
 | token 字符集 | 62 字符 | 去混淆 56 字符 | **56 字符子集** | 仍是 `[A-Za-z0-9]`；降低 0/O、1/l/I 错误 |
@@ -1143,8 +1165,15 @@ servers/
 │   │   ├── DanmakuRoomsController.cs
 │   │   ├── MeController.cs
 │   │   ├── ProviderSessionsController.cs
-│   │   ├── AccountCenterController.cs  # 可选：托管 /connect/bilibili 页面
+│   │   ├── AccountCenterController.cs  # 托管 /connect/bilibili、/account 页面
 │   │   └── HealthController.cs
+│   ├── Pages/
+│   │   ├── ConnectBilibili.cshtml      # 或 wwwroot/connect/index.html
+│   │   └── Account.cshtml               # 账号中心
+│   ├── wwwroot/
+│   │   ├── connect/connect.js
+│   │   ├── connect/connect.css
+│   │   └── shared/site.css
 │   ├── Persistence/
 │   │   ├── AuthLoginRequestRecord.cs
 │   │   ├── AuthUserRecord.cs
@@ -1167,16 +1196,14 @@ servers/
 │   └── Z.Vtuber.Auth.csproj
 ├── Z.Vtuber.slnx                         # 新增 auth 项目
 contracts/
-└── auth.openapi.yaml                     # 新增契约
-apps/web/
-└── src/
-    ├── pages/auth/DanmakuLoginPage.tsx   # 可选：第一方验证页
-    └── api/auth.ts
+└── auth.openapi.yaml                     # 新增契约（文档/外部接入；不生成 apps/web 类型）
 infra/apphost/AppHost.cs                  # 新增 auth 编排
 .github/workflows/build-auth-image.yml    # 新增镜像流水线
 ```
 
 > **不修改** `servers/crawler/**`；auth 只消费配置房间的事件源。若事件源本身需要调整，由部署/上游服务负责。
+>
+> **不修改** `apps/web/**`：它是后台管理前端，只有内部 endpoint；登录/验证页、账号中心由 `servers/auth` 内嵌托管。
 
 ## 9. 测试策略
 
@@ -1216,18 +1243,21 @@ infra/apphost/AppHost.cs                  # 新增 auth 编排
   11. 限流：IP/client/UID；429。
 - 单用例 ≤ 5s；`TestWait.UntilAsync`；Mongo 共享 fixture 只建一次索引。
 
-### 9.3 契约与前端测试
+### 9.3 契约与内嵌登录页测试
 
-- `contracts/auth.openapi.yaml` 可被 `openapi-typescript` 解析；账号中心 API 与 OAuth 端点字段/状态码一致；
-- `apps/web` codegen 类型；`DanmakuLoginPage.test.tsx`：
-  - 房间列表/状态；
-  - 获取 token/复制/倒计时；
-  - pending/verified/confirming/consumed/expired；
-  - 确认/拒绝；
-  - 注册成功 → 跳转 `redirectUrl`；
-  - 429/503/410/403 文案；
-  - 关闭弹窗停止轮询；
-  - `renderWithProviders` + fake timers。
+- `contracts/auth.openapi.yaml` 可被 `openapi-typescript` 解析；账号中心 API 与 OAuth 端点字段/状态码一致；**不生成 `apps/web` 类型**；
+- auth 内嵌页面（`/connect/bilibili`、`/account`）：
+  - `WebApplicationFactory` 断言页面可访问、返回 `text/html`、包含 token/房间/确认/成功等关键元素；
+  - 静态资源路径、CSP/Referrer-Policy/X-Content-Type-Options 头；
+  - 页面 JS 通过浏览器 E2E（Playwright 或手工验收）覆盖：
+    - 房间列表/状态；
+    - 获取 token/复制/倒计时；
+    - pending/verified/confirming/consumed/expired；
+    - 确认/拒绝；
+    - 注册成功 → 跳转 `redirectUrl`；
+    - 429/503/410/403 文案；
+    - 关闭/刷新页面停止轮询；
+  - 不依赖 `apps/web` 构建产物；`apps/web` 零改动。
 
 ### 9.4 多站点 SSO 联调（手工/自动化混合）
 
@@ -1268,6 +1298,7 @@ var auth = builder.AddProject<Projects.Z_Vtuber_Auth>("auth")
     .WithEnvironment("Auth:Danmaku:RoomIds:0", "30066")
     .WithEnvironment("Auth:PublicBaseUrl", "http://auth")
     .WithEnvironment("Auth:Mode", "standalone") // 本地开发先用 standalone；联调 Casdoor 时改 casdoor
+    .WithExternalHttpEndpoints()                // 登录/验证页与 /oauth/* 需被浏览器/Casdoor 访问
     .WithHttpHealthCheck("/health");
 
 api.WithReference(auth)
@@ -1275,16 +1306,18 @@ api.WithReference(auth)
     .WithEnvironment("AuthService:BaseUrl", auth.GetEndpoint("http"));
 ```
 
-- 生产 `Auth:Mode=casdoor`；`Auth:PublicBaseUrl` 必须是 Casdoor 可访问的 HTTPS 域名；
+- 生产 `Auth:Mode=casdoor`；`Auth:PublicBaseUrl` 必须是 Casdoor 与浏览器都能访问的 HTTPS 域名；
+- **auth 服务必须暴露互联网 endpoint**：`/connect/bilibili`、`/account`、`/oauth/*` 由 auth 直接提供，经 Caddy/nginx 反代；不经 `apps/web`；
 - `Auth:Danmaku:BaseUrl` 生产为 `http://vtuber.internal.fffdan.com`（或内网事件源地址）；
 - 多房间用 `Auth:Danmaku:RoomIds:0/1/...` 或 JSON 配置；
 - **不修改 crawler 编排**；事件源需对配置房间提供数据。
 
 ### 10.2 镜像与流水线
 
-- `servers/auth/Dockerfile`：两阶段构建（aspnet 运行时，EXPOSE 8087）；
+- `servers/auth/Dockerfile`：两阶段构建（aspnet 运行时，EXPOSE 8087）；复制 `Pages/` 与 `wwwroot/`（内嵌登录页/账号中心）；
 - `.github/workflows/build-auth-image.yml`：镜像 `zero-tools/z-vtuber-auth`，触发 `servers/auth/**`、`servers/common/core/**`、`servers/common/live/**`（若复用 `LiveEventTextExtractor`）；
-- 部署增加 auth 服务、Mongo/Redis 连接、环境变量/密钥。
+- 部署增加 auth 服务、Mongo/Redis 连接、环境变量/密钥；
+- **不构建/不部署 `apps/web` 登录页**：`apps/web` 是后台管理前端，保持现状。
 
 ### 10.3 配置清单
 
@@ -1294,7 +1327,7 @@ api.WithReference(auth)
 | `ConnectionStrings:messaging` | — | Redis |
 | `Auth:Mode` | `casdoor` | `casdoor` 或 `standalone` |
 | `Auth:PublicBaseUrl` | — | 本服务对外 HTTPS 基址 |
-| `Auth:AccountCenterUrl` | `/connect/bilibili` | 验证/注册页地址（相对或绝对） |
+| `Auth:AccountCenterUrl` | `/connect/bilibili` | auth 内嵌验证/注册页地址（相对；若拆独立 login 服务可配绝对地址） |
 | `Auth:TokenPepper` | — | token HMAC pepper，≥32 字节；生产必填 |
 | `Auth:LoginTokenTtlSeconds` | 300 | token 有效期 |
 | `Auth:ConfirmWindowSeconds` | 120 | 识别后确认窗口 |
@@ -1373,9 +1406,11 @@ api.WithReference(auth)
 
 ## 12. 验收标准
 
-- [ ] PRD v2.0 评审通过；
-- [ ] 本技术提案 v2.0 评审通过；
+- [ ] PRD v2.1 评审通过；
+- [ ] 本技术提案 v2.1 评审通过；
 - [ ] **未修改 crawler**，未增加 crawler 默认常驻房间；
+- [ ] **未修改 `apps/web`**；登录/验证页、账号中心由 `servers/auth` 内嵌托管（或独立 login 服务）；
+- [ ] auth 内嵌页面 `/connect/bilibili`、`/account` 可访问，同源调用 API，CSP/Referrer-Policy 头生效；
 - [ ] `Auth:Danmaku:RoomIds` 为 JSON `Array<string>`，默认 `["30066"]`，roomId 全程字符串；
 - [ ] auth 启动后按 RoomIds 建立多个房间事件源；每个房间独立健康/重连/补投；
 - [ ] 在任意配置房间发送 token 都能验证；非配置房间忽略；全部房间不可用时 503；
@@ -1389,7 +1424,7 @@ api.WithReference(auth)
 - [ ] Provider Session 有效时可静默重登；失效后重新验证仍复用原账号；
 - [ ] 授权码/票据/Token 一次性、短 TTL、PKCE/redirect/Client 校验通过；
 - [ ] 安全审计：无 token/授权码/票据/Token 明文落库或日志；
-- [ ] 单元/集成/契约/前端测试全绿；单用例 ≤5s；核心逻辑覆盖率 ≥80%；
+- [ ] 单元/集成/契约/页面测试全绿；单用例 ≤5s；核心逻辑覆盖率 ≥80%；
 - [ ] AppHost/Dockerfile/CI 可构建部署；Casdoor 配置核对清单全过；
 - [ ] 既有直播/SSE/弹幕/录播能力零回归。
 
