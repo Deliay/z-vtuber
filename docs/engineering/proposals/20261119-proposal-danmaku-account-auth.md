@@ -871,6 +871,9 @@ Casdoor 的 Custom OAuth Provider 使用标准授权码流程；它会：
   - 回调后用 code 换 Casdoor token；
   - 建立站点自己的会话；用户资料从 Casdoor `/api/userinfo` 或 ID token 获取；
   - 不实现弹幕逻辑、不保存 B 站 token。
+- 可选 UX：
+  - 站点上的「B 站弹幕登录」按钮可在 Casdoor authorize URL 上加 `provider_hint=<B站弹幕 Provider 名称>`，让 Casdoor 直接跳到本服务验证页，少一次点击；
+  - 已登录用户的静默 SSO 可用 `prompt=none` 或 Casdoor 的 `silentSignin=1`（Auto signin + 站点静默登录）；`provider_hint` 只用于「明确选择弹幕登录」的入口，不用于静默 SSO。
 
 #### 5.6.3 首次/后续登录的用户匹配
 
