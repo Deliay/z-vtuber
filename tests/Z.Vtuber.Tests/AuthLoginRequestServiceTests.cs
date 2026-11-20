@@ -362,6 +362,6 @@ public sealed class AuthLoginRequestServiceTests : IClassFixture<MongoDbFixture>
         })).ToArray();
 
         var results = await Task.WhenAll(tasks);
-        Assert.Single(results.Where(x => x));
+        Assert.Single(results, x => x);
     }
 }
