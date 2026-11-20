@@ -351,3 +351,18 @@ stateDiagram-v2
 | 测试体系 | 假 SSE 源 + 真实 Kestrel HTTP E2E、断线/补投/follower、限流 fail-open、健康矩阵 | `AuthDanmakuEndToEndTests`、`AuthDanmakuResilienceTests`、`AuthRedisRateLimiterTests`、`AuthHealthCheckTests` |
 
 容器用例（Mongo/Redis Testcontainers）需在有 Docker 的 CI/开发机执行；本地快照器无法解包镜像时仅能编译验证。
+
+### 8.1 第二轮返工（2026-11-20，PR #200 @ f9bb585）
+
+| 审核项 | 修复 | 回归测试 |
+|--|--|--|
+| P2-1 重新验证 | `/account` 点击「重新验证」先 `POST /api/auth/provider-sessions/logout`，成功后才跳转 `ReauthorizeUrl`；失败给出可见提示，避免 Casdoor 静默签发 code | `AccountJs_ReauthorizeLogsOutFirst...`、`AuthPageTests` |
+| P2-2 refresh 禁用账号 | 状态校验下沉 `ProviderTokenService.RotateAsync`，refresh 与 authorization_code 一致拒绝禁用用户 | `TokenEndpoint_RejectsRefreshForDisabledUser` |
+| P2-3 退出登录 | `provider-sessions/logout` 撤销该用户全部 Provider Session/access/refresh，并返回 Casdoor end-session 地址（`Casdoor:LogoutUrl` + `PostLogoutRedirectUri`）；页面据此跳转结束 SSO | `ProviderSessionLogout_RevokesTokensAndReturnsCasdoorLogoutUrl` |
+| P2-4 可观测性 | 注册 `AuthMetrics`（`IMeterFactory`）并埋点登录创建/验证/确认/失败、房间连接/重连/补投、OAuth 成功/失败；authorize/token/userinfo 成功与失败写审计（脱敏） | `AuthAppTests`、`TicketFlow_ProducesCodeThenTokensThenUserInfo` 审计断言 |
+| P2-5 per-client 限流 | 内置验证页不再发送 `clientId`；`TokenPerHourPerClient` 默认提升到 10000，仅外部 client 使用该桶，内置页只受 IP 分钟/日配额约束 | `Create_WithoutClientId_DoesNotUseSharedClientBucket`、`ConnectJs_DoesNotShareBuiltInClientBucket...` |
+| 滑动续期 | 会话命中时在 `/oauth/authorize` 与 `/api/auth/me` 重发 Cookie，浏览器过期与服务端一致 | `ProviderSession_CreateResolveRevoke` |
+| 取消竞态 | `TryCancelAsync` CAS 未命中返回 409 `AUTH_CONFIRM_RACE`，不再伪报 204 | 状态机用例 |
+| 确认可重试 | connect.js 对 409 `AUTH_CONFIRM_RACE` 保持轮询并提示，不要求重新获取 token | `ConnectJs_...RetriesConfirmRace` |
+| 契约/死代码 | 移除 `GET login-requests/{id}` 的 403 声明与未使用错误码；新增 `LogoutResponse` | 契约校验 |
+| Casdoor 不可达 | 成功页提供可见「继续」按钮与跳转兜底提示 | `ConnectJs_...`、页面用例 |

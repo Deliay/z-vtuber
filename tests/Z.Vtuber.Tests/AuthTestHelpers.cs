@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
@@ -8,6 +9,7 @@ using Z.Vtuber.Auth.Auth;
 using Z.Vtuber.Auth.Configuration;
 using Z.Vtuber.Auth.Danmaku;
 using Z.Vtuber.Auth.OAuth;
+using Z.Vtuber.Auth.Observability;
 using Z.Vtuber.Auth.Persistence;
 
 namespace Z.Vtuber.Tests;
@@ -71,17 +73,45 @@ internal static class AuthTestOptions
         "&response_type=code&state=state-1&scope=openid%20profile";
 }
 
+internal sealed class TestMeterFactory : IMeterFactory
+{
+    private readonly List<Meter> _meters = [];
+
+    public Meter Create(MeterOptions options)
+    {
+        var meter = new Meter(options.Name, options.Version);
+        _meters.Add(meter);
+        return meter;
+    }
+
+    public void Dispose()
+    {
+        foreach (var meter in _meters)
+        {
+            meter.Dispose();
+        }
+
+        _meters.Clear();
+    }
+}
+
 internal sealed class TestRateLimiter : IAuthRateLimiter
 {
     public bool Allow { get; set; } = true;
 
     public int Calls { get; private set; }
 
+    public int PerClientCalls { get; private set; }
+
     public Task<bool> TryTokenPerMinuteAsync(string clientIp, CancellationToken ct) => Result();
 
     public Task<bool> TryTokenPerDayAsync(string clientIp, CancellationToken ct) => Result();
 
-    public Task<bool> TryTokenPerClientAsync(string clientId, CancellationToken ct) => Result();
+    public Task<bool> TryTokenPerClientAsync(string clientId, CancellationToken ct)
+    {
+        PerClientCalls++;
+        return Result();
+    }
 
     public Task<bool> TryDanmakuUidAsync(long uid, CancellationToken ct) => Result();
 
@@ -131,6 +161,7 @@ internal sealed class AuthTestServices
     public required StandaloneSessionService StandaloneService { get; init; }
     public required LoginRequestService LoginRequestService { get; init; }
     public required AuditLogger Audit { get; init; }
+    public required AuthMetrics Metrics { get; init; }
     public required TestRateLimiter RateLimiter { get; init; }
 
     public static AuthTestServices Create(
@@ -154,6 +185,7 @@ internal sealed class AuthTestServices
         var standaloneSessions = new StandaloneSessionRepository(database);
         var auditRepo = new AuditRepository(database);
         var audit = new AuditLogger(auditRepo, clock, NullLogger<AuditLogger>.Instance);
+        var metrics = new AuthMetrics(new TestMeterFactory());
         var userService = new UserService(users, clock, NullLogger<UserService>.Instance);
         var ticketService = new ProviderTicketService(
             tickets, hasher, AuthTestOptions.Opt(authOptions), AuthTestOptions.Opt(provider), clock,
@@ -164,14 +196,14 @@ internal sealed class AuthTestServices
         var codeService = new AuthorizationCodeService(
             codes, hasher, AuthTestOptions.Opt(provider), clock, NullLogger<AuthorizationCodeService>.Instance);
         var tokenService = new ProviderTokenService(
-            tokens, hasher, AuthTestOptions.Opt(provider), clock, NullLogger<ProviderTokenService>.Instance);
+            tokens, users, hasher, AuthTestOptions.Opt(provider), clock, NullLogger<ProviderTokenService>.Instance);
         var standalone = new StandaloneSessionService(
             standaloneSessions, users, hasher, AuthTestOptions.Opt(authOptions), clock,
             NullLogger<StandaloneSessionService>.Instance);
         var login = new LoginRequestService(
             loginRequests, hasher, userService, ticketService, standalone,
             AuthTestOptions.Opt(authOptions), AuthTestOptions.Opt(provider), AuthTestOptions.Opt(danmakuOptions),
-            audit, clock, NullLogger<LoginRequestService>.Instance);
+            audit, metrics, clock, NullLogger<LoginRequestService>.Instance);
 
         return new AuthTestServices
         {
@@ -196,6 +228,7 @@ internal sealed class AuthTestServices
             StandaloneService = standalone,
             LoginRequestService = login,
             Audit = audit,
+            Metrics = metrics,
             RateLimiter = new TestRateLimiter()
         };
     }

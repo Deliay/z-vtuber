@@ -46,9 +46,14 @@ B 站弹幕帐号认证服务：为多站点统一登录提供 Casdoor Custom OA
 - `Auth:TokenPepper`：≥32 字符，生产必须通过密钥注入；**禁止**提交真实值。
 - `Auth:PublicBaseUrl`：决定 Cookie `Secure`；HTTPS 生产必配。
 - `Auth:ConfirmOperationTimeoutSeconds`：`confirming` 最长停留时间（默认 30s），超时由扫描器回退 `verified`。
+- `Auth:RateLimit:TokenPerHourPerClient`：外部 client 的小时配额（默认 10000）；内置验证页不发送 `clientId`，只受每 IP 分钟/日配额约束。
 - `Auth:Danmaku:RoomIds`：JSON `string[]`，默认 `["30066"]`；roomId 全程字符串。
 - `Auth:Danmaku:BaseUrl`：事件源内网地址。
 - `OAuthProvider:ClientId/ClientSecret/RedirectUri`：Casdoor Custom Provider，`RedirectUri` 精确匹配。
+- `Casdoor:ReauthorizeUrl`：账号中心「重新验证」跳转入口；未配置时按钮隐藏。
+- `Casdoor:LogoutUrl`：Casdoor RP-initiated logout（通常 `{Endpoint}/api/logout`）；未配置时账号中心仅退出本服务会话。
+- `Casdoor:LogoutClientId`：可选，Casdoor Application 的 Client ID（用于无 id_token_hint 时定位应用）。
+- `Casdoor:PostLogoutRedirectUri`：Casdoor 登出回跳地址，必须登记在 Casdoor Application 的 Redirect URLs。
 - `Auth:AllowDegradedRedis`：Redis 不可用时是否所有实例都订阅；生产建议 `false`。
 - `Auth:TrustForwardedHeaders`：反代后启用 X-Forwarded-For/Proto，默认关闭。
 
@@ -68,6 +73,12 @@ auth 不创建 crawler 订阅。上线前确认 `RoomIds` 中每个房间在事�
 - 页面 JS 只用 `textContent`，禁止 `innerHTML`/`localStorage`；CSP 同源。
 - 限流 fail-open 仅限 Redis 故障，token 本身由 58 bit 熵 + 5 分钟 + 一次性兜底。
 
+## 可观测性
+
+- 指标（`System.Diagnostics.Metrics`，Meter `Z.Vtuber.Auth`）：`auth.login.created/verified/confirmed/failed`、`auth.danmaku.room.connects/reconnects/backfill.events/backfill.truncated`、`auth.oauth.authorize/token/failures`。
+- 审计事件（`auth_audit_logs`，90 天 TTL，脱敏）：`login_request_created/danmaku_verified/confirm_succeeded/confirm_failed/cancelled/expired/rate_limited/oauth_authorize/oauth_token_issued/oauth_userinfo/logout`。
+- 审计/日志禁止写入 token、pollToken、ticket、授权码、Authorization 或明文密钥。
+
 ## 测试
 
 ```bash
@@ -77,6 +88,7 @@ dotnet test tests/Z.Vtuber.Tests --filter "FullyQualifiedName~Auth|FullyQualifie
 - 单元/集成：core primitives、状态机（含 confirming 超时回退 / failed 终态 / 取消边界）、持久化 CAS、多房间事件源、账号中心 API、OAuth Provider、页面安全头。
 - HTTP 端到端：`AuthFakes/FakeDanmakuSource` + `AuthFakes/AuthApiFactory` 启动真实 Kestrel，覆盖单/多房间全链路、断线重连、补投、follower 可用性与 CORS 边界。
 - 安全：`AuthSecurityTests`（DB/审计无明文、ticket/code/token 重放篡改、OAuth/账号中心错误体分离）、`AuthRedisRateLimiterTests`（计数与 fail-open）、`DanmakuHealthRegistryTests`（就绪矩阵）。
+- 页面/契约行为：`AuthPageTests` 覆盖重新验证先注销、退出返回 Casdoor 登出地址、内置页不共享 client 桶、确认 409 可重试。
 - 慢用例须登记 `tests/Z.Vtuber.Tests/TimeoutExceptions.json`；单用例 ≤5s。
 
 ## Casdoor 配置核对清单
@@ -90,3 +102,4 @@ dotnet test tests/Z.Vtuber.Tests --filter "FullyQualifiedName~Auth|FullyQualifie
 - [ ] Provider 加入每个站点 Application，允许 Sign in/Sign up。
 - [ ] 如需自动 SSO：配置 Home/Signin session/Auto signin，站点实现 `silentSignin=1`。
 - [ ] 联调：首次注册 → 站点 A 登录 → 站点 B SSO；清 Casdoor 会话保留 Provider Session → 静默；清 Provider Session → 重验仍同一用户；退出。
+- [ ] `Casdoor:LogoutUrl={endpoint}/api/logout`，`PostLogoutRedirectUri` 已加入 Application Redirect URLs；账号中心退出后其他站点按 Casdoor 会话策略失效。

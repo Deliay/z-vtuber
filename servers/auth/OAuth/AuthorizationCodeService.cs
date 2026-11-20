@@ -81,11 +81,13 @@ public sealed record ProviderTokenPair(
     string RefreshToken,
     int ExpiresIn,
     int RefreshExpiresIn,
-    string Scope);
+    string Scope,
+    ObjectId UserId = default);
 
 /// <summary>Casdoor Provider Token：opaque、只存 HMAC、access 1h / refresh 30d、单文档原子轮换。</summary>
 public sealed class ProviderTokenService(
     ProviderTokenRepository repository,
+    UserRepository users,
     TokenHasher hasher,
     IOptions<OAuthProviderOptions> options,
     TimeProvider clock,
@@ -121,7 +123,8 @@ public sealed class ProviderTokenService(
             refresh,
             options.Value.AccessTokenSeconds,
             checked(options.Value.RefreshTokenDays * 24 * 3600),
-            scope);
+            scope,
+            userId);
     }
 
     public async Task<AuthProviderTokenRecord?> ValidateAccessAsync(
@@ -153,6 +156,13 @@ public sealed class ProviderTokenService(
             throw OAuthException.InvalidGrant();
         }
 
+        // refresh 分支与 authorization_code 分支一致：账号禁用后不得继续轮换令牌。
+        var user = await users.FindByIdAsync(record.UserId, ct);
+        if (user is null || !string.Equals(user.Status, AuthUserStatus.Active, StringComparison.Ordinal))
+        {
+            throw OAuthException.InvalidGrant("The user is not active.");
+        }
+
         var access = TokenGenerator.CreateOpaqueToken();
         var newRefresh = TokenGenerator.CreateOpaqueToken();
         var accessExpiresAt = now.AddSeconds(options.Value.AccessTokenSeconds);
@@ -176,7 +186,8 @@ public sealed class ProviderTokenService(
             newRefresh,
             options.Value.AccessTokenSeconds,
             checked(options.Value.RefreshTokenDays * 24 * 3600),
-            rotated.Scope);
+            rotated.Scope,
+            rotated.UserId);
     }
 
     public async Task RevokeAsync(string? accessToken, string? refreshToken, CancellationToken ct = default)
@@ -194,8 +205,7 @@ public sealed class ProviderTokenService(
     }
 
     /// <summary>从 access/refresh 反查 token 所属用户（注销时用于撤销 Provider Session）。</summary>
-    public async Task<ObjectId?> FindUserIdAsync(
-        string? accessToken, string? refreshToken, CancellationToken ct = default)
+    public async Task<ObjectId?> FindUserIdAsync(        string? accessToken, string? refreshToken, CancellationToken ct = default)
     {
         if (!string.IsNullOrWhiteSpace(accessToken))
         {
@@ -214,4 +224,8 @@ public sealed class ProviderTokenService(
 
         return null;
     }
+
+    /// <summary>账号中心退出登录：撤销该用户全部 Provider access/refresh。</summary>
+    public Task<long> RevokeAllForUserAsync(ObjectId userId, CancellationToken ct = default) =>
+        repository.RevokeAllByUserAsync(userId, clock.GetUtcNow().UtcDateTime, ct);
 }

@@ -104,7 +104,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/LoginRequestStatusResponse' }
-        '403': { $ref: '#/components/responses/AuthError' }
         '404': { $ref: '#/components/responses/AuthError' }
   /api/auth/login-requests/{requestId}/confirm:
     post:
@@ -165,11 +164,16 @@ paths:
     post:
       tags: [account]
       operationId: logoutProviderSession
-      summary: 退出本服务验证会话
+      summary: 退出本服务会话并返回 Casdoor 登出地址
+      description: 撤销当前 Provider Session、该用户全部 Provider token 与会话；若配置 `Casdoor:LogoutUrl`，返回 end-session 地址用于结束 Casdoor SSO。
       security:
         - ProviderSession: []
       responses:
-        '204': { description: 已退出 }
+        '200':
+          description: 已退出本地会话
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogoutResponse' }
   /api/auth/sessions/refresh:
     post:
       tags: [account]
@@ -479,6 +483,13 @@ components:
         bilibiliRoomId: { type: string, nullable: true }
         mode: { type: string, enum: [casdoor, standalone] }
         reauthorizeUrl: { type: string, nullable: true }
+    LogoutResponse:
+      type: object
+      properties:
+        logoutUrl:
+          type: string
+          nullable: true
+          description: Casdoor RP-initiated logout 地址；为空表示仅退出本服务会话。
     RefreshSessionRequest:
       type: object
       required: [refreshToken]

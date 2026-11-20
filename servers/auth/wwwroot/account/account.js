@@ -48,8 +48,17 @@
     if (data.reauthorizeUrl) {
       $("reauthorize").hidden = false;
       $("reauthorize-hint").hidden = false;
-      $("reauthorize").addEventListener("click", function () {
-        window.location.assign(data.reauthorizeUrl);
+      $("reauthorize").addEventListener("click", async function () {
+        var button = $("reauthorize");
+        button.disabled = true;
+        setActionMessage("正在退出当前验证会话……");
+        try {
+          await logoutRequest();
+          window.location.assign(data.reauthorizeUrl);
+        } catch (err) {
+          button.disabled = false;
+          setActionMessage("退出当前验证会话失败，请重试后再重新验证。");
+        }
       });
     } else {
       $("reauthorize").hidden = true;
@@ -57,14 +66,35 @@
     }
   }
 
+  function setActionMessage(text) {
+    var message = $("action-message");
+    message.textContent = text || "";
+    message.hidden = !text;
+  }
+
+  async function logoutRequest() {
+    var response = await fetch("/api/auth/provider-sessions/logout", { method: "POST" });
+    if (!response.ok) {
+      throw new Error("退出请求失败（HTTP " + response.status + "）");
+    }
+    try {
+      return await response.json();
+    } catch (err) {
+      return {};
+    }
+  }
+
   async function logout() {
     $("logout").disabled = true;
+    setActionMessage("");
     try {
-      await fetch("/api/auth/provider-sessions/logout", { method: "POST" });
+      var data = await logoutRequest();
+      // 配置了 Casdoor 登出地址时跳转结束 SSO 会话，否则仅退出本服务会话。
+      window.location.assign(data.logoutUrl || "/connect/bilibili");
     } catch (err) {
-      // ignore
+      $("logout").disabled = false;
+      setActionMessage("退出登录失败，请检查网络后重试。");
     }
-    window.location.assign("/connect/bilibili");
   }
 
   $("logout").addEventListener("click", logout);

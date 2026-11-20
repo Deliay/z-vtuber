@@ -61,6 +61,9 @@
     if (err.code === "AUTH_LOGIN_REQUEST_NOT_FOUND") {
       return "登录请求不存在，请重新获取 token。";
     }
+    if (err.code === "AUTH_CONFIRM_RACE") {
+      return "确认请求处理中或发生并发冲突，请稍候重试。";
+    }
     if (err.status === 429) {
       return "请求过于频繁，请稍后再试。";
     }
@@ -118,7 +121,6 @@
     try {
       var body = {};
       if (returnTo) { body.returnTo = returnTo; }
-      body.clientId = "account-center";
       var data = await api("/api/auth/login-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -189,6 +191,7 @@
 
   async function confirm() {
     $("confirm").disabled = true;
+    hideConfirmHint();
     try {
       var data = await api("/api/auth/login-requests/" + encodeURIComponent(state.requestId) + "/confirm", {
         method: "POST",
@@ -198,17 +201,45 @@
       stopTimers();
       $("success-detail").textContent = "已绑定 B 站账号：" + data.user.name + "（UID " + data.user.uid + "）";
       show("step-success");
-      if (data.mode === "casdoor" && data.redirectUrl) {
-        $("redirect-hint").textContent = "正在跳转 Casdoor 完成统一登录……";
-        window.setTimeout(function () { window.location.assign(data.redirectUrl); }, 900);
-      } else {
-        $("redirect-hint").textContent = "正在进入账号中心……";
-        window.setTimeout(function () { window.location.assign("/account"); }, 900);
-      }
+      var target = data.mode === "casdoor" && data.redirectUrl
+        ? data.redirectUrl
+        : "/account";
+      $("redirect-hint").textContent = data.mode === "casdoor" && data.redirectUrl
+        ? "正在跳转 Casdoor 完成统一登录……"
+        : "正在进入账号中心……";
+      $("continue").hidden = false;
+      $("continue").onclick = function () { window.location.assign(target); };
+      window.setTimeout(function () { window.location.assign(target); }, 900);
+      // Casdoor 不可达/跳转被拦截时，用户仍可手动继续或稍后重试。
+      window.setTimeout(function () {
+        if (!state.stopped) { return; }
+        $("redirect-hint").textContent = "如果长时间没有跳转，请检查网络后点击下方「继续」。";
+      }, 2500);
     } catch (err) {
+      if (err.code === "AUTH_CONFIRM_RACE") {
+        // 可重试冲突：保持自动轮询，不要求用户重新获取 token。
+        $("confirm").disabled = false;
+        showConfirmHint(describeError(err));
+        schedulePoll(800);
+        return;
+      }
+      if (err.code === "AUTH_LOGIN_REQUEST_ALREADY_CONSUMED") {
+        fail("该登录请求已使用，请重新获取 token。");
+        return;
+      }
       $("confirm").disabled = false;
       fail(describeError(err));
     }
+  }
+
+  function showConfirmHint(message) {
+    $("confirm-hint").textContent = message;
+    $("confirm-hint").hidden = false;
+  }
+
+  function hideConfirmHint() {
+    $("confirm-hint").textContent = "";
+    $("confirm-hint").hidden = true;
   }
 
   function denyRedirect() {
@@ -249,6 +280,8 @@
     $("confirm").disabled = false;
     $("get-token").disabled = false;
     $("room-hint").textContent = "";
+    hideConfirmHint();
+    $("continue").hidden = true;
     show("step-rooms");
     loadRooms();
   }

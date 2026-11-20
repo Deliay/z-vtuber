@@ -44,6 +44,7 @@
     <p class="muted">确认后将绑定该 B 站账号，并跳转 Casdoor 完成统一登录。</p>
     <button id="confirm" type="button">这是我，继续</button>
     <button id="reject" type="button" class="secondary">不是我</button>
+    <p class="muted small" id="confirm-hint" hidden></p>
     <p class="muted">剩余确认时间：<span id="confirm-countdown">--</span></p>
   </section>
 
@@ -51,6 +52,7 @@
     <h2>B 站账号绑定成功</h2>
     <p id="success-detail"></p>
     <p class="muted" id="redirect-hint">正在跳转统一登录……</p>
+    <button id="continue" type="button" hidden>继续</button>
   </section>
 
   <section id="step-error" hidden>

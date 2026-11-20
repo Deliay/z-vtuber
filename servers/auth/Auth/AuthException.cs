@@ -13,9 +13,7 @@ public static class AuthErrorCodes
     public const string ConfirmRace = "AUTH_CONFIRM_RACE";
     public const string LoginRequestExpired = "AUTH_LOGIN_REQUEST_EXPIRED";
     public const string TokenRateLimited = "AUTH_TOKEN_RATE_LIMITED";
-    public const string DanmakuRateLimited = "AUTH_DANMAKU_RATE_LIMITED";
     public const string DanmakuSourceUnavailable = "AUTH_DANMAKU_SOURCE_UNAVAILABLE";
-    public const string CasdoorNotConfigured = "AUTH_CASDOOR_NOT_CONFIGURED";
     public const string Unauthorized = "AUTH_UNAUTHORIZED";
     public const string Internal = "AUTH_INTERNAL";
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Z.Vtuber.Auth.Configuration;
+using Z.Vtuber.Auth.Observability;
 
 namespace Z.Vtuber.Auth.Danmaku;
 
@@ -31,6 +32,7 @@ public sealed class RoomEventSource(
     IDanmakuEventHandler handler,
     IRoomLeaderLease lease,
     DanmakuHealthRegistry registry,
+    AuthMetrics metrics,
     TimeProvider clock,
     ILogger<RoomEventSource> logger)
 {
@@ -116,6 +118,7 @@ public sealed class RoomEventSource(
             }
 
             var delay = DanmakuBackoff.Next(_attempt, options.Value.ReconnectMaxSeconds, _random.NextDouble());
+            metrics.RoomReconnect();
             logger.LogInformation("Reconnecting danmaku room {RoomId} in {Delay}.", roomId, delay);
             await Task.Delay(delay, ct);
         }
@@ -151,6 +154,7 @@ public sealed class RoomEventSource(
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
         registry.MarkConnected(roomId);
+        metrics.RoomConnected();
 
         _ = BackfillAsync(ct);
 
@@ -254,6 +258,12 @@ public sealed class RoomEventSource(
             foreach (var evt in result.Events)
             {
                 await ProcessEventAsync(evt, ct);
+            }
+
+            metrics.RoomBackfillProcessed(result.Events.Count);
+            if (result.Truncated)
+            {
+                metrics.RoomBackfillTruncated();
             }
 
             logger.LogInformation(

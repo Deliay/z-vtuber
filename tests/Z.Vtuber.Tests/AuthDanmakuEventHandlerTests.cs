@@ -26,6 +26,7 @@ public sealed class AuthDanmakuEventHandlerTests : IClassFixture<MongoDbFixture>
         AuthTestOptions.Opt(_services.DanmakuOptions),
         AuthTestOptions.Opt(_services.AuthOptions),
         _services.Audit,
+        _services.Metrics,
         _services.Clock,
         NullLogger<DanmakuEventHandler>.Instance);
 

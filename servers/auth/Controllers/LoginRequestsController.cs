@@ -21,6 +21,8 @@ public sealed class LoginRequestsController(
         [FromBody] CreateLoginRequestRequest? body, CancellationToken ct)
     {
         var ip = ClientIp();
+        // 内置验证页不传 clientId：只有外部站点显式声明 client 时才使用 client 维度配额，
+        // 避免所有访客共享一个 100/h 的全局桶。
         if (!await rateLimiter.TryTokenPerMinuteAsync(ip, ct) ||
             !await rateLimiter.TryTokenPerDayAsync(ip, ct) ||
             (!string.IsNullOrWhiteSpace(body?.ClientId) &&

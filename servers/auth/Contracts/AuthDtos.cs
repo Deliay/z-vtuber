@@ -119,6 +119,12 @@ public sealed class MeResponse
     public string? ReauthorizeUrl { get; init; }
 }
 
+public sealed class LogoutResponse
+{
+    /// <summary>Casdoor end-session 地址；为空表示仅退出本服务会话。</summary>
+    public string? LogoutUrl { get; init; }
+}
+
 public sealed class RefreshSessionRequest
 {
     public string? RefreshToken { get; set; }

@@ -1,6 +1,7 @@
 using MongoDB.Driver;
 using Z.Vtuber.Auth.Configuration;
 using Z.Vtuber.Auth.OAuth;
+using Z.Vtuber.Auth.Observability;
 using Z.Vtuber.Auth.Persistence;
 
 namespace Z.Vtuber.Auth.Auth;
@@ -43,6 +44,7 @@ public sealed class LoginRequestService(
     IOptions<OAuthProviderOptions> providerOptions,
     IOptions<DanmakuOptions> danmakuOptions,
     AuditLogger audit,
+    AuthMetrics metrics,
     TimeProvider clock,
     ILogger<LoginRequestService> logger)
 {
@@ -108,6 +110,7 @@ public sealed class LoginRequestService(
                     clientIp: clientIp,
                     userAgent: userAgent,
                     ct: ct);
+                metrics.LoginCreated();
 
                 var rooms = danmakuOptions.Value.RoomIds;
                 return new CreatedLoginRequest(
@@ -246,6 +249,7 @@ public sealed class LoginRequestService(
                 sourceRoomId: record.SourceRoomId,
                 clientIp: clientIp,
                 ct: ct);
+            metrics.LoginConfirmed();
 
             return new ConfirmLoginResult(
                 authOptions.Value.Mode,
@@ -273,6 +277,7 @@ public sealed class LoginRequestService(
                 clientIp: clientIp,
                 detail: ex.Code,
                 ct: ct);
+            metrics.LoginFailed();
             throw;
         }
         catch
@@ -287,6 +292,7 @@ public sealed class LoginRequestService(
                 sourceRoomId: record.SourceRoomId,
                 clientIp: clientIp,
                 ct: ct);
+            metrics.LoginFailed();
             throw;
         }
     }
@@ -348,15 +354,18 @@ public sealed class LoginRequestService(
 
         var cancelled = await repository.TryCancelAsync(
             requestId, clock.GetUtcNow().UtcDateTime, ct);
-        if (cancelled)
+        if (!cancelled)
         {
-            await audit.LogAsync(
-                AuthAuditEvents.Cancelled,
-                requestId: requestId,
-                platform: "bilibili",
-                clientIp: clientIp,
-                ct: ct);
+            // 与并发 confirm/expire 竞争时 CAS 会失败；不能向用户返回「已取消」的假成功。
+            throw AuthException.ConfirmRace();
         }
+
+        await audit.LogAsync(
+            AuthAuditEvents.Cancelled,
+            requestId: requestId,
+            platform: "bilibili",
+            clientIp: clientIp,
+            ct: ct);
     }
 
     public async Task<AuthLoginRequestRecord> RequireRequestAsync(

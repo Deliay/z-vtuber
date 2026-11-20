@@ -59,7 +59,8 @@ public sealed class AuthRateLimitOptions
 
     public int TokenPerDayPerIp { get; set; } = 100;
 
-    public int TokenPerHourPerClient { get; set; } = 100;
+    /// <summary>外部 client 维度的小时配额；内置验证页不发送 clientId，仅受 IP 配额约束。</summary>
+    public int TokenPerHourPerClient { get; set; } = 10_000;
 
     public int DanmakuPerMinutePerUid { get; set; } = 10;
 

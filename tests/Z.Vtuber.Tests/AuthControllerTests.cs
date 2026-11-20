@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using MongoDB.Driver;
 using Z.Vtuber.Auth.Auth;
 using Z.Vtuber.Auth.Configuration;
 using Z.Vtuber.Auth.Contracts;
@@ -72,6 +73,28 @@ public sealed class AuthPageTests
         Assert.Contains("textContent", js);
         Assert.DoesNotContain("innerHTML", js);
         Assert.DoesNotContain("localStorage", js);
+    }
+
+    [Fact]
+    public void ConnectJs_DoesNotShareBuiltInClientBucket_AndRetriesConfirmRace()
+    {
+        var js = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "servers", "auth", "wwwroot", "connect", "connect.js"));
+        // 内置页面不发送 clientId，避免所有访客共享 per-client 桶。
+        Assert.DoesNotContain("account-center", js);
+        // 409 AUTH_CONFIRM_RACE 必须可重试，而不是要求重新获取 token。
+        Assert.Contains("AUTH_CONFIRM_RACE", js);
+        Assert.Contains("schedulePoll(800)", js);
+        // 成功页提供手动继续入口。
+        Assert.Contains("continue", js);
+    }
+
+    [Fact]
+    public void AccountJs_ReauthorizeLogsOutFirst_AndLogoutUsesCasdoorUrl()
+    {
+        var js = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "servers", "auth", "wwwroot", "account", "account.js"));
+        Assert.Contains("/api/auth/provider-sessions/logout", js);
+        Assert.Contains("logoutUrl", js);
+        Assert.Contains("await logoutRequest();", js);
     }
 
     private static string FindRepositoryRoot()
@@ -162,10 +185,27 @@ public sealed class AuthLoginRequestsControllerTests : IClassFixture<MongoDbFixt
     public async Task Create_RateLimited_Returns429()
     {
         MarkRoomReady();
-        var controller = CreateController(new TestRateLimiter { Allow = false });
+        var limiter = new TestRateLimiter { Allow = false };
+        var controller = CreateController(limiter);
         var ex = await Assert.ThrowsAsync<AuthException>(() => controller.Create(
             new CreateLoginRequestRequest { ClientId = "client", ReturnTo = AuthTestOptions.ReturnTo() }, default));
         Assert.Equal(StatusCodes.Status429TooManyRequests, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_WithoutClientId_DoesNotUseSharedClientBucket()
+    {
+        MarkRoomReady();
+        var limiter = new TestRateLimiter();
+        var controller = CreateController(limiter);
+        var result = await controller.Create(new CreateLoginRequestRequest
+        {
+            ReturnTo = AuthTestOptions.ReturnTo()
+        }, default);
+
+        Assert.IsType<CreatedResult>(result);
+        Assert.Equal(2, limiter.Calls);
+        Assert.Equal(0, limiter.PerClientCalls);
     }
 
     [Fact]
@@ -217,6 +257,8 @@ public sealed class AuthOAuthProviderTests : IClassFixture<MongoDbFixture>, IAsy
         _services.TicketService,
         _services.CodeService,
         _services.Users,
+        _services.Audit,
+        _services.Metrics,
         _services.Clock,
         NullLogger<OAuthAuthorizeController>.Instance));
 
@@ -227,6 +269,8 @@ public sealed class AuthOAuthProviderTests : IClassFixture<MongoDbFixture>, IAsy
         _services.TokenService,
         _services.RateLimiter,
         _services.Users,
+        _services.Audit,
+        _services.Metrics,
         NullLogger<OAuthTokenController>.Instance));
 
     private OAuthLogoutController CreateLogout(Action<DefaultHttpContext>? configure = null) =>
@@ -290,7 +334,8 @@ public sealed class AuthOAuthProviderTests : IClassFixture<MongoDbFixture>, IAsy
         Assert.False(string.IsNullOrEmpty(refreshToken));
 
         var userInfo = WithContext(new OAuthUserInfoController(
-            AuthTestOptions.Opt(_services.AuthOptions), _services.TokenService, _services.Users),
+            AuthTestOptions.Opt(_services.AuthOptions), _services.TokenService, _services.Users,
+            _services.Audit, _services.Metrics),
             context => context.Request.Headers.Authorization = "Bearer " + accessToken);
         var infoResult = await userInfo.UserInfo(default);
         var infoOk = Assert.IsType<OkObjectResult>(infoResult);
@@ -298,6 +343,14 @@ public sealed class AuthOAuthProviderTests : IClassFixture<MongoDbFixture>, IAsy
         Assert.Equal("bili_403496", infoJson.RootElement.GetProperty("sub").GetString());
         Assert.Equal("Zero_Ash", infoJson.RootElement.GetProperty("name").GetString());
         Assert.Equal("30066", infoJson.RootElement.GetProperty("bilibili_room_id").GetString());
+
+        var auditEvents = await _fixture.Database
+            .GetCollection<AuthAuditLogRecord>(AuthCollectionNames.AuditLogs)
+            .Find(FilterDefinition<AuthAuditLogRecord>.Empty)
+            .ToListAsync();
+        Assert.Contains(auditEvents, x => x.Event == AuthAuditEvents.OAuthAuthorize);
+        Assert.Contains(auditEvents, x => x.Event == AuthAuditEvents.OAuthTokenIssued);
+        Assert.Contains(auditEvents, x => x.Event == AuthAuditEvents.OAuthUserInfo);
     }
 
     [Fact]
@@ -388,6 +441,66 @@ public sealed class AuthOAuthProviderTests : IClassFixture<MongoDbFixture>, IAsy
         Assert.Contains(
             $"{ProviderSessionService.CookieName}=",
             controller.Response.Headers.SetCookie.ToString());
+    }
+
+    [Fact]
+    public async Task ProviderSessionLogout_RevokesTokensAndReturnsCasdoorLogoutUrl()
+    {
+        var user = await _services.UserService.UpsertBilibiliUserAsync(78, "logout-all", null, "30066", null);
+        var pair = await _services.TokenService.IssueAsync(
+            user.User.Id, _services.ProviderOptions.ClientId, "openid profile");
+        var current = await _services.SessionService.CreateAsync(user.User.Id, null, null);
+        var other = await _services.SessionService.CreateAsync(user.User.Id, null, null);
+
+        var casdoor = new CasdoorOptions
+        {
+            LogoutUrl = "https://casdoor.example.com/api/logout",
+            LogoutClientId = "casdoor-app",
+            PostLogoutRedirectUri = "https://auth.example.com/account"
+        };
+        var controller = WithContext(new ProviderSessionsController(
+            _services.SessionService,
+            _services.TokenService,
+            AuthTestOptions.Opt(_services.AuthOptions),
+            AuthTestOptions.Opt(casdoor)),
+            context => context.Request.Headers.Cookie = $"{ProviderSessionService.CookieName}={current}");
+
+        var result = await controller.Logout(default);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var body = Assert.IsType<LogoutResponse>(ok.Value);
+        Assert.NotNull(body.LogoutUrl);
+        var query = QueryHelpers.ParseQuery(new Uri(body.LogoutUrl!).Query);
+        Assert.Equal("casdoor-app", query["client_id"].ToString());
+        Assert.Equal("https://auth.example.com/account", query["post_logout_redirect_uri"].ToString());
+
+        Assert.Null(await _services.TokenService.ValidateAccessAsync(pair.AccessToken));
+        Assert.Null(await _services.SessionService.ResolveAsync(current));
+        Assert.Null(await _services.SessionService.ResolveAsync(other));
+        Assert.Contains(
+            $"{ProviderSessionService.CookieName}=",
+            controller.Response.Headers.SetCookie.ToString());
+    }
+
+    [Fact]
+    public async Task TokenEndpoint_RejectsRefreshForDisabledUser()
+    {
+        var user = await _services.UserService.UpsertBilibiliUserAsync(79, "disabled-refresh", null, "30066", null);
+        var pair = await _services.TokenService.IssueAsync(
+            user.User.Id, _services.ProviderOptions.ClientId, "openid profile");
+
+        await _fixture.Database.GetCollection<AuthUserRecord>(AuthCollectionNames.Users)
+            .UpdateOneAsync(
+                x => x.Id == user.User.Id,
+                Builders<AuthUserRecord>.Update.Set(x => x.Status, AuthUserStatus.Disabled));
+
+        var controller = CreateToken();
+        controller.HttpContext.Request.Headers.Authorization = "Basic " +
+            Basic(_services.ProviderOptions.ClientId, _services.ProviderOptions.ClientSecret);
+        var result = await controller.Token(
+            "refresh_token", null, null, null, pair.RefreshToken, null, null, default);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
     }
 
     [Fact]

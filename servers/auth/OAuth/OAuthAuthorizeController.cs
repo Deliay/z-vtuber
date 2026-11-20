@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Z.Vtuber.Auth.Auth;
 using Z.Vtuber.Auth.Configuration;
+using Z.Vtuber.Auth.Observability;
 using Z.Vtuber.Auth.Persistence;
 
 namespace Z.Vtuber.Auth.OAuth;
@@ -14,6 +15,8 @@ public sealed class OAuthAuthorizeController(
     ProviderTicketService tickets,
     AuthorizationCodeService codes,
     UserRepository users,
+    AuditLogger audit,
+    AuthMetrics metrics,
     TimeProvider clock,
     ILogger<OAuthAuthorizeController> logger) : ControllerBase
 {
@@ -49,6 +52,13 @@ public sealed class OAuthAuthorizeController(
         // 用户在验证页选择「不是我/取消」：带 error=access_denied 回到已校验的 redirect_uri。
         if (IsDenied(query["denied"]))
         {
+            metrics.OAuthAuthorize();
+            await audit.LogAsync(
+                AuthAuditEvents.OAuthAuthorize,
+                clientIp: ClientIp(),
+                userAgent: Request.Headers.UserAgent.ToString(),
+                detail: "access_denied",
+                ct: ct);
             return RedirectWithError(redirectUri, "access_denied", state);
         }
 
@@ -72,18 +82,40 @@ public sealed class OAuthAuthorizeController(
             var ticket = await tickets.ConsumeAsync(ticketValue, clientId, redirectUri, ct);
             if (ticket is null)
             {
+                metrics.OAuthFailure();
+                await audit.LogAsync(
+                    AuthAuditEvents.OAuthAuthorize,
+                    clientIp: ClientIp(),
+                    userAgent: Request.Headers.UserAgent.ToString(),
+                    detail: "invalid_ticket",
+                    ct: ct);
                 // 重放/过期 ticket：不签发 code，也不静默降级为已有会话。
                 return BadRequest(new { error = "invalid_grant", error_description = "The provider ticket is invalid or already used." });
             }
 
             if (!TokenHasher.FixedTimeEquals(ticket.State, state))
             {
+                metrics.OAuthFailure();
+                await audit.LogAsync(
+                    AuthAuditEvents.OAuthAuthorize,
+                    clientIp: ClientIp(),
+                    userAgent: Request.Headers.UserAgent.ToString(),
+                    detail: "ticket_state_mismatch",
+                    ct: ct);
                 return BadRequest(new { error = "invalid_grant", error_description = "The provider ticket state does not match." });
             }
 
             var user = await users.FindByIdAsync(ticket.UserId, ct);
             if (user is null || !string.Equals(user.Status, AuthUserStatus.Active, StringComparison.Ordinal))
             {
+                metrics.OAuthFailure();
+                await audit.LogAsync(
+                    AuthAuditEvents.OAuthAuthorize,
+                    platform: "bilibili",
+                    clientIp: ClientIp(),
+                    userAgent: Request.Headers.UserAgent.ToString(),
+                    detail: "user_inactive",
+                    ct: ct);
                 return RedirectWithError(redirectUri, "access_denied", state);
             }
 
@@ -101,6 +133,15 @@ public sealed class OAuthAuthorizeController(
             var code = await codes.IssueAsync(user.Id, ticketRequest, ticket.Id, ct);
 
             Response.Headers["Referrer-Policy"] = "no-referrer";
+            metrics.OAuthAuthorize();
+            await audit.LogAsync(
+                AuthAuditEvents.OAuthAuthorize,
+                platform: "bilibili",
+                platformUid: user.PlatformUid,
+                clientIp: ClientIp(),
+                userAgent: Request.Headers.UserAgent.ToString(),
+                detail: "ticket",
+                ct: ct);
             logger.LogInformation("OAuth authorize completed via provider ticket for user {UserId}.", user.Id);
             return RedirectWithCode(redirectUri, code, state);
         }
@@ -109,6 +150,21 @@ public sealed class OAuthAuthorizeController(
         if (existing is not null)
         {
             var code = await codes.IssueAsync(existing.User.Id, request, existing.Session.Id, ct);
+            // 滑动续期：命中会话时同步续期浏览器 Cookie，避免 DB 已续但浏览器仍按首次 30 天过期。
+            ProviderSessionCookie.Append(
+                Response,
+                authOptions.Value.PublicBaseUrl,
+                Request.Cookies[ProviderSessionService.CookieName]!,
+                existing.Session.ExpiresAt);
+            metrics.OAuthAuthorize();
+            await audit.LogAsync(
+                AuthAuditEvents.OAuthAuthorize,
+                platform: "bilibili",
+                platformUid: existing.User.PlatformUid,
+                clientIp: ClientIp(),
+                userAgent: Request.Headers.UserAgent.ToString(),
+                detail: "session",
+                ct: ct);
             logger.LogInformation("OAuth authorize completed via provider session for user {UserId}.", existing.User.Id);
             return RedirectWithCode(redirectUri, code, state);
         }

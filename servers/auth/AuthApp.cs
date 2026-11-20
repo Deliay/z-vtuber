@@ -10,6 +10,7 @@ using Z.Vtuber.Auth.Danmaku;
 using Z.Vtuber.Auth.Health;
 using Z.Vtuber.Auth.Middleware;
 using Z.Vtuber.Auth.OAuth;
+using Z.Vtuber.Auth.Observability;
 using Z.Vtuber.Auth.Persistence;
 using Z.Vtuber.Common.Persistence;
 
@@ -46,6 +47,8 @@ public static class AuthApp
 
         services.AddControllers();
         services.AddHttpContextAccessor();
+        services.AddMetrics();
+        services.AddSingleton<AuthMetrics>();
         services.AddHealthChecks()
             .AddCheck<MongoDbHealthCheck>("mongo")
             .AddCheck<RedisHealthCheck>("redis")

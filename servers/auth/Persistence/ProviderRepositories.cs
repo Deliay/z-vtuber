@@ -171,6 +171,15 @@ public sealed class ProviderTokenRepository
             Builders<AuthProviderTokenRecord>.Update.Set(x => x.RevokedAt, now),
             cancellationToken: ct);
     }
+
+    public async Task<long> RevokeAllByUserAsync(ObjectId userId, DateTime now, CancellationToken ct = default)
+    {
+        var result = await _collection.UpdateManyAsync(
+            x => x.UserId == userId && x.RevokedAt == null,
+            Builders<AuthProviderTokenRecord>.Update.Set(x => x.RevokedAt, now),
+            cancellationToken: ct);
+        return result.ModifiedCount;
+    }
 }
 
 public sealed class StandaloneSessionRepository

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Z.Vtuber.Auth.Auth;
 using Z.Vtuber.Auth.Configuration;
+using Z.Vtuber.Auth.Observability;
 using Z.Vtuber.Auth.Persistence;
 
 namespace Z.Vtuber.Auth.OAuth;
@@ -9,7 +10,9 @@ namespace Z.Vtuber.Auth.OAuth;
 public sealed class OAuthUserInfoController(
     IOptions<AuthOptions> authOptions,
     ProviderTokenService tokens,
-    UserRepository users) : ControllerBase
+    UserRepository users,
+    AuditLogger audit,
+    AuthMetrics metrics) : ControllerBase
 {
     [HttpGet("/oauth/userinfo")]
     public async Task<IActionResult> UserInfo(CancellationToken ct)
@@ -28,14 +31,26 @@ public sealed class OAuthUserInfoController(
         var record = await tokens.ValidateAccessAsync(header["Bearer ".Length..].Trim(), ct);
         if (record is null)
         {
+            metrics.OAuthFailure();
+            await AuditFailureAsync("invalid_token", ct);
             return UnauthorizedResponse();
         }
 
         var user = await users.FindByIdAsync(record.UserId, ct);
         if (user is null || !string.Equals(user.Status, AuthUserStatus.Active, StringComparison.Ordinal))
         {
+            metrics.OAuthFailure();
+            await AuditFailureAsync("user_inactive", ct);
             return UnauthorizedResponse();
         }
+
+        await audit.LogAsync(
+            AuthAuditEvents.OAuthUserInfo,
+            platform: "bilibili",
+            platformUid: user.PlatformUid,
+            clientIp: ClientIp(),
+            userAgent: Request.Headers.UserAgent.ToString(),
+            ct: ct);
 
         return Ok(new
         {
@@ -57,6 +72,16 @@ public sealed class OAuthUserInfoController(
             error_description = "The access token is invalid or expired."
         });
     }
+
+    private Task AuditFailureAsync(string detail, CancellationToken ct) =>
+        audit.LogAsync(
+            AuthAuditEvents.OAuthUserInfo,
+            clientIp: ClientIp(),
+            userAgent: Request.Headers.UserAgent.ToString(),
+            detail: detail,
+            ct: ct);
+
+    private string ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 }
 
 [ApiController]

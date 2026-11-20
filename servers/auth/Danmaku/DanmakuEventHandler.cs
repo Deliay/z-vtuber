@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Z.Vtuber.Auth.Auth;
 using Z.Vtuber.Auth.Configuration;
+using Z.Vtuber.Auth.Observability;
 using Z.Vtuber.Auth.Persistence;
 
 namespace Z.Vtuber.Auth.Danmaku;
@@ -20,6 +21,7 @@ public sealed partial class DanmakuEventHandler(
     IOptions<DanmakuOptions> danmakuOptions,
     IOptions<AuthOptions> authOptions,
     AuditLogger audit,
+    AuthMetrics metrics,
     TimeProvider clock,
     ILogger<DanmakuEventHandler> logger) : IDanmakuEventHandler
 {
@@ -78,6 +80,7 @@ public sealed partial class DanmakuEventHandler(
         logger.LogInformation(
             "Danmaku token verified for request {RequestId} in room {RoomId} (uid {Uid}).",
             updated.RequestId, roomId, sender.Uid);
+        metrics.LoginVerified();
 
         await audit.LogAsync(
             AuthAuditEvents.DanmakuVerified,

@@ -68,7 +68,10 @@ public sealed class ProviderSessionService(
 
         if (now - record.LastSeenAt >= TimeSpan.FromMinutes(5))
         {
-            await repository.TouchAsync(record.Id, now, now.AddDays(options.Value.ProviderSessionDays), ct);
+            var expiresAt = now.AddDays(options.Value.ProviderSessionDays);
+            await repository.TouchAsync(record.Id, now, expiresAt, ct);
+            record.LastSeenAt = now;
+            record.ExpiresAt = expiresAt;
         }
 
         return new ProviderSessionContext(record, user);

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Z.Vtuber.Auth.Auth;
 using Z.Vtuber.Auth.Configuration;
+using Z.Vtuber.Auth.Observability;
 using Z.Vtuber.Auth.Persistence;
 
 namespace Z.Vtuber.Auth.OAuth;
@@ -13,6 +14,8 @@ public sealed class OAuthTokenController(
     ProviderTokenService tokens,
     IAuthRateLimiter rateLimiter,
     UserRepository users,
+    AuditLogger audit,
+    AuthMetrics metrics,
     ILogger<OAuthTokenController> logger) : ControllerBase
 {
     [HttpPost("/oauth/token")]
@@ -40,6 +43,13 @@ public sealed class OAuthTokenController(
                     ClientIp(),
                     ct))
             {
+                metrics.OAuthFailure();
+                await audit.LogAsync(
+                    AuthAuditEvents.OAuthTokenIssued,
+                    clientIp: ClientIp(),
+                    userAgent: Request.Headers.UserAgent.ToString(),
+                    detail: "rate_limited",
+                    ct: ct);
                 return TooManyRequests();
             }
 
@@ -77,6 +87,16 @@ public sealed class OAuthTokenController(
 
             logger.LogInformation(
                 "OAuth token issued for client {ClientId} via {GrantType}.", client, grant_type);
+            metrics.OAuthToken();
+            var issuedUser = await users.FindByIdAsync(pair.UserId, ct);
+            await audit.LogAsync(
+                AuthAuditEvents.OAuthTokenIssued,
+                platform: "bilibili",
+                platformUid: issuedUser?.PlatformUid,
+                clientIp: ClientIp(),
+                userAgent: Request.Headers.UserAgent.ToString(),
+                detail: grant_type,
+                ct: ct);
             return Ok(new
             {
                 access_token = pair.AccessToken,
@@ -88,6 +108,13 @@ public sealed class OAuthTokenController(
         }
         catch (OAuthException ex)
         {
+            metrics.OAuthFailure();
+            await audit.LogAsync(
+                AuthAuditEvents.OAuthTokenIssued,
+                clientIp: ClientIp(),
+                userAgent: Request.Headers.UserAgent.ToString(),
+                detail: ex.Error,
+                ct: ct);
             var status = string.Equals(ex.Error, "invalid_client", StringComparison.Ordinal)
                 ? StatusCodes.Status401Unauthorized
                 : StatusCodes.Status400BadRequest;

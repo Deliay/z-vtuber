@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 using Z.Vtuber.Auth.Auth;
 using Z.Vtuber.Auth.Configuration;
 using Z.Vtuber.Auth.Contracts;
@@ -31,6 +32,12 @@ public sealed class MeController(
         var fromCookie = await providerSessions.ResolveAsync(cookie, ct);
         if (fromCookie is not null)
         {
+            // 滑动续期：每次命中会话都同步浏览器 Cookie，与 DB 中的 ExpiresAt 保持一致。
+            ProviderSessionCookie.Append(
+                Response,
+                authOptions.Value.PublicBaseUrl,
+                cookie!,
+                fromCookie.Session.ExpiresAt);
             return fromCookie.User;
         }
 
@@ -92,15 +99,53 @@ public sealed class MeController(
 [Route("api/auth/provider-sessions")]
 public sealed class ProviderSessionsController(
     ProviderSessionService sessions,
-    IOptions<AuthOptions> authOptions) : ControllerBase
+    ProviderTokenService providerTokens,
+    IOptions<AuthOptions> authOptions,
+    IOptions<CasdoorOptions> casdoorOptions) : ControllerBase
 {
     [HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
         var token = Request.Cookies[ProviderSessionService.CookieName];
+        var resolved = await sessions.ResolveAsync(token, ct);
         await sessions.RevokeAsync(token, ct);
+
+        // 账号中心退出登录：撤销该用户全部 Provider 会话与 access/refresh，避免 Casdoor/其他站点继续静默重发。
+        if (resolved is not null)
+        {
+            await sessions.RevokeAllForUserAsync(resolved.User.Id, ct);
+            await providerTokens.RevokeAllForUserAsync(resolved.User.Id, ct);
+        }
+
         ProviderSessionCookie.Delete(Response, authOptions.Value.PublicBaseUrl);
-        return NoContent();
+        return Ok(new LogoutResponse { LogoutUrl = BuildCasdoorLogoutUrl() });
+    }
+
+    /// <summary>
+    /// Casdoor RP-initiated logout（<c>/api/logout</c>）：结束 Casdoor SSO 会话并回跳账号中心。
+    /// 未配置时返回 null，页面仅完成本地退出（PRD 的“退出统一登录”需部署时配置此项）。
+    /// </summary>
+    private string? BuildCasdoorLogoutUrl()
+    {
+        var casdoor = casdoorOptions.Value;
+        if (!string.Equals(authOptions.Value.Mode, AuthModes.Casdoor, StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(casdoor.LogoutUrl))
+        {
+            return null;
+        }
+
+        var url = casdoor.LogoutUrl;
+        if (!string.IsNullOrWhiteSpace(casdoor.LogoutClientId))
+        {
+            url = QueryHelpers.AddQueryString(url, "client_id", casdoor.LogoutClientId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(casdoor.PostLogoutRedirectUri))
+        {
+            url = QueryHelpers.AddQueryString(url, "post_logout_redirect_uri", casdoor.PostLogoutRedirectUri);
+        }
+
+        return url;
     }
 }
 

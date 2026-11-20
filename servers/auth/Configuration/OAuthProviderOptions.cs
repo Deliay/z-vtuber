@@ -38,4 +38,13 @@ public sealed class CasdoorOptions
 
     /// <summary>账号中心「重新验证」跳转地址；配置为站点/Casdoor 登录入口。</summary>
     public string ReauthorizeUrl { get; set; } = string.Empty;
+
+    /// <summary>Casdoor RP-initiated logout 地址（通常 <c>{Endpoint}/api/logout</c>）；为空时仅退出本服务会话。</summary>
+    public string LogoutUrl { get; set; } = string.Empty;
+
+    /// <summary>可选的 Casdoor Application Client ID；用于无 id_token_hint 且浏览器无 Casdoor 会话时定位应用。</summary>
+    public string LogoutClientId { get; set; } = string.Empty;
+
+    /// <summary>Casdoor 登出后的回跳地址；必须登记在 Casdoor Application 的 Redirect URLs 中。</summary>
+    public string PostLogoutRedirectUri { get; set; } = string.Empty;
 }
