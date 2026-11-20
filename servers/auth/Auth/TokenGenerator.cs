@@ -8,8 +8,8 @@ namespace Z.Vtuber.Auth.Auth;
 /// </summary>
 public static class TokenGenerator
 {
-    /// <summary>去混淆字符集（去掉 0/O/1/l/I），仍属于 [A-Za-z0-9]。</summary>
-    public const string DanmakuAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    /// <summary>去混淆字符集（去掉 0/O/1/l/I/o），仍属于 [A-Za-z0-9]，共 56 字符。</summary>
+    public const string DanmakuAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
 
     public const int DanmakuTokenLength = 10;
 

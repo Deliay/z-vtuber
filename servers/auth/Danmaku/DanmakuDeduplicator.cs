@@ -24,6 +24,17 @@ public sealed class DanmakuDeduplicator
     public bool TryAdd(string roomId, DateTime occurredAt, long uid, string text) =>
         TryAdd($"{roomId}|{occurredAt.Ticks}|{uid}|{text}");
 
+    public void Remove(string roomId, DateTime occurredAt, long uid, string text) =>
+        Remove($"{roomId}|{occurredAt.Ticks}|{uid}|{text}");
+
+    public void Remove(string key)
+    {
+        lock (_gate)
+        {
+            _seen.Remove(key);
+        }
+    }
+
     public bool TryAdd(string key)
     {
         var now = _clock.GetUtcNow().UtcDateTime;

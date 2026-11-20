@@ -20,8 +20,11 @@ public sealed record DanmakuRoomSnapshot(
 /// <summary>每房间事件源健康状态注册表（供 API、readiness 与页面使用）。</summary>
 public sealed class DanmakuHealthRegistry(TimeProvider clock)
 {
+    public static readonly TimeSpan DefaultGrace = TimeSpan.FromSeconds(30);
+
     private sealed class State
     {
+        public readonly object Gate = new();
         public string Role = RoomRoles.Disconnected;
         public bool Connected;
         public bool OtherInstanceLease;
@@ -30,6 +33,23 @@ public sealed class DanmakuHealthRegistry(TimeProvider clock)
         public DateTime? LastFrameAt;
         public DateTime? LastErrorAt;
         public string? LastError;
+
+        public DanmakuRoomSnapshot Snapshot(string roomId, DateTime now, TimeSpan grace)
+        {
+            lock (Gate)
+            {
+                var freshFrame = LastFrameAt is { } frame && now - frame <= grace;
+                // 已连接、宽限期内仍有帧、或 follower 观察到其他实例持租约，均视为系统级可用。
+                var available = Connected || freshFrame || (Role == RoomRoles.Standby && OtherInstanceLease);
+                return new DanmakuRoomSnapshot(
+                    roomId,
+                    Role,
+                    Connected,
+                    available,
+                    LastHeartbeatAt,
+                    LastEventAt);
+            }
+        }
     }
 
     private readonly ConcurrentDictionary<string, State> _states = new(StringComparer.Ordinal);
@@ -37,103 +57,92 @@ public sealed class DanmakuHealthRegistry(TimeProvider clock)
     public void MarkLeader(string roomId)
     {
         var state = Get(roomId);
-        state.Role = RoomRoles.Leader;
-        state.OtherInstanceLease = false;
+        lock (state.Gate)
+        {
+            state.Role = RoomRoles.Leader;
+            state.OtherInstanceLease = false;
+        }
     }
 
     public void MarkStandby(string roomId, bool otherInstanceLease)
     {
         var state = Get(roomId);
-        state.Role = RoomRoles.Standby;
-        state.Connected = false;
-        state.OtherInstanceLease = otherInstanceLease;
+        lock (state.Gate)
+        {
+            state.Role = RoomRoles.Standby;
+            state.Connected = false;
+            state.OtherInstanceLease = otherInstanceLease;
+        }
     }
 
     public void MarkDisconnected(string roomId)
     {
         var state = Get(roomId);
-        state.Role = RoomRoles.Disconnected;
-        state.Connected = false;
-        state.OtherInstanceLease = false;
+        lock (state.Gate)
+        {
+            state.Role = RoomRoles.Disconnected;
+            state.Connected = false;
+            state.OtherInstanceLease = false;
+            // 保留 LastFrameAt：断线抖动时仍可在宽限期内继续服务创建 token 的请求。
+        }
     }
 
     public void MarkConnected(string roomId)
     {
         var state = Get(roomId);
-        state.Connected = true;
-        state.LastFrameAt = clock.GetUtcNow().UtcDateTime;
+        lock (state.Gate)
+        {
+            state.Connected = true;
+            state.LastFrameAt = clock.GetUtcNow().UtcDateTime;
+        }
     }
 
     public void MarkHeartbeat(string roomId)
     {
         var state = Get(roomId);
         var now = clock.GetUtcNow().UtcDateTime;
-        state.LastHeartbeatAt = now;
-        state.LastFrameAt = now;
+        lock (state.Gate)
+        {
+            state.LastHeartbeatAt = now;
+            state.LastFrameAt = now;
+        }
     }
 
     public void MarkEvent(string roomId)
     {
         var state = Get(roomId);
         var now = clock.GetUtcNow().UtcDateTime;
-        state.LastEventAt = now;
-        state.LastFrameAt = now;
+        lock (state.Gate)
+        {
+            state.LastEventAt = now;
+            state.LastFrameAt = now;
+        }
     }
 
     public void MarkError(string roomId, string error)
     {
         var state = Get(roomId);
-        state.LastError = error;
-        state.LastErrorAt = clock.GetUtcNow().UtcDateTime;
-    }
-
-    public IReadOnlyList<DanmakuRoomSnapshot> GetSnapshots(IEnumerable<string> roomIds)
-    {
         var now = clock.GetUtcNow().UtcDateTime;
-        return roomIds.Select(roomId =>
+        lock (state.Gate)
         {
-            var state = _states.TryGetValue(roomId, out var s) ? s : new State();
-            var available = state.Role switch
-            {
-                RoomRoles.Leader => state.Connected,
-                RoomRoles.Standby => state.OtherInstanceLease,
-                _ => false
-            };
-            return new DanmakuRoomSnapshot(
-                roomId,
-                state.Role,
-                state.Connected,
-                available,
-                state.LastHeartbeatAt,
-                state.LastEventAt);
-        }).ToList();
-    }
-
-    public bool AnyAvailable(IEnumerable<string> roomIds, TimeSpan notReadyGrace)
-    {
-        var now = clock.GetUtcNow().UtcDateTime;
-        foreach (var snapshot in GetSnapshots(roomIds))
-        {
-            if (!snapshot.Available)
-            {
-                continue;
-            }
-
-            if (snapshot.Connected &&
-                snapshot.LastHeartbeatAt is { } heartbeat &&
-                now - heartbeat <= notReadyGrace)
-            {
-                return true;
-            }
-
-            if (snapshot.Role == RoomRoles.Standby)
-            {
-                return true;
-            }
+            state.LastError = error;
+            state.LastErrorAt = now;
         }
-
-        return false;
     }
+
+    public IReadOnlyList<DanmakuRoomSnapshot> GetSnapshots(IEnumerable<string> roomIds, TimeSpan? grace = null)
+    {
+        var now = clock.GetUtcNow().UtcDateTime;
+        var effectiveGrace = grace ?? DefaultGrace;
+        return roomIds
+            .Select(roomId => _states.TryGetValue(roomId, out var state)
+                ? state.Snapshot(roomId, now, effectiveGrace)
+                : new DanmakuRoomSnapshot(roomId, RoomRoles.Disconnected, false, false, null, null))
+            .ToList();
+    }
+
+    public bool AnyAvailable(IEnumerable<string> roomIds, TimeSpan notReadyGrace) =>
+        GetSnapshots(roomIds, notReadyGrace).Any(x => x.Available);
 
     public bool IsReady(IEnumerable<string> roomIds, TimeSpan notReadyGrace) =>
         AnyAvailable(roomIds, notReadyGrace);

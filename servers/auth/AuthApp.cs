@@ -82,7 +82,11 @@ public static class AuthApp
             return new MongoClient(connectionString);
         });
         services.AddSingleton<IMongoDatabase>(sp =>
-            sp.GetRequiredService<IMongoClient>().GetDatabase(MongoDbInitializer.DatabaseName));
+        {
+            var name = sp.GetRequiredService<IConfiguration>()["Mongo:DatabaseName"];
+            return sp.GetRequiredService<IMongoClient>().GetDatabase(
+                string.IsNullOrWhiteSpace(name) ? MongoDbInitializer.DatabaseName : name);
+        });
 
         services.AddSingleton<RedisConnection>();
 
@@ -169,7 +173,11 @@ public static class AuthApp
         app.UseMiddleware<SecurityHeadersMiddleware>();
         app.UseMiddleware<AuthExceptionMiddleware>();
         app.UseStaticFiles();
-        app.UseCors("AuthApi");
+
+        // CORS 仅作用于账号中心 API；OAuth 端点不参与跨域白名单。
+        app.UseWhen(
+            context => context.Request.Path.StartsWithSegments("/api/auth"),
+            branch => branch.UseCors("AuthApi"));
 
         app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });
         app.MapHealthChecks("/health/ready");

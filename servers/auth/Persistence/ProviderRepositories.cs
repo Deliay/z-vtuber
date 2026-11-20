@@ -31,6 +31,15 @@ public sealed class ProviderSessionRepository
             x => x.SessionIdHash == hash && x.RevokedAt == null,
             Builders<AuthProviderSessionRecord>.Update.Set(x => x.RevokedAt, now),
             cancellationToken: ct).ContinueWith(t => t.Result.ModifiedCount, ct);
+
+    public async Task<long> RevokeAllByUserAsync(ObjectId userId, DateTime now, CancellationToken ct = default)
+    {
+        var result = await _collection.UpdateManyAsync(
+            x => x.UserId == userId && x.RevokedAt == null,
+            Builders<AuthProviderSessionRecord>.Update.Set(x => x.RevokedAt, now),
+            cancellationToken: ct);
+        return result.ModifiedCount;
+    }
 }
 
 public sealed class ProviderTicketRepository

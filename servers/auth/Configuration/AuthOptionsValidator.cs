@@ -38,6 +38,11 @@ public sealed class AuthOptionsValidator : IValidateOptions<AuthOptions>
             errors.Add("Auth:ConfirmWindowSeconds must be positive.");
         }
 
+        if (options.ConfirmOperationTimeoutSeconds <= 0)
+        {
+            errors.Add("Auth:ConfirmOperationTimeoutSeconds must be positive.");
+        }
+
         if (options.ProviderTicketSeconds <= 0)
         {
             errors.Add("Auth:ProviderTicketSeconds must be positive.");

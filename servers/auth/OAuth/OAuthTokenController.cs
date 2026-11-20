@@ -34,15 +34,19 @@ public sealed class OAuthTokenController(
 
         try
         {
+            // 限流先于 client 认证，失败尝试同样计数；键为 client + IP。
+            if (!await rateLimiter.TryOAuthTokenAsync(
+                    string.IsNullOrWhiteSpace(client_id) ? "unknown" : client_id,
+                    ClientIp(),
+                    ct))
+            {
+                return TooManyRequests();
+            }
+
             var client = Authenticate(client_id, client_secret);
             if (string.IsNullOrEmpty(grant_type))
             {
                 throw OAuthException.InvalidRequest("grant_type is required.");
-            }
-
-            if (!await rateLimiter.TryOAuthTokenAsync(client, ct))
-            {
-                return TooManyRequests();
             }
 
             ProviderTokenPair pair;
@@ -87,9 +91,16 @@ public sealed class OAuthTokenController(
             var status = string.Equals(ex.Error, "invalid_client", StringComparison.Ordinal)
                 ? StatusCodes.Status401Unauthorized
                 : StatusCodes.Status400BadRequest;
+            if (status == StatusCodes.Status401Unauthorized)
+            {
+                Response.Headers.WWWAuthenticate = "Basic realm=\"oauth\"";
+            }
+
             return StatusCode(status, new { error = ex.Error, error_description = ex.Description });
         }
     }
+
+    private string ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
     private string Authenticate(string? formClientId, string? formClientSecret)
     {

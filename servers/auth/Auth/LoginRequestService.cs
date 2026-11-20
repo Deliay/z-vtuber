@@ -136,7 +136,7 @@ public sealed class LoginRequestService(
         string requestId, string? pollToken, CancellationToken ct = default)
     {
         var record = await RequireRequestAsync(requestId, pollToken, ct);
-        var status = EffectiveStatus(record, clock.GetUtcNow().UtcDateTime);
+        var status = EffectiveStatus(record, clock.GetUtcNow().UtcDateTime, ConfirmTimeout());
         var user = BuildUserView(record);
         return (record, new LoginRequestStatusView(
             status,
@@ -151,7 +151,8 @@ public sealed class LoginRequestService(
         string requestId, string? pollToken, string? clientIp, string? userAgent, CancellationToken ct = default)
     {
         var record = await RequireRequestAsync(requestId, pollToken, ct);
-        var status = EffectiveStatus(record, clock.GetUtcNow().UtcDateTime);
+        var nowUtc = clock.GetUtcNow().UtcDateTime;
+        var status = EffectiveStatus(record, nowUtc, ConfirmTimeout());
         switch (status)
         {
             case LoginStatus.Consumed:
@@ -159,16 +160,24 @@ public sealed class LoginRequestService(
             case LoginStatus.Expired:
             case LoginStatus.Cancelled:
                 throw AuthException.Expired();
+            case LoginStatus.Failed:
+                throw AuthException.Failed();
             case LoginStatus.Confirming:
                 throw AuthException.ConfirmRace();
             case LoginStatus.Pending:
-            case LoginStatus.Failed:
                 throw AuthException.NotVerified();
         }
 
         if (record.SenderUid is null or <= 0)
         {
             throw AuthException.NotVerified();
+        }
+
+        // confirming 已超过操作超时但确认窗口仍有效：先回退为 verified，允许重新确认。
+        if (string.Equals(record.Status, LoginStatus.Confirming, StringComparison.Ordinal) &&
+            !await repository.TryRevertStaleConfirmAsync(requestId, nowUtc - ConfirmTimeout(), ct))
+        {
+            throw AuthException.ConfirmRace();
         }
 
         var nonce = Guid.NewGuid().ToString("N");
@@ -201,10 +210,21 @@ public sealed class LoginRequestService(
             {
                 if (string.IsNullOrWhiteSpace(record.ReturnTo))
                 {
-                    throw AuthException.Invalid("缺少 returnTo，无法完成 Casdoor 统一登录。");
+                    await repository.TryMarkFailedAsync(
+                        requestId, nonce, AuthErrorCodes.ProviderReturnToInvalid, clock.GetUtcNow().UtcDateTime, ct);
+                    throw AuthException.ProviderReturnToInvalid();
                 }
 
-                ticket = await ticketService.CreateAsync(upsert.User.Id, record.ReturnTo, ct);
+                try
+                {
+                    ticket = await ticketService.CreateAsync(upsert.User.Id, record.ReturnTo, ct);
+                }
+                catch (AuthException ex) when (ex.Code == AuthErrorCodes.InvalidRequest)
+                {
+                    await repository.TryMarkFailedAsync(
+                        requestId, nonce, AuthErrorCodes.ProviderReturnToInvalid, clock.GetUtcNow().UtcDateTime, ct);
+                    throw AuthException.ProviderReturnToInvalid();
+                }
             }
             else
             {
@@ -237,16 +257,13 @@ public sealed class LoginRequestService(
         }
         catch (AuthException ex)
         {
-            if (ex.Code != AuthErrorCodes.UserDisabled)
+            if (ex.Code != AuthErrorCodes.UserDisabled &&
+                ex.Code != AuthErrorCodes.ProviderReturnToInvalid)
             {
-                await repository.RevertToVerifiedAsync(requestId, nonce, ct);
+                await repository.RevertToVerifiedAsync(requestId, nonce, CancellationToken.None);
             }
 
-            if (ticket is not null)
-            {
-                await ticketService.RevokeAsync(ticket.Ticket, ct);
-            }
-
+            await RevokeIssuedCredentialsAsync(requestId, nonce, ticket, tokens, CancellationToken.None);
             await audit.LogAsync(
                 AuthAuditEvents.ConfirmFailed,
                 requestId: requestId,
@@ -260,12 +277,8 @@ public sealed class LoginRequestService(
         }
         catch
         {
-            await repository.RevertToVerifiedAsync(requestId, nonce, ct);
-            if (ticket is not null)
-            {
-                await ticketService.RevokeAsync(ticket.Ticket, ct);
-            }
-
+            await repository.RevertToVerifiedAsync(requestId, nonce, CancellationToken.None);
+            await RevokeIssuedCredentialsAsync(requestId, nonce, ticket, tokens, CancellationToken.None);
             await audit.LogAsync(
                 AuthAuditEvents.ConfirmFailed,
                 requestId: requestId,
@@ -278,17 +291,59 @@ public sealed class LoginRequestService(
         }
     }
 
+    /// <summary>失败路径对称撤销已签发的 Provider Ticket / standalone access+refresh，避免无主凭证。</summary>
+    private async Task RevokeIssuedCredentialsAsync(
+        string requestId,
+        string nonce,
+        ProviderTicketResult? ticket,
+        StandaloneTokens? tokens,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (ticket is not null)
+            {
+                await ticketService.RevokeAsync(ticket.Ticket, ct);
+            }
+
+            if (tokens is not null)
+            {
+                await standaloneSessionService.LogoutAsync(tokens.AccessToken, tokens.RefreshToken, ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to revoke issued credentials for login request {RequestId}.", requestId);
+        }
+    }
+
     public async Task CancelAsync(string requestId, string? pollToken, string? clientIp, CancellationToken ct = default)
     {
         var record = await RequireRequestAsync(requestId, pollToken, ct);
-        if (string.Equals(record.Status, LoginStatus.Consumed, StringComparison.Ordinal))
+        var status = EffectiveStatus(record, clock.GetUtcNow().UtcDateTime, ConfirmTimeout());
+        if (string.Equals(status, LoginStatus.Consumed, StringComparison.Ordinal))
         {
             throw AuthException.AlreadyConsumed();
         }
 
-        if (string.Equals(record.Status, LoginStatus.Cancelled, StringComparison.Ordinal))
+        if (string.Equals(status, LoginStatus.Cancelled, StringComparison.Ordinal))
         {
             return;
+        }
+
+        if (string.Equals(status, LoginStatus.Expired, StringComparison.Ordinal))
+        {
+            throw AuthException.Expired();
+        }
+
+        if (string.Equals(status, LoginStatus.Confirming, StringComparison.Ordinal))
+        {
+            throw AuthException.ConfirmRace();
+        }
+
+        if (string.Equals(status, LoginStatus.Failed, StringComparison.Ordinal))
+        {
+            throw AuthException.Failed();
         }
 
         var cancelled = await repository.TryCancelAsync(
@@ -308,18 +363,17 @@ public sealed class LoginRequestService(
         string requestId, string? pollToken, CancellationToken ct)
     {
         var record = await repository.FindByRequestIdAsync(requestId, ct);
-        if (record is null)
+        // 未知 requestId 与错误 pollToken 统一返回 404，避免通过状态码探测请求是否存在。
+        if (record is null || !hasher.Verify(pollToken ?? string.Empty, record.PollTokenHash))
         {
             throw AuthException.NotFound();
         }
 
-        if (!hasher.Verify(pollToken ?? string.Empty, record.PollTokenHash))
-        {
-            throw AuthException.PollTokenInvalid();
-        }
-
         return record;
     }
+
+    private TimeSpan ConfirmTimeout() =>
+        TimeSpan.FromSeconds(Math.Max(1, authOptions.Value.ConfirmOperationTimeoutSeconds));
 
     public static string EffectiveStatus(AuthLoginRequestRecord record)
     {
@@ -327,7 +381,12 @@ public sealed class LoginRequestService(
         return EffectiveStatus(record, now);
     }
 
-    public static string EffectiveStatus(AuthLoginRequestRecord record, DateTime nowUtc)
+    public static string EffectiveStatus(AuthLoginRequestRecord record, DateTime nowUtc) =>
+        EffectiveStatus(record, nowUtc, DefaultConfirmTimeout);
+
+    public static readonly TimeSpan DefaultConfirmTimeout = TimeSpan.FromSeconds(30);
+
+    public static string EffectiveStatus(AuthLoginRequestRecord record, DateTime nowUtc, TimeSpan confirmTimeout)
     {
         if (string.Equals(record.Status, LoginStatus.Pending, StringComparison.Ordinal) &&
             record.ExpiresAt <= nowUtc)
@@ -340,6 +399,19 @@ public sealed class LoginRequestService(
             record.ConfirmExpiresAt <= nowUtc)
         {
             return LoginStatus.Expired;
+        }
+
+        if (string.Equals(record.Status, LoginStatus.Confirming, StringComparison.Ordinal))
+        {
+            if (record.ConfirmExpiresAt is not null && record.ConfirmExpiresAt <= nowUtc)
+            {
+                return LoginStatus.Expired;
+            }
+
+            if (record.ConfirmStartedAt is not null && record.ConfirmStartedAt <= nowUtc - confirmTimeout)
+            {
+                return LoginStatus.Verified;
+            }
         }
 
         return record.Status;
@@ -358,9 +430,10 @@ public sealed class LoginRequestService(
         string.IsNullOrEmpty(value) || value.Length <= max ? value : value[..max];
 }
 
-/// <summary>每 30 秒把超时记录 CAS 迁移为 <c>expired</c>（TTL 之前可区分 404/expired）。</summary>
+/// <summary>每 30 秒把超时记录 CAS 迁移为 <c>expired</c>，并把卡死的 <c>confirming</c> 回退为 <c>verified</c>。</summary>
 public sealed class LoginRequestScanner(
     LoginRequestRepository repository,
+    IOptions<AuthOptions> authOptions,
     AuditLogger audit,
     TimeProvider clock,
     ILogger<LoginRequestScanner> logger) : BackgroundService
@@ -387,22 +460,30 @@ public sealed class LoginRequestScanner(
     public async Task<int> ScanOnceAsync(CancellationToken ct = default)
     {
         var now = clock.GetUtcNow().UtcDateTime;
-        var expired = await repository.FindExpiredAsync(now, 200, ct);
+        var confirmTimeout = TimeSpan.FromSeconds(Math.Max(1, authOptions.Value.ConfirmOperationTimeoutSeconds));
+        var expired = await repository.FindExpiredAsync(now, confirmTimeout, 200, ct);
         foreach (var record in expired)
         {
-            await repository.TryExpireAsync(record, now, ct);
+            if (!await repository.TryExpireAsync(record, now, ct))
+            {
+                continue;
+            }
+
             await audit.LogAsync(
                 AuthAuditEvents.Expired,
                 requestId: record.RequestId,
                 platform: record.Platform,
                 platformUid: record.SenderUid,
                 sourceRoomId: record.SourceRoomId,
+                detail: string.Equals(record.Status, LoginStatus.Confirming, StringComparison.Ordinal)
+                    ? "confirm_timeout_reverted"
+                    : "expired",
                 ct: ct);
         }
 
         if (expired.Count > 0)
         {
-            logger.LogInformation("Marked {Count} login requests as expired.", expired.Count);
+            logger.LogInformation("Processed {Count} timed-out login requests.", expired.Count);
         }
 
         return expired.Count;

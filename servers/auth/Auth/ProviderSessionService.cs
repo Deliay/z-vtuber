@@ -79,6 +79,10 @@ public sealed class ProviderSessionService(
             ? Task.CompletedTask
             : repository.RevokeByHashAsync(hasher.Hash(token), clock.GetUtcNow().UtcDateTime, ct);
 
+    /// <summary>注销统一登录时撤销该用户的全部 Provider Session，避免 Casdoor SSO 静默重发 code。</summary>
+    public Task RevokeAllForUserAsync(ObjectId userId, CancellationToken ct = default) =>
+        repository.RevokeAllByUserAsync(userId, clock.GetUtcNow().UtcDateTime, ct);
+
     private static string? Truncate(string? value) =>
         string.IsNullOrEmpty(value) || value.Length <= 256 ? value : value[..256];
 }

@@ -64,6 +64,8 @@ public sealed class OAuthLogoutController(
     IOptions<AuthOptions> authOptions,
     IOptions<OAuthProviderOptions> providerOptions,
     ProviderTokenService tokens,
+    ProviderSessionService sessions,
+    AuditLogger audit,
     ILogger<OAuthLogoutController> logger) : ControllerBase
 {
     [HttpPost("/oauth/logout")]
@@ -80,9 +82,39 @@ public sealed class OAuthLogoutController(
             return NotFound();
         }
 
+        var client = AuthenticateClient(client_id, client_secret);
+        if (client is null)
+        {
+            return UnauthorizedClient();
+        }
+
+        // 先反查用户再撤销 token，确保 Provider Session 一并失效。
+        var userId = await tokens.FindUserIdAsync(token, refresh_token, ct);
+        await tokens.RevokeAsync(token, refresh_token, ct);
+
+        var cookieToken = Request.Cookies[ProviderSessionService.CookieName];
+        await sessions.RevokeAsync(cookieToken, ct);
+        if (userId is not null)
+        {
+            await sessions.RevokeAllForUserAsync(userId.Value, ct);
+        }
+
+        ProviderSessionCookie.Delete(Response, authOptions.Value.PublicBaseUrl);
+        await audit.LogAsync(
+            AuthAuditEvents.Logout,
+            clientIp: ClientIp(),
+            userAgent: Request.Headers.UserAgent.ToString(),
+            detail: "oauth_logout",
+            ct: ct);
+        logger.LogInformation("OAuth logout processed for client {ClientId}.", client);
+        return Ok(new { });
+    }
+
+    private string? AuthenticateClient(string? formClientId, string? formClientSecret)
+    {
         var provider = providerOptions.Value;
-        var providedId = client_id;
-        var providedSecret = client_secret;
+        string? providedId = formClientId;
+        string? providedSecret = formClientSecret;
         var authorization = Request.Headers.Authorization.ToString();
         if (authorization.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
         {
@@ -99,21 +131,22 @@ public sealed class OAuthLogoutController(
             }
             catch (FormatException)
             {
-                return UnauthorizedClient();
+                return null;
             }
         }
 
-        if ((!string.IsNullOrEmpty(providedId) || !string.IsNullOrEmpty(providedSecret)) &&
-            (!TokenHasher.FixedTimeEquals(providedId, provider.ClientId) ||
-             !TokenHasher.FixedTimeEquals(providedSecret, provider.ClientSecret)))
+        // RFC 7009：client 认证为必填，不允许匿名注销。
+        if (string.IsNullOrEmpty(providedId) || string.IsNullOrEmpty(providedSecret) ||
+            !TokenHasher.FixedTimeEquals(providedId, provider.ClientId) ||
+            !TokenHasher.FixedTimeEquals(providedSecret, provider.ClientSecret))
         {
-            return UnauthorizedClient();
+            return null;
         }
 
-        await tokens.RevokeAsync(token, refresh_token, ct);
-        logger.LogInformation("OAuth logout processed for client {ClientId}.", providedId ?? "unknown");
-        return Ok(new { });
+        return provider.ClientId;
     }
+
+    private string ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
     private IActionResult UnauthorizedClient()
     {

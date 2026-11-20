@@ -30,7 +30,9 @@ public sealed class LoginRequestsController(
         }
 
         var rooms = danmakuOptions.Value.RoomIds;
-        var snapshots = registry.GetSnapshots(rooms);
+        var snapshots = registry.GetSnapshots(
+            rooms,
+            TimeSpan.FromSeconds(danmakuOptions.Value.NotReadyGraceSeconds));
         if (!snapshots.Any(x => x.Available))
         {
             throw AuthException.SourceUnavailable();

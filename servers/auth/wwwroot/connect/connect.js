@@ -211,15 +211,31 @@
     }
   }
 
-  async function cancel() {
+  function denyRedirect() {
+    if (!returnTo) { return false; }
     try {
-      await api("/api/auth/login-requests/" + encodeURIComponent(state.requestId) + "/cancel", {
-        method: "POST",
-        headers: { "X-Poll-Token": state.pollToken }
-      });
+      var url = new URL(returnTo, window.location.origin);
+      url.searchParams.set("denied", "1");
+      window.location.assign(url.pathname + url.search);
+      return true;
     } catch (err) {
-      // 取消失败不阻塞重新获取
+      return false;
     }
+  }
+
+  async function cancel() {
+    if (state.requestId) {
+      try {
+        await api("/api/auth/login-requests/" + encodeURIComponent(state.requestId) + "/cancel", {
+          method: "POST",
+          headers: { "X-Poll-Token": state.pollToken }
+        });
+      } catch (err) {
+        // 取消失败不阻塞重新获取
+      }
+    }
+    // 从站点 /oauth/authorize 进入时，取消必须带 access_denied 回调，避免 Casdoor 请求悬挂。
+    if (denyRedirect()) { return; }
     reset();
   }
 

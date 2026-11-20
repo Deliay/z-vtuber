@@ -31,12 +31,21 @@ public sealed class UserRepository
         CancellationToken ct = default)
     {
         var update = Builders<AuthUserRecord>.Update
-            .Set(x => x.DisplayName, displayName)
-            .Set(x => x.AvatarUrl, avatarUrl)
             .Set(x => x.LastSourceRoomId, lastSourceRoomId)
             .Set(x => x.LastLoginIp, lastLoginIp)
             .Set(x => x.LastLoginAt, now)
             .Inc(x => x.LoginCount, 1);
+
+        // 资料降级：仅在本次解析到非空值时覆盖，避免头像/昵称解析失败清掉已有资料。
+        if (!string.IsNullOrWhiteSpace(displayName))
+        {
+            update = update.Set(x => x.DisplayName, displayName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(avatarUrl))
+        {
+            update = update.Set(x => x.AvatarUrl, avatarUrl);
+        }
 
         return _collection.FindOneAndUpdateAsync(
             x => x.Id == id, update,

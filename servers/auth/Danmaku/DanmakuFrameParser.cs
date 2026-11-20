@@ -85,6 +85,11 @@ public static class DanmakuFrameParser
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(timeout);
 
+        if (ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ct);
+        }
+
         while (!timeoutCts.IsCancellationRequested)
         {
             string? rawLine;
@@ -143,6 +148,11 @@ public static class DanmakuFrameParser
             }
 
             timeoutCts.CancelAfter(timeout);
+        }
+
+        if (ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ct);
         }
 
         throw new TimeoutException("No SSE frame received within the configured read timeout.");

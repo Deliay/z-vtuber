@@ -8,7 +8,7 @@ public sealed class DanmakuOptions
     /// <summary>要订阅的直播间列表；roomId 全程按字符串处理。</summary>
     public string[] RoomIds { get; set; } = ["30066"];
 
-    public string BaseUrl { get; set; } = "http://vtuber.internal.fffdan.com";
+    public string BaseUrl { get; set; } = "http://localhost:8080";
 
     public string SubscribePath { get; set; } = "/api/b/live/{roomId}/event/subscribe?type=danmaku";
 

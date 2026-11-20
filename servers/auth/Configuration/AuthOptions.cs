@@ -23,6 +23,9 @@ public sealed class AuthOptions
 
     public int ConfirmWindowSeconds { get; set; } = 120;
 
+    /// <summary>confirming 状态的最长停留时间；超时由扫描器回退为 verified，避免记录卡死。</summary>
+    public int ConfirmOperationTimeoutSeconds { get; set; } = 30;
+
     public int ProviderTicketSeconds { get; set; } = 60;
 
     public int ProviderSessionDays { get; set; } = 30;

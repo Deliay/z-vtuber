@@ -13,6 +13,13 @@ public static class DanmakuBackoff
         var jitter = seconds * 0.2 * Math.Clamp(jitter01, 0, 1);
         return TimeSpan.FromSeconds(seconds + jitter);
     }
+
+    /// <summary>
+    /// 计算下一次重连尝试序号：稳定运行达到阈值即重置为 1，否则累加。
+    /// 异常/断线路径与正常 EOF 路径都必须经过此方法，避免读超时后间隔卡在上限。
+    /// </summary>
+    public static int NextAttempt(int current, TimeSpan runDuration, TimeSpan stableThreshold) =>
+        runDuration >= stableThreshold ? 1 : current + 1;
 }
 
 /// <summary>单房间事件源：选主 → SSE 连接 → 心跳/弹幕处理 → 断线退避。</summary>
@@ -34,6 +41,9 @@ public sealed class RoomEventSource(
 
     public string RoomId => roomId;
 
+    /// <summary>当前重连尝试序号（测试与诊断用）。</summary>
+    public int CurrentAttempt => _attempt;
+
     public async Task RunAsync(CancellationToken ct)
     {
         _lastOccurredAt = clock.GetUtcNow().UtcDateTime - TimeSpan.FromSeconds(options.Value.BackfillWindowSeconds);
@@ -41,6 +51,8 @@ public sealed class RoomEventSource(
         while (!ct.IsCancellationRequested)
         {
             var acquired = false;
+            var failed = false;
+            DateTime? streamStartedAt = null;
             try
             {
                 acquired = await lease.TryAcquireAsync(roomId, ct);
@@ -55,7 +67,7 @@ public sealed class RoomEventSource(
                 registry.MarkLeader(roomId);
                 using var leaderCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 var renew = RenewLoopAsync(leaderCts);
-                var startedAt = clock.GetUtcNow();
+                streamStartedAt = clock.GetUtcNow().UtcDateTime;
 
                 try
                 {
@@ -75,12 +87,6 @@ public sealed class RoomEventSource(
                     registry.MarkDisconnected(roomId);
                     await lease.ReleaseAsync(roomId, CancellationToken.None);
                 }
-
-                // 稳定运行 60 秒后重置退避
-                if (clock.GetUtcNow() - startedAt >= TimeSpan.FromSeconds(60))
-                {
-                    _attempt = 0;
-                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -88,6 +94,7 @@ public sealed class RoomEventSource(
             }
             catch (Exception ex)
             {
+                failed = true;
                 logger.LogWarning(ex, "Danmaku event source for room {RoomId} stopped unexpectedly.", roomId);
                 registry.MarkError(roomId, ex.GetType().Name);
                 if (acquired)
@@ -95,8 +102,19 @@ public sealed class RoomEventSource(
                     await lease.ReleaseAsync(roomId, CancellationToken.None);
                 }
             }
+            finally
+            {
+                // 稳定 60 秒重置必须在异常路径同样生效（读超时/断线是设计内路径）。
+                if (streamStartedAt is not null || failed)
+                {
+                    var runDuration = streamStartedAt is { } startedAt
+                        ? clock.GetUtcNow().UtcDateTime - startedAt
+                        : TimeSpan.Zero;
+                    _attempt = DanmakuBackoff.NextAttempt(
+                        _attempt, runDuration, TimeSpan.FromSeconds(60));
+                }
+            }
 
-            _attempt++;
             var delay = DanmakuBackoff.Next(_attempt, options.Value.ReconnectMaxSeconds, _random.NextDouble());
             logger.LogInformation("Reconnecting danmaku room {RoomId} in {Delay}.", roomId, delay);
             await Task.Delay(delay, ct);
@@ -197,13 +215,27 @@ public sealed class RoomEventSource(
             return;
         }
 
-        if (evt.OccurredAt > _lastOccurredAt)
+        try
         {
-            _lastOccurredAt = evt.OccurredAt;
-        }
+            if (evt.OccurredAt > _lastOccurredAt)
+            {
+                _lastOccurredAt = evt.OccurredAt;
+            }
 
-        registry.MarkEvent(roomId);
-        await handler.HandleAsync(roomId, evt, ct);
+            await handler.HandleAsync(roomId, evt, ct);
+            registry.MarkEvent(roomId);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _deduplicator.Remove(roomId, evt.OccurredAt, sender.Uid, sender.Text);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Mongo 瞬时异常等失败时撤销去重标记，避免补投重放被丢弃导致 token 永远 pending。
+            _deduplicator.Remove(roomId, evt.OccurredAt, sender.Uid, sender.Text);
+            logger.LogWarning(ex, "Failed to process danmaku event from room {RoomId}; event will be retried by backfill.", roomId);
+        }
     }
 
     private async Task BackfillAsync(CancellationToken ct)
@@ -246,8 +278,7 @@ public sealed class RoomEventSourceHost(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var tasks = options.Value.RoomIds
-            .Distinct(StringComparer.Ordinal)
+        var tasks = ResolveRooms(options.Value)
             .Select(roomId =>
             {
                 var source = ActivatorUtilities.CreateInstance<RoomEventSource>(services, roomId);
@@ -264,4 +295,8 @@ public sealed class RoomEventSourceHost(
         {
         }
     }
+
+    /// <summary>按配置顺序去重；非法配置由 <c>DanmakuOptionsValidator</c> 在启动时拦截。</summary>
+    internal static IReadOnlyList<string> ResolveRooms(DanmakuOptions options) =>
+        options.RoomIds.Distinct(StringComparer.Ordinal).ToList();
 }

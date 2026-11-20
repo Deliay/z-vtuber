@@ -192,4 +192,26 @@ public sealed class ProviderTokenService(
             await repository.RevokeByRefreshHashAsync(hasher.Hash(refreshToken), now, ct);
         }
     }
+
+    /// <summary>从 access/refresh 反查 token 所属用户（注销时用于撤销 Provider Session）。</summary>
+    public async Task<ObjectId?> FindUserIdAsync(
+        string? accessToken, string? refreshToken, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrWhiteSpace(accessToken))
+        {
+            var record = await repository.FindByAccessHashAsync(hasher.Hash(accessToken), ct);
+            if (record is not null)
+            {
+                return record.UserId;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(refreshToken))
+        {
+            var record = await repository.FindByRefreshHashAsync(hasher.Hash(refreshToken), ct);
+            return record?.UserId;
+        }
+
+        return null;
+    }
 }

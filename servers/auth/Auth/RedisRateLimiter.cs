@@ -13,7 +13,7 @@ public interface IAuthRateLimiter
 
     Task<bool> TryDanmakuUidAsync(long uid, CancellationToken ct);
 
-    Task<bool> TryOAuthTokenAsync(string clientId, CancellationToken ct);
+    Task<bool> TryOAuthTokenAsync(string clientId, string clientIp, CancellationToken ct);
 }
 
 /// <summary>
@@ -42,8 +42,12 @@ public sealed class RedisRateLimiter(
     public Task<bool> TryDanmakuUidAsync(long uid, CancellationToken ct) =>
         AllowAsync($"auth:rl:danmaku:uid:{uid}:{Minute()}", options.Value.RateLimit.DanmakuPerMinutePerUid, 120_000, ct);
 
-    public Task<bool> TryOAuthTokenAsync(string clientId, CancellationToken ct) =>
-        AllowAsync($"auth:oauth:rl:client:{Normalize(clientId)}:{Minute()}", options.Value.RateLimit.OAuthTokenPerMinutePerClient, 120_000, ct);
+    public Task<bool> TryOAuthTokenAsync(string clientId, string clientIp, CancellationToken ct) =>
+        AllowAsync(
+            $"auth:oauth:rl:client:{Normalize(clientId)}:ip:{Normalize(clientIp)}:{Minute()}",
+            options.Value.RateLimit.OAuthTokenPerMinutePerClient,
+            120_000,
+            ct);
 
     public async Task<bool> AllowAsync(string key, int limit, int windowMs, CancellationToken ct)
     {

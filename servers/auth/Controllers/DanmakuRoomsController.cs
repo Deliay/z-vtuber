@@ -14,7 +14,9 @@ public sealed class DanmakuRoomsController(
     [HttpGet("rooms")]
     public IActionResult Rooms()
     {
-        var rooms = registry.GetSnapshots(options.Value.RoomIds)
+        var rooms = registry.GetSnapshots(
+                options.Value.RoomIds,
+                TimeSpan.FromSeconds(options.Value.NotReadyGraceSeconds))
             .Select(x => new RoomDto
             {
                 RoomId = x.RoomId,

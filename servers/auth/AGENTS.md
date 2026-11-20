@@ -45,6 +45,7 @@ B 站弹幕帐号认证服务：为多站点统一登录提供 Casdoor Custom OA
 - `Auth:Mode`：`casdoor`（生产）/`standalone`（本地/降级）。
 - `Auth:TokenPepper`：≥32 字符，生产必须通过密钥注入；**禁止**提交真实值。
 - `Auth:PublicBaseUrl`：决定 Cookie `Secure`；HTTPS 生产必配。
+- `Auth:ConfirmOperationTimeoutSeconds`：`confirming` 最长停留时间（默认 30s），超时由扫描器回退 `verified`。
 - `Auth:Danmaku:RoomIds`：JSON `string[]`，默认 `["30066"]`；roomId 全程字符串。
 - `Auth:Danmaku:BaseUrl`：事件源内网地址。
 - `OAuthProvider:ClientId/ClientSecret/RedirectUri`：Casdoor Custom Provider，`RedirectUri` 精确匹配。
@@ -73,7 +74,9 @@ auth 不创建 crawler 订阅。上线前确认 `RoomIds` 中每个房间在事�
 dotnet test tests/Z.Vtuber.Tests --filter "FullyQualifiedName~Auth|FullyQualifiedName~Danmaku|FullyQualifiedName~Pkce|FullyQualifiedName~ReturnTo|FullyQualifiedName~RoomLeaderLease"
 ```
 
-- 单元/集成：core primitives、状态机、持久化 CAS、多房间事件源、账号中心 API、OAuth Provider、页面安全头。
+- 单元/集成：core primitives、状态机（含 confirming 超时回退 / failed 终态 / 取消边界）、持久化 CAS、多房间事件源、账号中心 API、OAuth Provider、页面安全头。
+- HTTP 端到端：`AuthFakes/FakeDanmakuSource` + `AuthFakes/AuthApiFactory` 启动真实 Kestrel，覆盖单/多房间全链路、断线重连、补投、follower 可用性与 CORS 边界。
+- 安全：`AuthSecurityTests`（DB/审计无明文、ticket/code/token 重放篡改、OAuth/账号中心错误体分离）、`AuthRedisRateLimiterTests`（计数与 fail-open）、`DanmakuHealthRegistryTests`（就绪矩阵）。
 - 慢用例须登记 `tests/Z.Vtuber.Tests/TimeoutExceptions.json`；单用例 ≤5s。
 
 ## Casdoor 配置核对清单

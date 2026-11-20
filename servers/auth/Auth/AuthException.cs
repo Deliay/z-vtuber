@@ -4,11 +4,12 @@ namespace Z.Vtuber.Auth.Auth;
 public static class AuthErrorCodes
 {
     public const string InvalidRequest = "AUTH_INVALID_REQUEST";
-    public const string PollTokenInvalid = "AUTH_POLL_TOKEN_INVALID";
     public const string UserDisabled = "AUTH_USER_DISABLED";
     public const string LoginRequestNotFound = "AUTH_LOGIN_REQUEST_NOT_FOUND";
     public const string LoginRequestNotVerified = "AUTH_LOGIN_REQUEST_NOT_VERIFIED";
     public const string LoginRequestAlreadyConsumed = "AUTH_LOGIN_REQUEST_ALREADY_CONSUMED";
+    public const string LoginRequestFailed = "AUTH_LOGIN_REQUEST_FAILED";
+    public const string ProviderReturnToInvalid = "AUTH_PROVIDER_RETURN_TO_INVALID";
     public const string ConfirmRace = "AUTH_CONFIRM_RACE";
     public const string LoginRequestExpired = "AUTH_LOGIN_REQUEST_EXPIRED";
     public const string TokenRateLimited = "AUTH_TOKEN_RATE_LIMITED";
@@ -32,9 +33,6 @@ public sealed class AuthException(int statusCode, string code, string message) :
     public static AuthException NotFound() =>
         new(StatusCodes.Status404NotFound, AuthErrorCodes.LoginRequestNotFound, "登录请求不存在，请重新获取 token。");
 
-    public static AuthException PollTokenInvalid() =>
-        new(StatusCodes.Status403Forbidden, AuthErrorCodes.PollTokenInvalid, "轮询凭证无效。");
-
     public static AuthException Expired() =>
         new(StatusCodes.Status410Gone, AuthErrorCodes.LoginRequestExpired, "登录请求已过期，请重新获取 token。");
 
@@ -43,6 +41,12 @@ public sealed class AuthException(int statusCode, string code, string message) :
 
     public static AuthException AlreadyConsumed() =>
         new(StatusCodes.Status409Conflict, AuthErrorCodes.LoginRequestAlreadyConsumed, "登录请求已使用，请重新获取 token。");
+
+    public static AuthException Failed() =>
+        new(StatusCodes.Status409Conflict, AuthErrorCodes.LoginRequestFailed, "登录请求已失败，请重新获取 token。");
+
+    public static AuthException ProviderReturnToInvalid() =>
+        new(StatusCodes.Status400BadRequest, AuthErrorCodes.ProviderReturnToInvalid, "登录回跳参数无效，请从站点登录入口重试。");
 
     public static AuthException ConfirmRace() =>
         new(StatusCodes.Status409Conflict, AuthErrorCodes.ConfirmRace, "确认请求并发冲突，请刷新后重试。");

@@ -46,6 +46,12 @@ public sealed class OAuthAuthorizeController(
             return RedirectWithError(redirectUri, "unsupported_response_type", state);
         }
 
+        // 用户在验证页选择「不是我/取消」：带 error=access_denied 回到已校验的 redirect_uri。
+        if (IsDenied(query["denied"]))
+        {
+            return RedirectWithError(redirectUri, "access_denied", state);
+        }
+
         if (!string.IsNullOrEmpty(challenge) &&
             !string.Equals(challengeMethod, Pkce.MethodS256, StringComparison.Ordinal))
         {
@@ -136,4 +142,8 @@ public sealed class OAuthAuthorizeController(
     }
 
     private string? ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString();
+
+    private static bool IsDenied(string? value) =>
+        string.Equals(value, "1", StringComparison.Ordinal) ||
+        string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
 }

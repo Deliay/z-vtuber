@@ -19,7 +19,10 @@ public sealed class RedisConnection
 
         try
         {
-            Value = ConnectionMultiplexer.Connect(connectionString);
+            // AbortOnConnectFail=false：Redis 启动时不可达也不永久失败，恢复后连接可自愈。
+            var options = ConfigurationOptions.Parse(connectionString);
+            options.AbortOnConnectFail = false;
+            Value = ConnectionMultiplexer.Connect(options);
         }
         catch (Exception ex)
         {
