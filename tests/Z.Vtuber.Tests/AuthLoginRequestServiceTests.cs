@@ -3,7 +3,6 @@ using MongoDB.Driver;
 using Z.Vtuber.Auth.Configuration;
 using Z.Vtuber.Auth.Auth;
 using Z.Vtuber.Auth.Danmaku;
-using Z.Vtuber.Auth.Persistence;
 
 namespace Z.Vtuber.Tests;
 
@@ -179,12 +178,164 @@ public sealed class AuthLoginRequestServiceTests : IClassFixture<MongoDbFixture>
         _services.Clock.Advance(TimeSpan.FromSeconds(301));
 
         var scanner = new LoginRequestScanner(
-            _services.LoginRequests, _services.Audit, _services.Clock,
+            _services.LoginRequests,
+            AuthTestOptions.Opt(_services.AuthOptions),
+            _services.Audit,
+            _services.Clock,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<LoginRequestScanner>.Instance);
         await scanner.ScanOnceAsync();
 
         var stored = await _services.LoginRequests.FindByRequestIdAsync(record.RequestId);
         Assert.Equal(LoginStatus.Expired, stored!.Status);
+    }
+
+    [Fact]
+    public async Task Cancel_Consumed_IsRejected()
+    {
+        var record = await _services.InsertPendingAsync("A1b2C3d4E5");
+        await _services.LoginRequests.TryMarkVerifiedAsync(
+            record.TokenHash, "30066",
+            new DanmakuSender("A1b2C3d4E5", 403496, "Zero_Ash", null, string.Empty),
+            _services.Clock.GetUtcNow().UtcDateTime, 120);
+        await _services.LoginRequestService.ConfirmAsync(record.RequestId, "p_test_poll_token", null, null, default);
+
+        var ex = await Assert.ThrowsAsync<AuthException>(() =>
+            _services.LoginRequestService.CancelAsync(record.RequestId, "p_test_poll_token", null, default));
+        Assert.Equal(AuthErrorCodes.LoginRequestAlreadyConsumed, ex.Code);
+
+        var stored = await _services.LoginRequests.FindByRequestIdAsync(record.RequestId);
+        Assert.Equal(LoginStatus.Consumed, stored!.Status);
+    }
+
+    [Fact]
+    public async Task Cancel_Confirming_IsRejectedWithoutBreakingInFlightConfirm()
+    {
+        var record = await _services.InsertPendingAsync("A1b2C3d4E5");
+        await _services.LoginRequests.TryMarkVerifiedAsync(
+            record.TokenHash, "30066",
+            new DanmakuSender("A1b2C3d4E5", 403496, "Zero_Ash", null, string.Empty),
+            _services.Clock.GetUtcNow().UtcDateTime, 120);
+        Assert.NotNull(await _services.LoginRequests.TryStartConfirmAsync(
+            record.RequestId, "nonce-1", _services.Clock.GetUtcNow().UtcDateTime));
+
+        var ex = await Assert.ThrowsAsync<AuthException>(() =>
+            _services.LoginRequestService.CancelAsync(record.RequestId, "p_test_poll_token", null, default));
+        Assert.Equal(AuthErrorCodes.ConfirmRace, ex.Code);
+
+        var stored = await _services.LoginRequests.FindByRequestIdAsync(record.RequestId);
+        Assert.Equal(LoginStatus.Confirming, stored!.Status);
+    }
+
+    [Fact]
+    public async Task Scanner_RevertsStaleConfirmingToVerified_ButKeepsActiveConfirm()
+    {
+        var record = await _services.InsertPendingAsync("A1b2C3d4E5");
+        await _services.LoginRequests.TryMarkVerifiedAsync(
+            record.TokenHash, "30066",
+            new DanmakuSender("A1b2C3d4E5", 403496, "Zero_Ash", null, string.Empty),
+            _services.Clock.GetUtcNow().UtcDateTime, 120);
+        Assert.NotNull(await _services.LoginRequests.TryStartConfirmAsync(
+            record.RequestId, "nonce-1", _services.Clock.GetUtcNow().UtcDateTime));
+
+        var scanner = new LoginRequestScanner(
+            _services.LoginRequests,
+            AuthTestOptions.Opt(_services.AuthOptions),
+            _services.Audit,
+            _services.Clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<LoginRequestScanner>.Instance);
+
+        _services.Clock.Advance(TimeSpan.FromSeconds(10));
+        await scanner.ScanOnceAsync();
+        var active = await _services.LoginRequests.FindByRequestIdAsync(record.RequestId);
+        Assert.Equal(LoginStatus.Confirming, active!.Status);
+
+        _services.Clock.Advance(TimeSpan.FromSeconds(25));
+        await scanner.ScanOnceAsync();
+        var reverted = await _services.LoginRequests.FindByRequestIdAsync(record.RequestId);
+        Assert.Equal(LoginStatus.Verified, reverted!.Status);
+        Assert.Null(reverted.ConfirmNonce);
+    }
+
+    [Fact]
+    public async Task Confirm_WithMissingReturnTo_MarksRequestFailed()
+    {
+        var record = await _services.InsertPendingAsync("A1b2C3d4E5", returnTo: string.Empty);
+        await _services.LoginRequests.TryMarkVerifiedAsync(
+            record.TokenHash, "30066",
+            new DanmakuSender("A1b2C3d4E5", 403496, "Zero_Ash", null, string.Empty),
+            _services.Clock.GetUtcNow().UtcDateTime, 120);
+
+        var ex = await Assert.ThrowsAsync<AuthException>(() =>
+            _services.LoginRequestService.ConfirmAsync(record.RequestId, "p_test_poll_token", null, null, default));
+        Assert.Equal(AuthErrorCodes.ProviderReturnToInvalid, ex.Code);
+
+        var stored = await _services.LoginRequests.FindByRequestIdAsync(record.RequestId);
+        Assert.Equal(LoginStatus.Failed, stored!.Status);
+        Assert.Equal(AuthErrorCodes.ProviderReturnToInvalid, stored.FailureCode);
+
+        var retry = await Assert.ThrowsAsync<AuthException>(() =>
+            _services.LoginRequestService.ConfirmAsync(record.RequestId, "p_test_poll_token", null, null, default));
+        Assert.Equal(AuthErrorCodes.LoginRequestFailed, retry.Code);
+    }
+
+    [Fact]
+    public async Task Confirm_AfterConfirmWindowExpired_IsRejectedByFinalCas()
+    {
+        var record = await _services.InsertPendingAsync("A1b2C3d4E5");
+        await _services.LoginRequests.TryMarkVerifiedAsync(
+            record.TokenHash, "30066",
+            new DanmakuSender("A1b2C3d4E5", 403496, "Zero_Ash", null, string.Empty),
+            _services.Clock.GetUtcNow().UtcDateTime, 120);
+        Assert.NotNull(await _services.LoginRequests.TryStartConfirmAsync(
+            record.RequestId, "nonce-1", _services.Clock.GetUtcNow().UtcDateTime));
+
+        // 确认窗口在最终 CAS 前过期，不能签发凭证。
+        _services.Clock.Advance(TimeSpan.FromSeconds(121));
+        var consumed = await _services.LoginRequests.TryMarkConsumedAsync(
+            record.RequestId, "nonce-1", _services.Clock.GetUtcNow().UtcDateTime);
+        Assert.False(consumed);
+    }
+
+    [Fact]
+    public async Task Confirm_WhenFinalCasFails_RevokesIssuedStandaloneTokens()
+    {
+        var clock = new StepClock(
+            new DateTimeOffset(2026, 11, 19, 12, 0, 0, TimeSpan.Zero),
+            TimeSpan.FromSeconds(40));
+        var services = AuthTestServices.Create(_fixture.Database, clock: clock, mode: AuthModes.Standalone);
+
+        var record = await services.InsertPendingAsync("A1b2C3d4E5", returnTo: string.Empty);
+        await services.LoginRequests.TryMarkVerifiedAsync(
+            record.TokenHash, "30066",
+            new DanmakuSender("A1b2C3d4E5", 403496, "Zero_Ash", null, string.Empty),
+            clock.GetUtcNow().UtcDateTime, 120);
+
+        var ex = await Assert.ThrowsAsync<AuthException>(() =>
+            services.LoginRequestService.ConfirmAsync(
+                record.RequestId, "p_test_poll_token", null, null, default));
+        Assert.Equal(AuthErrorCodes.ConfirmRace, ex.Code);
+
+        var sessions = await _fixture.Database
+            .GetCollection<AuthSessionRecord>(AuthCollectionNames.Sessions)
+            .Find(FilterDefinition<AuthSessionRecord>.Empty)
+            .ToListAsync();
+        var session = Assert.Single(sessions);
+        Assert.NotNull(session.RevokedAt);
+
+        var stored = await services.LoginRequests.FindByRequestIdAsync(record.RequestId);
+        Assert.Equal(LoginStatus.Verified, stored!.Status);
+    }
+
+    private sealed class StepClock(DateTimeOffset start, TimeSpan step) : AuthTestClock
+    {
+        private DateTimeOffset _now = start;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            var current = _now;
+            _now = _now.Add(step);
+            return current;
+        }
     }
 
     [Fact]

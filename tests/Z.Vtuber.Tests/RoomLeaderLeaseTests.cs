@@ -77,4 +77,29 @@ public sealed class RoomLeaderLeaseTests
         Assert.False(await lease.TryAcquireAsync("30066", default));
     }
 
+    [Fact]
+    public async Task Standby_TakesOverAfterLeaderLeaseExpires()
+    {
+        var room = "r" + Guid.NewGuid().ToString("N");
+        var auth = AuthTestOptions.Auth();
+        var danmaku = AuthTestOptions.Danmaku();
+        danmaku.LeaderLockTtlSeconds = 1;
+        var first = new RoomLeaderLease(
+            _redis.Connection, AuthTestOptions.Opt(auth), AuthTestOptions.Opt(danmaku),
+            NullLogger<RoomLeaderLease>.Instance);
+        var second = new RoomLeaderLease(
+            _redis.Connection, AuthTestOptions.Opt(auth), AuthTestOptions.Opt(danmaku),
+            NullLogger<RoomLeaderLease>.Instance);
+
+        Assert.True(await first.TryAcquireAsync(room, default));
+        Assert.False(await second.TryAcquireAsync(room, default));
+
+        await TestWait.UntilAsync(
+            async () => await second.TryAcquireAsync(room, default),
+            TimeSpan.FromSeconds(4),
+            TimeSpan.FromMilliseconds(100),
+            "standby acquires lease after leader expires without renewal");
+
+        await second.ReleaseAsync(room, default);
+    }
 }

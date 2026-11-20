@@ -61,4 +61,57 @@ public sealed class DanmakuFrameParserTests
         Assert.Single(frames);
         Assert.Equal(string.Empty, frames[0].Data);
     }
+
+    [Fact]
+    public async Task ReadFrame_TimesOutWhenNoFrameArrives()
+    {
+        using var reader = new StreamReader(new BlockingStream());
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            DanmakuFrameParser.ReadFrameAsync(reader, TimeSpan.FromMilliseconds(100), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ReadFrame_PropagatesCallerCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        using var reader = new StreamReader(new BlockingStream());
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            DanmakuFrameParser.ReadFrameAsync(reader, TimeSpan.FromSeconds(5), cts.Token));
+    }
+
+    private sealed class BlockingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            new(Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(
+                _ => 0, cancellationToken, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default));
+
+        public override Task<int> ReadAsync(
+            byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(
+                _ => 0, cancellationToken, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
 }

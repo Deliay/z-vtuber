@@ -38,6 +38,14 @@ public sealed class AuthOptionsValidationTests
     }
 
     [Fact]
+    public void InvalidConfirmOperationTimeout_Fails()
+    {
+        var options = AuthTestOptions.Auth();
+        options.ConfirmOperationTimeoutSeconds = 0;
+        Assert.False(new AuthOptionsValidator().Validate(null, options).Succeeded);
+    }
+
+    [Fact]
     public void InvalidRateLimit_Fails()
     {
         var options = AuthTestOptions.Auth();

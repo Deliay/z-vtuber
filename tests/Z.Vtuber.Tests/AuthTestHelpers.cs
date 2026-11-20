@@ -12,7 +12,7 @@ using Z.Vtuber.Auth.Persistence;
 
 namespace Z.Vtuber.Tests;
 
-internal sealed class AuthTestClock : TimeProvider
+internal class AuthTestClock : TimeProvider
 {
     private DateTimeOffset _now = new(2026, 11, 19, 12, 0, 0, TimeSpan.Zero);
 
@@ -35,6 +35,7 @@ internal static class AuthTestOptions
         TokenPepper = Pepper,
         LoginTokenTtlSeconds = 300,
         ConfirmWindowSeconds = 120,
+        ConfirmOperationTimeoutSeconds = 30,
         ProviderTicketSeconds = 60,
         ProviderSessionDays = 30,
         AllowDegradedRedis = true
@@ -84,7 +85,7 @@ internal sealed class TestRateLimiter : IAuthRateLimiter
 
     public Task<bool> TryDanmakuUidAsync(long uid, CancellationToken ct) => Result();
 
-    public Task<bool> TryOAuthTokenAsync(string clientId, CancellationToken ct) => Result();
+    public Task<bool> TryOAuthTokenAsync(string clientId, string clientIp, CancellationToken ct) => Result();
 
     private Task<bool> Result()
     {

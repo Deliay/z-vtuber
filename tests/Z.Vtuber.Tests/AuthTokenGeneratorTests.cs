@@ -19,12 +19,15 @@ public sealed class AuthTokenGeneratorTests
     [Fact]
     public void DanmakuToken_AvoidsConfusingCharacters()
     {
+        Assert.Equal(56, TokenGenerator.DanmakuAlphabet.Length);
+        Assert.Equal(56, TokenGenerator.DanmakuAlphabet.Distinct().Count());
         var tokens = string.Concat(Enumerable.Range(0, 200).Select(_ => TokenGenerator.CreateDanmakuToken()));
         Assert.DoesNotContain('0', tokens);
         Assert.DoesNotContain('O', tokens);
         Assert.DoesNotContain('1', tokens);
         Assert.DoesNotContain('l', tokens);
         Assert.DoesNotContain('I', tokens);
+        Assert.DoesNotContain('o', tokens);
     }
 
     [Fact]

@@ -129,6 +129,83 @@ public sealed class AuthProviderServicesTests : IClassFixture<MongoDbFixture>, I
     }
 
     [Fact]
+    public async Task Ticket_ConcurrentConsume_OnlyOneSucceeds()
+    {
+        var user = await _services.UserService.UpsertBilibiliUserAsync(31, "u31", null, "30066", null);
+        var created = await _services.TicketService.CreateAsync(user.User.Id, AuthTestOptions.ReturnTo());
+
+        var results = await Task.WhenAll(
+            _services.TicketService.ConsumeAsync(
+                created.Ticket, _services.ProviderOptions.ClientId, _services.ProviderOptions.RedirectUri),
+            _services.TicketService.ConsumeAsync(
+                created.Ticket, _services.ProviderOptions.ClientId, _services.ProviderOptions.RedirectUri));
+
+        Assert.Single(results, x => x is not null);
+    }
+
+    [Fact]
+    public async Task AuthorizationCode_ConcurrentConsume_OnlyOneSucceeds()
+    {
+        var user = await _services.UserService.UpsertBilibiliUserAsync(32, "u32", null, "30066", null);
+        var request = ReturnToValidator.Validate(AuthTestOptions.ReturnTo(), _services.ProviderOptions);
+        var code = await _services.CodeService.IssueAsync(user.User.Id, request, null);
+
+        async Task<bool> TryConsumeAsync()
+        {
+            try
+            {
+                await _services.CodeService.ConsumeAsync(
+                    code, request.ClientId, request.RedirectUri, null);
+                return true;
+            }
+            catch (OAuthException)
+            {
+                return false;
+            }
+        }
+
+        var results = await Task.WhenAll(TryConsumeAsync(), TryConsumeAsync());
+        Assert.Single(results, x => x);
+    }
+
+    [Fact]
+    public async Task ProviderToken_ConcurrentRefresh_OnlyOneSucceeds()
+    {
+        var user = await _services.UserService.UpsertBilibiliUserAsync(33, "u33", null, "30066", null);
+        var pair = await _services.TokenService.IssueAsync(
+            user.User.Id, _services.ProviderOptions.ClientId, "openid profile");
+
+        async Task<bool> TryRotateAsync()
+        {
+            try
+            {
+                await _services.TokenService.RotateAsync(pair.RefreshToken, _services.ProviderOptions.ClientId);
+                return true;
+            }
+            catch (OAuthException)
+            {
+                return false;
+            }
+        }
+
+        var results = await Task.WhenAll(TryRotateAsync(), TryRotateAsync());
+        Assert.Single(results, x => x);
+    }
+
+    [Fact]
+    public async Task UserProfile_IsNotClearedByMissingAvatar()
+    {
+        var first = await _services.UserService.UpsertBilibiliUserAsync(
+            34, "u34", "https://i2.hdslb.com/face.jpg", "30066", null);
+        var second = await _services.UserService.UpsertBilibiliUserAsync(
+            34, "u34-renamed", null, "12345", null);
+
+        Assert.Equal(first.User.Id, second.User.Id);
+        Assert.Equal("u34-renamed", second.User.DisplayName);
+        Assert.Equal("https://i2.hdslb.com/face.jpg", second.User.AvatarUrl);
+    }
+
+    [Fact]
     public async Task StandaloneSession_RefreshRotatesAndRevokes()
     {
         var standalone = AuthTestServices.Create(_fixture.Database, mode: AuthModes.Standalone);

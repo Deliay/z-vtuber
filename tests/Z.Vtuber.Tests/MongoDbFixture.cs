@@ -33,6 +33,9 @@ public sealed class MongoDbFixture : IAsyncLifetime
 
     public IMongoDatabase Database { get; private set; } = null!;
 
+    /// <summary>共享容器连接串，供需要自行构造客户端的测试（如 auth HTTP 宿主）使用。</summary>
+    public string ConnectionString { get; private set; } = string.Empty;
+
     /// <summary>fixture 清理覆盖的全部集合（7 域并集），只读视图。</summary>
     public static IReadOnlyList<string> AllCollections => AllCollectionsCore;
 
@@ -81,7 +84,8 @@ public sealed class MongoDbFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await EnsureContainerStartedAsync();
-        var client = new MongoClient(SharedContainer.GetConnectionString());
+        ConnectionString = SharedContainer.GetConnectionString();
+        var client = new MongoClient(ConnectionString);
         Database = client.GetDatabase(_databaseName);
 
         await EnsureIndexesAsync();

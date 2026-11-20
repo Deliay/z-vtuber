@@ -3,7 +3,7 @@ using System.Xml.Linq;
 namespace Z.Vtuber.Tests;
 
 /// <summary>
-/// 边界守护测试：断言 8 个服务的 ProjectReference 闭包等于技术提案 §2.3 引用矩阵，
+/// 边界守护测试：断言 9 个服务的 ProjectReference 闭包等于技术提案 §2.3 引用矩阵，
 /// 且 7 个领域项目只引用 Core（无域间引用、无环）。
 /// </summary>
 public class ProjectReferenceGuardTests
@@ -18,6 +18,7 @@ public class ProjectReferenceGuardTests
         ["recording-transcript-api"] = ["core", "live", "recording", "transcript"],
         ["recording-transcript-consumer"] = ["core", "live", "recording", "transcript"],
         ["training"] = ["core", "training", "transcript"],
+        ["auth"] = ["core", "live"],
     };
 
     private static readonly string[] DomainDirs =

@@ -229,6 +229,18 @@ public sealed class AuthOAuthProviderTests : IClassFixture<MongoDbFixture>, IAsy
         _services.Users,
         NullLogger<OAuthTokenController>.Instance));
 
+    private OAuthLogoutController CreateLogout(Action<DefaultHttpContext>? configure = null) =>
+        WithContext(new OAuthLogoutController(
+            AuthTestOptions.Opt(_services.AuthOptions),
+            AuthTestOptions.Opt(_services.ProviderOptions),
+            _services.TokenService,
+            _services.SessionService,
+            _services.Audit,
+            NullLogger<OAuthLogoutController>.Instance), configure);
+
+    private string Basic(string id, string secret) =>
+        Convert.ToBase64String(Encoding.UTF8.GetBytes($"{id}:{secret}"));
+
     [Fact]
     public async Task Authorize_WithoutSessionOrTicket_RedirectsToAccountCenterWithReturnTo()
     {
@@ -307,20 +319,83 @@ public sealed class AuthOAuthProviderTests : IClassFixture<MongoDbFixture>, IAsy
     public async Task TokenEndpoint_RejectsWrongClientSecret()
     {
         var controller = CreateToken();
-        var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes("casdoor-danmaku:wrong"));
-        controller.HttpContext.Request.Headers.Authorization = "Basic " + basic;
+        controller.HttpContext.Request.Headers.Authorization = "Basic " + Basic("casdoor-danmaku", "wrong");
         var result = await controller.Token("authorization_code", "code", "redirect", null, null, null, null, default);
         var objectResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status401Unauthorized, objectResult.StatusCode);
+        Assert.Equal("Basic realm=\"oauth\"", controller.Response.Headers.WWWAuthenticate.ToString());
+    }
+
+    [Fact]
+    public async Task Authorize_WithDeniedFlag_RedirectsAccessDeniedWithState()
+    {
+        var controller = CreateAuthorize();
+        controller.HttpContext.Request.QueryString = new QueryString(
+            "?client_id=casdoor-danmaku" +
+            "&redirect_uri=https%3A%2F%2Fcasdoor.example.com%2Fcallback" +
+            "&response_type=code&state=state-1&denied=1");
+
+        var result = await controller.Authorize(default);
+        var redirect = Assert.IsType<RedirectResult>(result);
+        Assert.StartsWith(_services.ProviderOptions.RedirectUri, redirect.Url);
+        var query = QueryHelpers.ParseQuery(new Uri(redirect.Url!).Query);
+        Assert.Equal("access_denied", query["error"].ToString());
+        Assert.Equal("state-1", query["state"].ToString());
+    }
+
+    [Fact]
+    public async Task Authorize_DeniedFlag_StillValidatesClientAndRedirect()
+    {
+        var controller = CreateAuthorize();
+        controller.HttpContext.Request.QueryString = new QueryString(
+            "?client_id=wrong&redirect_uri=https%3A%2F%2Fevil.example%2Fcallback&response_type=code&denied=1");
+
+        var result = await controller.Authorize(default);
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Logout_RequiresClientAuthentication()
+    {
+        var controller = CreateLogout();
+        var result = await controller.Logout("t", "r", null, null, default);
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status401Unauthorized, objectResult.StatusCode);
+        Assert.Equal("Basic realm=\"oauth\"", controller.Response.Headers.WWWAuthenticate.ToString());
+    }
+
+    [Fact]
+    public async Task Logout_RevokesTokensAndProviderSessionAndClearsCookie()
+    {
+        var user = await _services.UserService.UpsertBilibiliUserAsync(77, "logout", null, "30066", null);
+        var pair = await _services.TokenService.IssueAsync(
+            user.User.Id, _services.ProviderOptions.ClientId, "openid profile");
+        var session = await _services.SessionService.CreateAsync(user.User.Id, null, null);
+
+        var controller = CreateLogout(context =>
+        {
+            context.Request.Headers.Authorization = "Basic " +
+                Basic(_services.ProviderOptions.ClientId, _services.ProviderOptions.ClientSecret);
+            context.Request.Headers.Cookie = $"{ProviderSessionService.CookieName}={session}";
+        });
+
+        var result = await controller.Logout(pair.AccessToken, pair.RefreshToken, null, null, default);
+        Assert.IsType<OkObjectResult>(result);
+
+        Assert.Null(await _services.TokenService.ValidateAccessAsync(pair.AccessToken));
+        Assert.Null(await _services.SessionService.ResolveAsync(session));
+        Assert.Contains(
+            $"{ProviderSessionService.CookieName}=",
+            controller.Response.Headers.SetCookie.ToString());
     }
 
     [Fact]
     public async Task TokenEndpoint_RejectsUnsupportedGrant()
     {
         var controller = CreateToken();
-        var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes(
-            $"{_services.ProviderOptions.ClientId}:{_services.ProviderOptions.ClientSecret}"));
-        controller.HttpContext.Request.Headers.Authorization = "Basic " + basic;
+        controller.HttpContext.Request.Headers.Authorization = "Basic " +
+            Basic(_services.ProviderOptions.ClientId, _services.ProviderOptions.ClientSecret);
         var result = await controller.Token("password", null, null, null, null, null, null, default);
         var objectResult = Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(StatusCodes.Status400BadRequest, objectResult.StatusCode);
