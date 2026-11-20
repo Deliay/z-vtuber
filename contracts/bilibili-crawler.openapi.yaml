@@ -422,6 +422,76 @@ paths:
           description: 文件不存在
         "502":
           description: recording 服务不可达
+  /api/b/live/{roomId}/recordings/{fileName}/clip:
+    get:
+      summary: 代理录播切片下载
+      description: >-
+        代理 recording 服务的录播切片端点，query 原样透传；成功响应透传 Content-Type、Content-Disposition
+        与 Cache-Control 后流式转发（-c copy 原始编码，fragmented MP4）。
+      operationId: proxyRoomRecordingClip
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - name: fileName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: startMs
+          in: query
+          required: true
+          description: 片段起点（整场录播文件时间轴毫秒，>= 0）
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: endMs
+          in: query
+          required: true
+          description: 片段终点（毫秒，必须大于 startMs；区间长度上限见 recording 服务配置）
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 片段视频（透传上游 Content-Type/Content-Disposition/Cache-Control）
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: fileName 非法 / 区间参数非法 / 区间超上限 / 文件正在录制中（透传上游响应体）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+        "404":
+          description: 文件不存在
+        "500":
+          description: 上游 ffmpeg 切片失败（透传上游响应体）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    example: video clip failed
+        "502":
+          description: recording 服务不可达
   /api/b/live/{roomId}/live-stream/audio:
     get:
       summary: 代理实时音频流

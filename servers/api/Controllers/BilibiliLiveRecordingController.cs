@@ -15,6 +15,12 @@ public class BilibiliLiveRecordingController(
 {
     internal const string RecordingClientName = "recording";
 
+    /// <summary>
+    /// 切片下载专用长流客户端：片段生成/传输可能持续数十分钟，
+    /// 使用 Infinite 超时并以客户端 RequestAborted 联动取消；不影响既有列表/下载/音频代理的默认超时。
+    /// </summary>
+    internal const string RecordingStreamClientName = "recording-stream";
+
     /// <summary>recording 状态过期阈值：recording 且 UpdatedAt 超过该时长未刷新则退化为 unknown，避免陈旧残留误导页面。</summary>
     internal static readonly TimeSpan StaleRecordingThreshold = TimeSpan.FromMinutes(3);
 
@@ -269,6 +275,77 @@ public class BilibiliLiveRecordingController(
             // 绝不设置 Content-Disposition（下载代理的 attachment 兜底不适用于本端点）
             Response.StatusCode = (int)response.StatusCode;
             Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
+            if (response.Headers.CacheControl is not null)
+            {
+                Response.Headers.CacheControl = response.Headers.CacheControl.ToString();
+            }
+
+            await response.Content.CopyToAsync(Response.Body, ct);
+            return new EmptyResult();
+        }
+    }
+
+    [HttpGet("{roomId:long}/recordings/{fileName}/clip")]
+    public async Task<IActionResult> ProxyRecordingClip(long roomId, string fileName, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient(RecordingStreamClientName);
+        HttpResponseMessage response;
+        try
+        {
+            // query 原样透传；切片端点不支持 Range，本代理不透传 Range 语义
+            response = await client.GetAsync(
+                $"api/{roomId}/recordings/{Uri.EscapeDataString(fileName)}/clip{Request.QueryString}",
+                HttpCompletionOption.ResponseHeadersRead,
+                ct);
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 上游超时（非客户端取消）也应返回契约约定的 502
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return NotFound();
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            {
+                // 上游 400（文件名非法 / 区间参数非法 / 超上限 / 录制中）原样透传响应体，避免被归并为 502
+                var json = await response.Content.ReadAsStringAsync(ct);
+                var badRequest = Content(json, "application/json");
+                badRequest.StatusCode = StatusCodes.Status400BadRequest;
+                return badRequest;
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.InternalServerError)
+            {
+                // 上游切片失败（{"error":"video clip failed"}）按契约透传 500，不归并为 502
+                var json = await response.Content.ReadAsStringAsync(ct);
+                var serverError = Content(json, "application/json");
+                serverError.StatusCode = StatusCodes.Status500InternalServerError;
+                return serverError;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { error = "recording service unavailable" });
+            }
+
+            // 片段为附件下载：透传 Content-Type / Content-Disposition / Cache-Control
+            Response.StatusCode = (int)response.StatusCode;
+            Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "video/mp4";
+            if (response.Content.Headers.ContentDisposition is not null)
+            {
+                Response.Headers.ContentDisposition = response.Content.Headers.ContentDisposition.ToString();
+            }
+
             if (response.Headers.CacheControl is not null)
             {
                 Response.Headers.CacheControl = response.Headers.CacheControl.ToString();

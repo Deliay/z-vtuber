@@ -56,6 +56,10 @@ public sealed class RecordingOptions
     [Range(1, 86_400_000)]
     public int AudioClipMaxDurationMs { get; set; } = 300000;
 
+    /// <summary>单个视频片段（切片下载）时长上限（毫秒），超限 400。</summary>
+    [Range(1, 86_400_000)]
+    public int VideoClipMaxDurationMs { get; set; } = 7_200_000;
+
     /// <summary>多片段合并请求的片段数上限，超限 400 <c>too many items</c>。</summary>
     [Range(1, 100)]
     public int AudioMergeMaxItems { get; set; } = 16;

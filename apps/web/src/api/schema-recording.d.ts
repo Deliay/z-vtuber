@@ -135,6 +135,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/{roomId}/recordings/{fileName}/clip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 录播切片下载
+         * @description 按 [startMs, endMs] 截取片段（ffmpeg -c copy 保留原始编码，输出 fragmented MP4）， 流式返回独立可播放片段文件。startMs/endMs 必填；区间 ≤ Recording:VideoClipMaxDurationMs（默认 7200000）。 起点吸附最近关键帧（不晚于所选起点），与预览定位落点一致；endMs 超出文件实际长度时输出到文件结尾。 文件正在录制中返回 400（与下载端点同口径）。
+         */
+        get: operations["downloadRecordingClip"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/recordings/audio/merge": {
         parameters: {
             query?: never;
@@ -534,6 +554,69 @@ export interface operations {
                 content: {
                     "application/json": {
                         /** @example audio clip failed */
+                        error: string;
+                    };
+                };
+            };
+        };
+    };
+    downloadRecordingClip: {
+        parameters: {
+            query: {
+                /** @description 片段起点（整场录播文件时间轴毫秒，>= 0） */
+                startMs: number;
+                /** @description 片段终点（毫秒，必须大于 startMs；区间长度上限 Recording:VideoClipMaxDurationMs，默认 7200000） */
+                endMs: number;
+            };
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+                /** @description 录播文件名（仅允许平文件名，禁止路径分隔符与穿越） */
+                fileName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 片段视频（fragmented MP4，原始视频/音频编码；-c copy 不转码） */
+            200: {
+                headers: {
+                    /** @description attachment; filename="<ASCII fallback>"; filename*=UTF-8''<原文件名>-<start>-<end>.mp4 */
+                    "Content-Disposition"?: string;
+                    /** @description 固定 no-store，片段每次现算不缓存 */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                };
+            };
+            /** @description fileName 非法 / 区间参数非法（缺参、endMs <= startMs、startMs < 0）/ 区间超上限 / 文件正在录制中 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
+                };
+            };
+            /** @description 文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description ffmpeg 切片失败（如损坏文件） */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example video clip failed */
                         error: string;
                     };
                 };

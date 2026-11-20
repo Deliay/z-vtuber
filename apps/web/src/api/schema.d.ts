@@ -348,6 +348,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/b/live/{roomId}/recordings/{fileName}/clip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 代理录播切片下载
+         * @description 代理 recording 服务的录播切片端点，query 原样透传；成功响应透传 Content-Type、Content-Disposition 与 Cache-Control 后流式转发（-c copy 原始编码，fragmented MP4）。
+         */
+        get: operations["proxyRoomRecordingClip"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/b/live/{roomId}/live-stream/audio": {
         parameters: {
             query?: never;
@@ -377,7 +397,7 @@ export interface paths {
         };
         /**
          * 下载 B 站视频原始流
-         * @description 代理 crawler 服务的视频取流端点，实时从 B 站取出原始流（DASH 的 m4v/m4a 或整段 flv）后流式透传， 平台不落盘、不转码、不重封装，传输结束即弃；支持 Range 分段获取（206）与 If-Range 条件请求，越界区间返回 416。 「都下载」不设打包端点：调用方以 kind=video 与 kind=audio 各请求一次。
+         * @description 代理 crawler 服务的视频取流端点，返回 B 站投稿视频原始流（DASH 的 m4v/m4a 或整段 flv）， 不转码、不重封装；支持 Range 分段获取（206）与 If-Range 条件请求，越界区间返回 416。 crawler 侧对同一 (bvid, page, kind) 采用 cache-aside：命中外部 S3 缓存直接流式返回， 未命中回源 B 站并边透传边写入缓存；缓存故障降级为回源，对调用方字节语义一致、不落本地盘。 「都下载」不设打包端点：调用方以 kind=video 与 kind=audio 各请求一次。
          */
         get: operations["downloadBilibiliVideo"];
         put?: never;
@@ -2552,6 +2572,73 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description recording 服务不可达 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    proxyRoomRecordingClip: {
+        parameters: {
+            query: {
+                /** @description 片段起点（整场录播文件时间轴毫秒，>= 0） */
+                startMs: number;
+                /** @description 片段终点（毫秒，必须大于 startMs；区间长度上限见 recording 服务配置） */
+                endMs: number;
+            };
+            header?: never;
+            path: {
+                roomId: components["parameters"]["RoomId"];
+                fileName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 片段视频（透传上游 Content-Type/Content-Disposition/Cache-Control） */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                };
+            };
+            /** @description fileName 非法 / 区间参数非法 / 区间超上限 / 文件正在录制中（透传上游响应体） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
+                };
+            };
+            /** @description 文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 上游 ffmpeg 切片失败（透传上游响应体） */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example video clip failed */
+                        error: string;
+                    };
+                };
             };
             /** @description recording 服务不可达 */
             502: {

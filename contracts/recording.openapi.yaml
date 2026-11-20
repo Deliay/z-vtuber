@@ -232,6 +232,79 @@ paths:
                   error:
                     type: string
                     example: audio clip failed
+  /api/{roomId}/recordings/{fileName}/clip:
+    get:
+      summary: 录播切片下载
+      description: >-
+        按 [startMs, endMs] 截取片段（ffmpeg -c copy 保留原始编码，输出 fragmented MP4），
+        流式返回独立可播放片段文件。startMs/endMs 必填；区间 ≤ Recording:VideoClipMaxDurationMs（默认 7200000）。
+        起点吸附最近关键帧（不晚于所选起点），与预览定位落点一致；endMs 超出文件实际长度时输出到文件结尾。
+        文件正在录制中返回 400（与下载端点同口径）。
+      operationId: downloadRecordingClip
+      parameters:
+        - $ref: "#/components/parameters/RoomId"
+        - name: fileName
+          in: path
+          required: true
+          description: 录播文件名（仅允许平文件名，禁止路径分隔符与穿越）
+          schema:
+            type: string
+        - name: startMs
+          in: query
+          required: true
+          description: 片段起点（整场录播文件时间轴毫秒，>= 0）
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: endMs
+          in: query
+          required: true
+          description: 片段终点（毫秒，必须大于 startMs；区间长度上限 Recording:VideoClipMaxDurationMs，默认 7200000）
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 片段视频（fragmented MP4，原始视频/音频编码；-c copy 不转码）
+          headers:
+            Content-Disposition:
+              description: "attachment; filename=\"<ASCII fallback>\"; filename*=UTF-8''<原文件名>-<start>-<end>.mp4"
+              schema:
+                type: string
+            Cache-Control:
+              description: 固定 no-store，片段每次现算不缓存
+              schema:
+                type: string
+                example: no-store
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: fileName 非法 / 区间参数非法（缺参、endMs <= startMs、startMs < 0）/ 区间超上限 / 文件正在录制中
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+        "404":
+          description: 文件不存在
+        "500":
+          description: ffmpeg 切片失败（如损坏文件）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    example: video clip failed
   /api/recordings/audio/merge:
     post:
       summary: 多片段音频合并（服务间内部能力）

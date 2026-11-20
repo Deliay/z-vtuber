@@ -14,6 +14,7 @@
   "dependencies": {
     "@ant-design/icons": "^6.3.4",
     "antd": "^6.6.5",
+    "mpegts.js": "1.8.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "wavesurfer.js": "^8.0.1"

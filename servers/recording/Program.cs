@@ -7,6 +7,7 @@ using Z.Vtuber.Recording.Configuration;
 using Z.Vtuber.Recording.Live;
 using Z.Vtuber.Recording.Recording;
 using Z.Vtuber.Recording.Services;
+using Z.Vtuber.Recording.Video;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -45,6 +46,7 @@ builder.Services.AddSingleton<RecordingStatusReporter>();
 builder.Services.AddSingleton(new Mp3EncoderSupport());
 builder.Services.AddSingleton<IAudioClipExtractor, AudioClipExtractor>();
 builder.Services.AddSingleton<IAudioClipMerger, AudioClipMerger>();
+builder.Services.AddSingleton<IVideoClipExtractor, VideoClipExtractor>();
 
 builder.Services.AddHttpClient<IBiliLiveApi, BiliLiveApiClient>(client =>
 {

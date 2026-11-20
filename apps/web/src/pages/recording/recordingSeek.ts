@@ -1,0 +1,578 @@
+/**
+ * FLV 关键帧预测（移植 Deliay/sumire `features/recordings/seek.ts` 思路）：
+ * 线性估算目标字节偏移 → Range 窗口探测（必须 206）→ FLV tag 三重校验并优先对齐视频关键帧 tag
+ * → 返回可交给 mpegts 字节偏移桥接续播的 fileposition。
+ *
+ * 上游录播 FLV 的 onMetaData 不含 keyframes 索引，mpegts 原生 seek 会静默 no-op；
+ * 因此续播起点必须自行扫描到合法 tag 边界（优先视频关键帧，避免 lazyLoad 暂停死锁）。
+ */
+
+/** 关键帧扫描窗口按码率折算的秒数。 */
+export const KEYFRAME_SCAN_SECONDS = 10
+
+/** Range 探测窗口下限（字节）。 */
+export const SEEK_WINDOW_BYTES = 256 * 1024
+
+/** Range 探测窗口上限（字节）。 */
+export const MAX_KEYFRAME_SCAN_BYTES = 8 * 1024 * 1024
+
+/** FLV tag 头长度。 */
+const FLV_TAG_HEADER_BYTES = 11
+
+/** FLV tag 尾 PreviousTagSize 长度。 */
+const FLV_PREV_TAG_SIZE_BYTES = 4
+
+/** FLV tag dataSize 合理上限（防御伪 tag）。 */
+const MAX_FLV_TAG_DATA_BYTES = 8 * 1024 * 1024
+
+const FLV_TAG_AUDIO = 8
+const FLV_TAG_VIDEO = 9
+const FLV_TAG_SCRIPT = 18
+
+export interface FlvTagBoundary {
+  /**
+   * 交给 mpegts `_loadSegment(0, fileposition)` 的字节偏移：FLV tag 头起始位置。
+   * demuxer 只在首次解析文件头时跳过 4 字节 PrevTagSize0，续播解析直接从 tag 头开始。
+   */
+  fileposition: number
+  /** 绝对字节偏移对应的 FLV tag 时间戳（毫秒）。 */
+  milliseconds: number
+  /** 是否为视频关键帧 tag（tagType=9 且 frameType=1）。 */
+  keyframe: boolean
+  /** 绝对 tag 头偏移（调试/测试用）。 */
+  tagOffset: number
+}
+
+export interface SeekUnbufferedParams {
+  url: string
+  targetSeconds: number
+  durationSeconds: number
+  fileSize: number
+  fetchImpl?: typeof fetch
+  signal?: AbortSignal
+}
+
+export interface UnbufferedSeekResult {
+  fileposition: number
+  milliseconds: number
+  keyframe: boolean
+}
+
+let seekGeneration = 0
+let activeController: AbortController | null = null
+
+/** 线性估算：fileSize × targetMs / durationMs，结果钳制到 [0, fileSize-1]；非法输入返回 0。 */
+export function estimateByteOffset(
+  targetMs: number,
+  durationMs: number,
+  fileSize: number,
+): number {
+  if (
+    !Number.isFinite(targetMs) ||
+    !Number.isFinite(durationMs) ||
+    !Number.isFinite(fileSize) ||
+    targetMs <= 0 ||
+    durationMs <= 0 ||
+    fileSize <= 0
+  ) {
+    return 0
+  }
+
+  const ratio = Math.min(1, targetMs / durationMs)
+  return Math.min(Math.max(0, fileSize - 1), Math.floor(fileSize * ratio))
+}
+
+/** 按码率折算扫描窗口：bitrate/8 × 10s，钳制到 [256KB, 8MB]；非法码率取下限。 */
+export function computeScanBytes(bitrateBps: number): number {
+  if (!Number.isFinite(bitrateBps) || bitrateBps <= 0) {
+    return SEEK_WINDOW_BYTES
+  }
+
+  return Math.min(
+    MAX_KEYFRAME_SCAN_BYTES,
+    Math.max(SEEK_WINDOW_BYTES, Math.round((bitrateBps / 8) * KEYFRAME_SCAN_SECONDS)),
+  )
+}
+
+function readUint32BE(bytes: Uint8Array, offset: number): number {
+  return (
+    ((bytes[offset] << 24) |
+      (bytes[offset + 1] << 16) |
+      (bytes[offset + 2] << 8) |
+      bytes[offset + 3]) >>>
+    0
+  )
+}
+
+interface FlvTagHeader {
+  tagType: number
+  dataSize: number
+}
+
+/** 只读取 tag header 的类型/长度（不要求完整 data/PrevTagSize），用于增量扫描识别不完整候选。 */
+function inspectTagHeader(bytes: Uint8Array, offset: number): FlvTagHeader | null {
+  if (offset + FLV_TAG_HEADER_BYTES > bytes.length) {
+    return null
+  }
+
+  const tagType = bytes[offset]
+  if (tagType !== FLV_TAG_AUDIO && tagType !== FLV_TAG_VIDEO && tagType !== FLV_TAG_SCRIPT) {
+    return null
+  }
+
+  const dataSize =
+    (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]
+  if (dataSize <= 0 || dataSize > MAX_FLV_TAG_DATA_BYTES) {
+    return null
+  }
+
+  return { tagType, dataSize }
+}
+
+/** header 合法但 data/PrevTagSize 尚未被当前缓冲覆盖：下一轮增量扫描重试。 */
+function isIncompleteTag(bytes: Uint8Array, offset: number): boolean {
+  const header = inspectTagHeader(bytes, offset)
+  if (!header) {
+    return false
+  }
+
+  const tagEnd = offset + FLV_TAG_HEADER_BYTES + header.dataSize
+  return tagEnd + FLV_PREV_TAG_SIZE_BYTES > bytes.length
+}
+
+/**
+ * 视频 tag 是否为「真正含 NALU 的关键帧」。
+ *
+ * frameType=1 还出现在无帧数据的 tag 上：
+ * - AVC/HEVC sequence header（AVCPacketType=0，文件开头）；
+ * - AVC end of sequence（AVCPacketType=2，ffmpeg FLV muxer 收尾必写）。
+ * 这两种 tag 被 mpegts demuxer 解析后零样本输出，绝不能作为续播落点。
+ */
+function isVideoKeyframe(
+  tagType: number,
+  dataSize: number,
+  bytes: Uint8Array,
+  payloadOffset: number,
+): boolean {
+  if (tagType !== FLV_TAG_VIDEO || dataSize < 1) {
+    return false
+  }
+
+  const firstByte = bytes[payloadOffset]
+  // FrameType 位于 bit6..4；enhanced header 的 bit7 是独立标志
+  if (((firstByte & 0x70) >> 4) !== 1) {
+    return false
+  }
+
+  const enhanced = (firstByte & 0x80) !== 0
+  if (enhanced) {
+    // Enhanced: UI8(0x80|packetType) + FourCC(4) + payload；packetType=1 才是编码帧
+    if (dataSize < 5) {
+      return false
+    }
+    // hvc1/av01 及未知 enhanced codec 均要求 packetType=1（排除 0 sequence header / 2 EOS）
+    return (firstByte & 0x0f) === 1
+  }
+
+  const codecId = firstByte & 0x0f
+  if (codecId === 7 || codecId === 12) {
+    // AVC/HEVCPacketType: 0=sequence header, 1=NALU, 2=end of sequence
+    return dataSize >= 2 && bytes[payloadOffset + 1] === 1
+  }
+
+  // 其他 legacy codec：frameType=1 即关键帧
+  return true
+}
+
+function readTagAt(
+  bytes: Uint8Array,
+  offset: number,
+  baseOffset: number,
+): FlvTagBoundary | null {
+  if (offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES > bytes.length) {
+    return null
+  }
+
+  const header = inspectTagHeader(bytes, offset)
+  if (!header) {
+    return null
+  }
+
+  const { tagType, dataSize } = header
+  const tagEnd = offset + FLV_TAG_HEADER_BYTES + dataSize
+  if (tagEnd + FLV_PREV_TAG_SIZE_BYTES > bytes.length) {
+    // 窗口尚未覆盖完整 tag：交由下一轮增量扫描
+    return null
+  }
+
+  const prevTagSize = readUint32BE(bytes, tagEnd)
+  if (prevTagSize !== FLV_TAG_HEADER_BYTES + dataSize) {
+    return null
+  }
+
+  // FLV TagHeader: UI24 Timestamp（大端）+ UI8 TimestampExtended（高 8 位），与 mpegts demuxer 同口径
+  const milliseconds =
+    ((bytes[offset + 4] << 16) |
+      (bytes[offset + 5] << 8) |
+      bytes[offset + 6] |
+      (bytes[offset + 7] << 24)) >>>
+    0
+
+  const keyframe = isVideoKeyframe(tagType, dataSize, bytes, offset + FLV_TAG_HEADER_BYTES)
+
+  const tagOffset = baseOffset + offset
+  return {
+    // 续播 chunk 必须从 tag 头开始（demuxer 无 mid-stream resync，也不会再次跳过 PrevTagSize）
+    fileposition: tagOffset,
+    milliseconds,
+    keyframe,
+    tagOffset,
+  }
+}
+
+function scanBoundary(
+  bytes: Uint8Array,
+  baseOffset: number,
+  requireKeyframe: boolean,
+): FlvTagBoundary | null {
+  for (
+    let offset = 0;
+    offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES <= bytes.length;
+    offset++
+  ) {
+    const boundary = readTagAt(bytes, offset, baseOffset)
+    if (!boundary) {
+      continue
+    }
+
+    if (requireKeyframe && !boundary.keyframe) {
+      continue
+    }
+
+    return boundary
+  }
+
+  return null
+}
+
+/** 扫描窗口内第一个视频关键帧 tag（三重校验通过）；无则返回 null。 */
+export function findVideoKeyframeBoundary(
+  window: Uint8Array,
+  baseOffset: number,
+): FlvTagBoundary | null {
+  return scanBoundary(window, baseOffset, true)
+}
+
+/** 扫描窗口内第一个合法 tag 边界（任意类型）；无则返回 null。 */
+export function findNextTagBoundary(
+  window: Uint8Array,
+  baseOffset: number,
+): FlvTagBoundary | null {
+  return scanBoundary(window, baseOffset, false)
+}
+
+/** 扫描窗口内最后一个真实视频关键帧（用于尾段向前回退探测）；无则返回 null。 */
+export function findLastVideoKeyframeBoundary(
+  window: Uint8Array,
+  baseOffset: number,
+): FlvTagBoundary | null {
+  let last: FlvTagBoundary | null = null
+  for (
+    let offset = 0;
+    offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES <= window.length;
+    offset++
+  ) {
+    const boundary = readTagAt(window, offset, baseOffset)
+    if (boundary?.keyframe) {
+      last = boundary
+    }
+  }
+
+  return last
+}
+
+interface IncrementalScanState {
+  scanStart: number
+  pending: Set<number>
+}
+
+function createIncrementalScanState(): IncrementalScanState {
+  return { scanStart: 0, pending: new Set<number>() }
+}
+
+/**
+ * 增量扫描：只检查新到达的字节 + 上一轮 header 完整但 data 不完整的候选，
+ * 避免每个 chunk 都从 buffer 起点全量重扫（8MB 窗口下的 O(n²)）。
+ */
+function scanIncremental(
+  buffer: Uint8Array,
+  baseOffset: number,
+  state: IncrementalScanState,
+): FlvTagBoundary | null {
+  // 1. 先重试跨 chunk 的不完整候选（保持文件偏移顺序）
+  for (const offset of [...state.pending].sort((left, right) => left - right)) {
+    const boundary = readTagAt(buffer, offset, baseOffset)
+    if (boundary) {
+      state.pending.delete(offset)
+      if (boundary.keyframe) {
+        return boundary
+      }
+    } else if (!isIncompleteTag(buffer, offset)) {
+      // 已补齐但 PrevTagSize 校验失败 / 被证明是伪 tag：丢弃候选
+      state.pending.delete(offset)
+    }
+  }
+
+  // 2. 扫描新窗口；回退 15 字节覆盖跨 chunk 的 header
+  for (let offset = state.scanStart; offset + FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES <= buffer.length; offset++) {
+    const boundary = readTagAt(buffer, offset, baseOffset)
+    if (boundary) {
+      if (boundary.keyframe) {
+        return boundary
+      }
+    } else if (isIncompleteTag(buffer, offset)) {
+      state.pending.add(offset)
+    }
+  }
+
+  state.scanStart = Math.max(
+    0,
+    buffer.length - (FLV_TAG_HEADER_BYTES + FLV_PREV_TAG_SIZE_BYTES),
+  )
+  return null
+}
+
+function parseContentRange(value: string | null): { start: number; end: number } | null {
+  if (!value) {
+    return null
+  }
+
+  const match = /bytes\s+(\d+)-(\d+)\//i.exec(value)
+  if (!match) {
+    return null
+  }
+
+  const start = Number(match[1])
+  const end = Number(match[2])
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) {
+    return null
+  }
+
+  return { start, end }
+}
+
+async function cancelBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel()
+  } catch {
+    // 响应体已关闭/不可取消：忽略
+  }
+}
+
+function concatBytes(
+  left: Uint8Array<ArrayBufferLike>,
+  right: Uint8Array<ArrayBufferLike>,
+): Uint8Array<ArrayBufferLike> {
+  if (left.length === 0) {
+    return right
+  }
+  const merged = new Uint8Array(left.length + right.length)
+  merged.set(left, 0)
+  merged.set(right, left.length)
+  return merged
+}
+
+/** 读取一个 Range 窗口的完整字节（仅用于尾段向前回退探测，窗口 ≤ 8MB）；非 206 一律降级。 */
+async function readRangeWindow(
+  url: string,
+  start: number,
+  end: number,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal,
+): Promise<{ baseOffset: number; bytes: Uint8Array<ArrayBufferLike> } | null> {
+  const response = await fetchImpl(url, {
+    headers: { Range: `bytes=${start}-${end}` },
+    signal,
+  })
+
+  if (response.status !== 206) {
+    await cancelBody(response)
+    return null
+  }
+
+  const baseOffset = parseContentRange(response.headers.get('content-range'))?.start ?? start
+  const reader = response.body?.getReader()
+  if (!reader) {
+    return null
+  }
+
+  let bytes: Uint8Array<ArrayBufferLike> = new Uint8Array(0)
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      if (value && value.length > 0) {
+        bytes = concatBytes(bytes, value)
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
+
+  return { baseOffset, bytes }
+}
+
+/**
+ * 取消当前在途探测（播放器关闭/切源时调用），使过期结果被丢弃。
+ * 不改变下一次 seek 的代次语义。
+ */
+export function cancelPendingSeek(): void {
+  seekGeneration++
+  activeController?.abort()
+  activeController = null
+}
+
+/**
+ * 未缓冲 seek：Range 窗口探测 + FLV tag 扫描，返回续播落点。
+ *
+ * - 非 206（上游忽略 Range）一律取消响应体并返回 null，绝不整文件 buffer；
+ * - 并发调用 last-wins：旧调用被 abort，过期结果返回 null；
+ * - 前向窗口无真实关键帧（尾段估算越过最后关键帧）时，向前补一次 Range 探测取最近真实关键帧；
+ *   仍找不到则返回 null 显性降级，绝不落到 EOS/无 NALU 的 video tag。
+ */
+export async function seekUnbuffered(
+  params: SeekUnbufferedParams,
+): Promise<UnbufferedSeekResult | null> {
+  const {
+    url,
+    targetSeconds,
+    durationSeconds,
+    fileSize,
+    fetchImpl = fetch,
+    signal,
+  } = params
+
+  if (
+    !url ||
+    !Number.isFinite(targetSeconds) ||
+    !Number.isFinite(durationSeconds) ||
+    !Number.isFinite(fileSize) ||
+    targetSeconds < 0 ||
+    durationSeconds <= 0 ||
+    fileSize <= 0
+  ) {
+    return null
+  }
+
+  const generation = ++seekGeneration
+  const targetMs = Math.min(durationSeconds * 1000, targetSeconds * 1000)
+  const durationMs = durationSeconds * 1000
+  const estimate = estimateByteOffset(targetMs, durationMs, fileSize)
+  const bitrateBps = (fileSize * 8) / durationSeconds
+  const scanBytes = computeScanBytes(bitrateBps)
+  const rangeStart = Math.min(estimate, Math.max(0, fileSize - 1))
+  const rangeEnd = Math.min(fileSize - 1, rangeStart + scanBytes - 1)
+
+  activeController?.abort()
+  const controller = new AbortController()
+  activeController = controller
+  const onAbort = () => controller.abort()
+  signal?.addEventListener('abort', onAbort, { once: true })
+
+  try {
+    const response = await fetchImpl(url, {
+      headers: { Range: `bytes=${rangeStart}-${rangeEnd}` },
+      signal: controller.signal,
+    })
+
+    if (generation !== seekGeneration) {
+      await cancelBody(response)
+      return null
+    }
+
+    if (response.status !== 206) {
+      // 上游忽略 Range / 代理未透传：绝不整文件 buffer，显性降级
+      await cancelBody(response)
+      return null
+    }
+
+    const baseOffset = parseContentRange(response.headers.get('content-range'))?.start ?? rangeStart
+    const reader = response.body?.getReader()
+    if (!reader) {
+      return null
+    }
+
+    let buffer: Uint8Array<ArrayBufferLike> = new Uint8Array(0)
+    const scanState = createIncrementalScanState()
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          break
+        }
+
+        if (value && value.length > 0) {
+          buffer = concatBytes(buffer, value)
+          const keyframe = scanIncremental(buffer, baseOffset, scanState)
+          if (keyframe) {
+            await reader.cancel()
+            return generation === seekGeneration
+              ? {
+                  fileposition: keyframe.fileposition,
+                  milliseconds: keyframe.milliseconds,
+                  keyframe: true,
+                }
+              : null
+          }
+        }
+
+        // 防御异常响应体：窗口 + 单个 tag 余量足够后停止继续读取
+        if (buffer.length > scanBytes + MAX_FLV_TAG_DATA_BYTES) {
+          break
+        }
+      }
+    } finally {
+      // 命中关键帧/窗口结束时取消剩余下载（已关闭时忽略）
+      await reader.cancel().catch(() => undefined)
+    }
+
+    if (generation !== seekGeneration) {
+      return null
+    }
+
+    // 尾段场景：估算偏移越过最后一个关键帧，前向窗口只剩音频/EOS tag。
+    // 向前补一次 Range 探测取最近真实关键帧；找不到则显性降级（null → UI 提示），
+    // 绝不把落点/时间设到 EOS 或无帧 tag 上。
+    if (rangeStart > 0) {
+      const backEnd = rangeStart - 1
+      const backStart = Math.max(0, backEnd - scanBytes + 1)
+      const back = await readRangeWindow(url, backStart, backEnd, fetchImpl, controller.signal)
+
+      if (generation !== seekGeneration) {
+        return null
+      }
+
+      const keyframe = back ? findLastVideoKeyframeBoundary(back.bytes, back.baseOffset) : null
+      if (keyframe && keyframe.milliseconds <= targetMs + 1) {
+        return {
+          fileposition: keyframe.fileposition,
+          milliseconds: keyframe.milliseconds,
+          keyframe: true,
+        }
+      }
+    }
+
+    return null
+  } catch {
+    // abort / 网络失败：返回 null 由 UI 提示「该文件暂不支持跳转」
+    return null
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+    if (activeController === controller) {
+      activeController = null
+    }
+  }
+}

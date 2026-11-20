@@ -1,0 +1,117 @@
+using Z.Vtuber.Auth.Danmaku;
+
+namespace Z.Vtuber.Tests;
+
+public sealed class DanmakuFrameParserTests
+{
+    [Fact]
+    public void ParsesMultipleFrames()
+    {
+        const string raw = "event: heartbeat\ndata: {}\n\nevent: danmaku\ndata: {\"a\":1}\n\n";
+        var frames = DanmakuFrameParser.Parse(raw);
+        Assert.Equal(2, frames.Count);
+        Assert.Equal("heartbeat", frames[0].Event);
+        Assert.Equal("{}", frames[0].Data);
+        Assert.Equal("danmaku", frames[1].Event);
+    }
+
+    [Fact]
+    public void JoinsMultilineDataWithNewline()
+    {
+        var frames = DanmakuFrameParser.Parse("data: line1\ndata: line2\n\n");
+        Assert.Single(frames);
+        Assert.Equal("line1\nline2", frames[0].Data);
+    }
+
+    [Fact]
+    public void IgnoresCommentsAndIds()
+    {
+        var frames = DanmakuFrameParser.Parse(": keep-alive\nid: 3\nevent: danmaku\ndata: {}\n\n");
+        Assert.Single(frames);
+        Assert.Equal("danmaku", frames[0].Event);
+    }
+
+    [Fact]
+    public void HandlesCrlf()
+    {
+        var frames = DanmakuFrameParser.Parse("event: heartbeat\r\ndata: {}\r\n\r\n");
+        Assert.Single(frames);
+        Assert.Equal("heartbeat", frames[0].Event);
+    }
+
+    [Fact]
+    public void MissingEventDefaultsToMessage()
+    {
+        var frames = DanmakuFrameParser.Parse("data: hello\n\n");
+        Assert.Equal("message", frames[0].Event);
+        Assert.Equal("hello", frames[0].Data);
+    }
+
+    [Fact]
+    public void EmptyInput_ReturnsNoFrames()
+    {
+        Assert.Empty(DanmakuFrameParser.Parse(""));
+        Assert.Empty(DanmakuFrameParser.Parse("\n\n"));
+    }
+
+    [Fact]
+    public void BlankDataLine_IsPreserved()
+    {
+        var frames = DanmakuFrameParser.Parse("event: heartbeat\ndata:\n\n");
+        Assert.Single(frames);
+        Assert.Equal(string.Empty, frames[0].Data);
+    }
+
+    [Fact]
+    public async Task ReadFrame_TimesOutWhenNoFrameArrives()
+    {
+        using var reader = new StreamReader(new BlockingStream());
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            DanmakuFrameParser.ReadFrameAsync(reader, TimeSpan.FromMilliseconds(100), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ReadFrame_PropagatesCallerCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        using var reader = new StreamReader(new BlockingStream());
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            DanmakuFrameParser.ReadFrameAsync(reader, TimeSpan.FromSeconds(5), cts.Token));
+    }
+
+    private sealed class BlockingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            new(Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(
+                _ => 0, cancellationToken, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default));
+
+        public override Task<int> ReadAsync(
+            byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(
+                _ => 0, cancellationToken, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+}
