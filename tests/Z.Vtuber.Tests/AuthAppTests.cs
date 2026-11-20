@@ -24,6 +24,20 @@ public sealed class AuthAppTests
     }
 
     [Fact]
+    public void Build_ResolvesCoreServicesAndControllers()
+    {
+        using var app = AuthApp.Build([], Overrides());
+        using var scope = app.Services.CreateScope();
+        var services = scope.ServiceProvider;
+        Assert.NotNull(services.GetRequiredService<Z.Vtuber.Auth.Auth.LoginRequestService>());
+        Assert.NotNull(ActivatorUtilities.CreateInstance<Z.Vtuber.Auth.Controllers.PagesController>(services));
+        Assert.NotNull(ActivatorUtilities.CreateInstance<Z.Vtuber.Auth.Controllers.DanmakuRoomsController>(services));
+        Assert.NotNull(ActivatorUtilities.CreateInstance<Z.Vtuber.Auth.Controllers.MeController>(services));
+        Assert.NotNull(ActivatorUtilities.CreateInstance<Z.Vtuber.Auth.OAuth.OAuthAuthorizeController>(services));
+        Assert.NotNull(ActivatorUtilities.CreateInstance<Z.Vtuber.Auth.OAuth.OAuthUserInfoController>(services));
+    }
+
+    [Fact]
     public void Build_WithShortPepper_FailsFast()
     {
         var overrides = Overrides();
