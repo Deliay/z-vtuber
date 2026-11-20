@@ -74,7 +74,7 @@ graph TB
 8. **Cookie 安全属性按部署协议决定**：`auth_provider_session` 固定 `HttpOnly; SameSite=Lax; Path=/`，`Secure` 在 `Auth:PublicBaseUrl` 为 `https` 时强制开启，本地 `http` 开发可关闭；`Auth:TrustForwardedHeaders=true` 时启用 `UseForwardedHeaders`（X-Forwarded-For/Proto），用于反代后的 IP 限流与 Secure 判定，默认 false（不信任外部头）。
 9. **限流失败策略**：Redis 限流不可用时 **fail-open**（记 warning，不阻断 token 创建），安全底线仍由 58 bit 熵 + 5 分钟 TTL + 一次性 + HMAC 保证；`/health/ready` 会报告 Redis 不健康。弹幕侧同 UID 超限只丢弃事件并记审计/指标（弹幕发送方无法收到 HTTP 429），页面保持 pending；OAuth token 端点超限返回标准 `429`（`AUTH_TOKEN_RATE_LIMITED` 语义收敛到 OAuth `too_many_requests`）。
 10. **TTL 索引设计**：`auth_login_requests.ExpiresAt` TTL **+1 小时**（保留记录以区分 404/expired）；`auth_provider_tickets.ExpiresAt`、`auth_oauth_codes.ExpiresAt`、`auth_provider_sessions.ExpiresAt`、`auth_audit_logs.OccurredAt`（90 天）TTL=0；`auth_provider_tokens` **只在 `RefreshExpiresAt` 上建 TTL**（access 过期由代码判断），避免 access 过期时整条文档被 TTL 删除导致 refresh 失效。
-11. **状态以服务端 UTC 计算为准**：读取时若 `pending` 且 `ExpiresAt<=now` 或 `verified` 且 `ConfirmExpiresAt<=now`，返回 `expired`；后台 `LoginRequestScanner` 每 30 秒把超时记录 CAS 迁移为 `expired`；页面倒计时只作展示。`consumed` 后不可取消；`cancelled` 幂等返回 204。
+11. **状态以服务端 UTC 计算为准**：读取时若 `pending` 且 `ExpiresAt<=now`、`verified` 且 `ConfirmExpiresAt<=now`，或 `confirming` 且确认窗口已过期，返回 `expired`；后台 `LoginRequestScanner` 每 30 秒把超时记录 CAS 迁移为 `expired`。`confirming` 超过 `ConfirmOperationTimeoutSeconds`（默认 30s）但确认窗口仍有效时回退为 `verified`，避免确认流程崩溃后永久 409；不可恢复错误（如 casdoor 模式 returnTo 缺失/非法）CAS 为 `failed` 并写 `FailureCode`。页面倒计时只作展示。`consumed` 后不可取消；`cancelled` 幂等返回 204；`confirming` 取消返回 409。
 12. **错误体与新增错误码**：账号中心 API 统一 `{ "error": { "code": "...", "message": "..." } }`；OAuth 端点用标准 `{ "error": "...", "error_description": "..." }`。新增 `401 AUTH_UNAUTHORIZED`（`/api/auth/me`、`/account` 未登录）与 `401 invalid_client`（OAuth Client 认证失败）；其余沿用提案 §3.5。
 13. **页面实现为静态文件 + 页面控制器**：`servers/auth/wwwroot/connect/{index.html,connect.js,connect.css}`、`wwwroot/account/{index.html,account.js}`、`wwwroot/shared/site.css`；`PagesController` 用 `IWebHostEnvironment` 读取 HTML 并返回 `text/html`，统一设置 `Content-Security-Policy`（`default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https://*.hdslb.com data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`）、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`；静态资源由 `UseStaticFiles` 提供。不引入 Node、不引入 Razor Pages。
 14. **前端 JS 数据安全**：所有服务端数据用 `textContent` 渲染，禁止 `innerHTML`；token/pollToken 不落 `localStorage`，关闭/刷新页面即放弃当前请求（旧 token 自然过期）；轮询串行 `setTimeout`，终态停止。
@@ -334,3 +334,20 @@ stateDiagram-v2
 - 既有服务范式：`servers/training/Program.cs`、`servers/cookie/Program.cs`、`servers/training/Dockerfile`、`.github/workflows/build-training-image.yml`
 - 开发规范：`docs/engineering/common-rules.md`、`docs/engineering/backend-rules.md`、`servers/auth/AGENTS.md`（实现期创建）
 - Casdoor：<https://casdoor.ai/docs/overview/>、<https://casdoor.ai/docs/application/overview/>、<https://casdoor.ai/docs/session/single-sign-on/>、<https://casdoor.ai/docs/provider/oauth/CustomProvider/>、<https://casdoor.ai/docs/provider/oauth/user-mapping/>
+
+## 8. 返工修复记录（2026-11-20，PR #200）
+
+代码审核打回后按清单修复，关键回归测试：
+
+| 类别 | 修复 | 回归测试 |
+|--|--|--|
+| 凭证泄漏 | confirm 失败路径对称撤销 Provider Ticket 与 standalone access/refresh | `Confirm_WhenFinalCasFails_RevokesIssuedStandaloneTokens` |
+| 状态机 | cancel 仅 pending/verified；confirming 超时回退 verified；不可恢复错误转 failed 并写 FailureCode；最终 CAS 校验确认窗口 | `Cancel_Confirming_IsRejected...`、`Scanner_RevertsStaleConfirming...`、`Confirm_WithMissingReturnTo_MarksRequestFailed`、`Confirm_AfterConfirmWindowExpired...` |
+| OAuth 注销 | client 认证必填，撤销 access/refresh/Provider Session 并清 Cookie | `Logout_RequiresClientAuthentication`、`Logout_RevokesTokensAndProviderSessionAndClearsCookie` |
+| 取消回调 | `/oauth/authorize?denied=1` 在校验 client/redirect 后返回 `access_denied&state` | `Authorize_WithDeniedFlag...`、`Authorize_DeniedFlag_StillValidates...` |
+| 重连/去重 | 稳定 60s 重置移入异常路径；去重先处理后记账，失败可重投 | `StableRun_ResetsAttemptCounter...`、`DanmakuDeduplicatorTests` |
+| 就绪语义 | 已连接/宽限期内有帧/follower 观察到租约均可服务；状态字段加锁 | `DanmakuHealthRegistryTests` |
+| 安全 | OAuth 500 标准错误体、`/oauth/*` no-store、CORS 仅 `/api/auth/*`、Redis 连接自愈 | `AuthSecurityTests`、`Cors_AppliesOnlyToAccountCenterApi` |
+| 测试体系 | 假 SSE 源 + 真实 Kestrel HTTP E2E、断线/补投/follower、限流 fail-open、健康矩阵 | `AuthDanmakuEndToEndTests`、`AuthDanmakuResilienceTests`、`AuthRedisRateLimiterTests`、`AuthHealthCheckTests` |
+
+容器用例（Mongo/Redis Testcontainers）需在有 Docker 的 CI/开发机执行；本地快照器无法解包镜像时仅能编译验证。
