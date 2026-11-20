@@ -13,6 +13,7 @@ type: Permanent
 **作者**: Workflow Agent（代起草）
 **需求总分支**: `feat/danmaku-account-auth`（需求总 PR #199，方案文档已批准 @ `f575f6d`）
 **实现分支**: `feat/danmaku-account-auth-impl`（自需求总分支切出，PR 回需求总分支）
+**实现 PR**: [#200](https://github.com/Deliay/z-vtuber/pull/200)（目标 `feat/danmaku-account-auth`）
 
 ## 1. 概述
 
