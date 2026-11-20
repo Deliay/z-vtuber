@@ -438,7 +438,20 @@ sequenceDiagram
 
 > 说明：图中「B 站弹幕验证页」由 auth 服务内嵌托管（或独立登录服务），不是 Casdoor 登录页，也不是 `apps/web`；Casdoor 统一登录页只负责展示登录方式与建立 SSO 会话。
 
-## 七、相关文档
+## 七、实现验收记录（2026-11-19）
+
+实现分支 `feat/danmaku-account-auth-impl`（PR 目标 `feat/danmaku-account-auth`），实现 Plan
+`docs/engineering/plans/20261119-plan-danmaku-account-auth.md`。
+
+- [x] 功能点 1/5：Casdoor Custom OAuth Provider（authorize/token/userinfo/logout）、Provider Ticket/Session、同组织多站点 SSO 由 Casdoor 负责；`AuthOAuthProviderTests`/`AuthDanmakuEndToEndTests` 覆盖 ticket→code→token→userinfo 与重放拒绝。
+- [x] 功能点 2/4：10 位一次性 token、弹幕识别 + 确认窗口、唯一 B 站 UID 绑定、并发 CAS 防重复；`AuthLoginRequestServiceTests` 覆盖状态机（含 confirming 超时回退、failed 终态、consumed/cancel 边界）。
+- [x] 功能点 3：`RoomIds` 多房间独立事件源、补投/去重、Redis 每房间选主、`available/role` 状态、全部不可用 503；`AuthDanmakuEndToEndTests`、`AuthDanmakuResilienceTests`、`DanmakuDeduplicatorTests`、`DanmakuHealthRegistryTests` 覆盖（容器用例在 CI 执行）。
+- [x] 功能点 6：auth 内嵌 `/connect/bilibili`、`/account`，`apps/web` 零改动；「重新验证」先注销 Provider Session 再跳 `ReauthorizeUrl`；「退出登录」撤销该用户全部 Provider Session/access/refresh，并在配置 `Casdoor:LogoutUrl` 时跳转 Casdoor end-session 结束 SSO；`OAuthLogoutController` 注销会撤销 access/refresh/Provider Session 并清 Cookie。
+- [x] 功能点 7：限流（内置验证页仅按 IP，外部 client 独立配额）、统一错误体、审计（脱敏、90 天 TTL）、指标（登录/房间/OAuth 计数器）、安全响应头、CSP、健康/就绪；`AuthRedisRateLimiterTests` 覆盖计数与 fail-open，`AuthSecurityTests` 覆盖 DB/审计无明文与 OAuth/账号中心错误体分离，`AuthAppTests`/OAuth 全链路用例覆盖指标注册与审计落库。
+- [x] 非功能：契约 `contracts/auth.openapi.yaml`、Dockerfile/CI/AppHost、单元/集成/HTTP 端到端测试。
+- [ ] 外部联调（待部署环境）：真实 Casdoor Organization/Application A/B/Custom Provider、真实 30066 弹幕、站点 B SSO 漫游（按 `servers/auth/AGENTS.md` 核对清单执行）。
+
+## 八、相关文档
 
 - 技术提案: `docs/engineering/proposals/20261119-proposal-danmaku-account-auth.md`
 - 既有直播事件与 SSE 能力：`servers/api/Controllers/BilibiliLiveController.cs`、`servers/api/Live/LiveEventBus.cs`

@@ -104,6 +104,23 @@ api.WithReference(crawler)
     .WaitFor(crawler)
     .WithEnvironment("CrawlerService:BaseUrl", crawler.GetEndpoint("http"));
 
+var auth = builder.AddProject<Projects.Z_Vtuber_Auth>("auth")
+    .WithReference(mongo)
+    .WaitFor(mongo)
+    .WithReference(messaging)
+    .WaitFor(messaging)
+    .WithReference(api)
+    .WaitFor(api)
+    .WithEnvironment("Auth:Danmaku:BaseUrl", api.GetEndpoint("http"))
+    .WithEnvironment("Auth:Danmaku:RoomIds:0", "30066")
+    .WithEnvironment("Auth:Mode", "standalone")
+    .WithEnvironment("Auth:TokenPepper", "dev-only-change-me-0123456789abcdef0123456789abcdef")
+    .WithExternalHttpEndpoints()
+    .WithHttpHealthCheck("/health");
+
+// PublicBaseUrl 必须指向本服务可达地址，用于 Cookie Secure 判定；不能使用不可解析的 "http://auth"。
+auth.WithEnvironment("Auth:PublicBaseUrl", auth.GetEndpoint("http"));
+
 var web = builder.AddViteApp("web", "../../apps/web")
     .WithReference(api)
     .WithReference(notifier)

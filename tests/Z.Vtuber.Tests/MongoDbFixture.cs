@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Testcontainers.MongoDb;
+using Z.Vtuber.Auth.Persistence;
 using Z.Vtuber.Common.Persistence;
 
 namespace Z.Vtuber.Tests;
@@ -31,6 +32,9 @@ public sealed class MongoDbFixture : IAsyncLifetime
     private readonly string _databaseName = $"test_{Interlocked.Increment(ref _counter)}_{Guid.NewGuid():N}";
 
     public IMongoDatabase Database { get; private set; } = null!;
+
+    /// <summary>共享容器连接串，供需要自行构造客户端的测试（如 auth HTTP 宿主）使用。</summary>
+    public string ConnectionString { get; private set; } = string.Empty;
 
     /// <summary>fixture 清理覆盖的全部集合（7 域并集），只读视图。</summary>
     public static IReadOnlyList<string> AllCollections => AllCollectionsCore;
@@ -67,12 +71,21 @@ public sealed class MongoDbFixture : IAsyncLifetime
         TrainingCollectionNames.TrainingEmotionTasks,
         TrainingCollectionNames.TrainingFeaturePoints,
         TrainingCollectionNames.TrainingDatasetItemSegments,
+        AuthCollectionNames.LoginRequests,
+        AuthCollectionNames.Users,
+        AuthCollectionNames.ProviderSessions,
+        AuthCollectionNames.ProviderTickets,
+        AuthCollectionNames.OAuthCodes,
+        AuthCollectionNames.ProviderTokens,
+        AuthCollectionNames.Sessions,
+        AuthCollectionNames.AuditLogs,
     ];
 
     public async Task InitializeAsync()
     {
         await EnsureContainerStartedAsync();
-        var client = new MongoClient(SharedContainer.GetConnectionString());
+        ConnectionString = SharedContainer.GetConnectionString();
+        var client = new MongoClient(ConnectionString);
         Database = client.GetDatabase(_databaseName);
 
         await EnsureIndexesAsync();
@@ -88,6 +101,7 @@ public sealed class MongoDbFixture : IAsyncLifetime
         var transcript = new TranscriptMongoSetup(Database, NullLogger<TranscriptMongoSetup>.Instance);
         var training = new TrainingMongoSetup(Database, NullLogger<TrainingMongoSetup>.Instance);
         var notification = new NotificationMongoSetup(Database, NullLogger<NotificationMongoSetup>.Instance);
+        var auth = new AuthMongoSetup(Database, NullLogger<AuthMongoSetup>.Instance);
 
         await live.EnsureIndexesAsync();
         await cookie.EnsureIndexesAsync();
@@ -96,6 +110,7 @@ public sealed class MongoDbFixture : IAsyncLifetime
         await transcript.EnsureIndexesAsync();
         await training.EnsureIndexesAsync();
         await notification.EnsureIndexesAsync();
+        await auth.EnsureIndexesAsync();
     }
 
     /// <summary>清空全部集合的数据（保留集合与索引）。</summary>

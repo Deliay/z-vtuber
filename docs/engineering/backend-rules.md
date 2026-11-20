@@ -19,7 +19,7 @@ dotnet new webapi -n Z.Vtuber -o servers/api --no-https --use-controllers
 
 ```
 servers/
-├── Z.Vtuber.slnx                # 解决方案：api + common(8 个领域项目) + crawler/cookie/notifier/recording/recording-transcript-*/training + tests + apphost
+├── Z.Vtuber.slnx                # 解决方案：api + common(8 个领域项目) + crawler/cookie/notifier/recording/recording-transcript-*/training/auth + tests + apphost
 ├── api/                         # 纯 API 服务（Z.Vtuber）
 │   ├── Controllers/             # API 控制器
 │   ├── Live/LiveEventBus.cs     # SSE 订阅门控（Redis pub/sub 驱动，按需订阅/退订）
@@ -72,14 +72,25 @@ servers/
 │   ├── Configuration/           # TranscriptApiOptions
 │   ├── Program.cs               # Web 宿主 + /health 健康检查
 │   └── Z.Vtuber.RecordingTranscript.Api.csproj
-└── training/                    # AI 训练服务（Z.Vtuber.Training，本地 8086，音频数据集）
-    ├── Controllers/             # 数据集 CRUD / 条目列表·更新·批量删除 / 从识别结果导入
-    ├── Clients/                 # ITranscriptApiClient（named client TranscriptService）
-    ├── Contracts/               # Dtos/TrainingMapping（AudioKey = transcript:{taskId}:{原始startMs}）
-    ├── Configuration/           # TrainingOptions
-    ├── Program.cs               # Web 宿主 + /health 健康检查
-    ├── Dockerfile               # 镜像流水线 .github/workflows/build-training-image.yml
-    └── Z.Vtuber.Training.csproj
+├── training/                    # AI 训练服务（Z.Vtuber.Training，本地 8086，音频数据集）
+│   ├── Controllers/             # 数据集 CRUD / 条目列表·更新·批量删除 / 从识别结果导入
+│   ├── Clients/                 # ITranscriptApiClient（named client TranscriptService）
+│   ├── Contracts/               # Dtos/TrainingMapping（AudioKey = transcript:{taskId}:{原始startMs}）
+│   ├── Configuration/           # TrainingOptions
+│   ├── Program.cs               # Web 宿主 + /health 健康检查
+│   ├── Dockerfile               # 镜像流水线 .github/workflows/build-training-image.yml
+│   └── Z.Vtuber.Training.csproj
+└── auth/                        # B 站弹幕帐号认证服务（Z.Vtuber.Auth，本地 8087）
+    ├── Auth/                    # 一次性 token/HMAC、登录状态机、用户绑定、Provider Session/Ticket、standalone 会话、限流、审计
+    ├── Danmaku/                 # 多房间 SSE 事件源、补投/去重、每房间 Redis 选主、发送者/头像解析、健康注册表
+    ├── Persistence/             # auth_* 集合、仓储与索引/TTL（AuthMongoSetup）
+    ├── OAuth/                   # Casdoor Custom OAuth Provider（authorize/token/userinfo/logout、PKCE）
+    ├── Controllers/             # 账号中心 API、房间状态、内嵌页面
+    ├── wwwroot/                 # /connect/bilibili、/account 静态页面（无 Node/Razor）
+    ├── Configuration/           # Auth/Danmaku/OAuthProvider/Casdoor 配置与启动校验
+    ├── Program.cs               # Web 宿主 + /health、/health/ready
+    ├── Dockerfile               # 镜像流水线 .github/workflows/build-auth-image.yml
+    └── Z.Vtuber.Auth.csproj
 ```
 
 > 归属约定：每个公共类型唯一归属一个领域项目，领域项目只引用 `Core`，禁止领域间互相引用。仅被一方使用的代码归该方（抓取专用在 `servers/crawler`，对外接口与 SSE 在 `servers/api`）；跨服务事件/异常契约与 Mongo 基座在 `Z.Vtuber.Common.Core`，其余实体/仓储/共享服务按领域归入对应项目。

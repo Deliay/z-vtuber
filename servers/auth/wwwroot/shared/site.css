@@ -1,0 +1,120 @@
+:root {
+  --bg: #0f1220;
+  --card: #181c2f;
+  --text: #eef1ff;
+  --muted: #9aa3c7;
+  --accent: #5b8cff;
+  --accent-2: #39c5bb;
+  --danger: #ff6b81;
+  --border: #2a3150;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 48px 16px;
+  background: radial-gradient(circle at top, #1d2547, var(--bg) 60%);
+  color: var(--text);
+  font-family: "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+}
+
+.card {
+  width: min(720px, 100%);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+}
+
+h1 { margin: 0 0 6px; font-size: 24px; }
+h2 { font-size: 17px; margin: 0 0 12px; }
+
+section { margin-top: 24px; }
+
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+
+button {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 18px;
+  background: var(--accent);
+  color: white;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.room-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.room-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.room-list .available { color: var(--accent-2); }
+.room-list .unavailable { color: var(--danger); }
+
+.token-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1px dashed var(--accent);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+
+.token-box code {
+  font-size: 26px;
+  letter-spacing: 4px;
+  font-weight: 700;
+  color: #fff;
+  flex: 1;
+  word-break: break-all;
+}
+
+.user-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+
+.user-card img {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #222944;
+}
+
+#error-message { color: var(--danger); }
+
+footer { margin-top: 28px; border-top: 1px solid var(--border); padding-top: 14px; }
