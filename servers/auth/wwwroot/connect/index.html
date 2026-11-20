@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>B 站弹幕验证 - 统一登录</title>
+  <link rel="stylesheet" href="/shared/site.css">
+  <link rel="stylesheet" href="/connect/connect.css">
+</head>
+<body>
+<main class="card">
+  <header>
+    <h1>B 站弹幕验证</h1>
+    <p class="muted">发送一次性 token 到直播间，确认是本人后即可完成注册并进入统一登录。</p>
+  </header>
+
+  <section id="step-rooms">
+    <h2>1. 选择直播间</h2>
+    <ul id="room-list" class="room-list" aria-live="polite"></ul>
+    <p id="room-hint" class="muted"></p>
+    <button id="get-token" type="button" disabled>获取一次性 token</button>
+  </section>
+
+  <section id="step-token" hidden>
+    <h2>2. 发送 token</h2>
+    <div class="token-box">
+      <code id="token-value" aria-label="一次性 token"></code>
+      <button id="copy-token" type="button" class="secondary">复制</button>
+    </div>
+    <p id="instruction" class="muted"></p>
+    <p class="muted">剩余有效时间：<span id="countdown">--</span></p>
+    <button id="cancel" type="button" class="secondary">取消</button>
+  </section>
+
+  <section id="step-verified" hidden>
+    <h2>3. 确认是你本人</h2>
+    <div class="user-card">
+      <img id="user-avatar" alt="B 站头像" hidden>
+      <div>
+        <strong id="user-name"></strong>
+        <p class="muted">B 站 UID：<span id="user-uid"></span></p>
+      </div>
+    </div>
+    <p class="muted">确认后将绑定该 B 站账号，并跳转 Casdoor 完成统一登录。</p>
+    <button id="confirm" type="button">这是我，继续</button>
+    <button id="reject" type="button" class="secondary">不是我</button>
+    <p class="muted">剩余确认时间：<span id="confirm-countdown">--</span></p>
+  </section>
+
+  <section id="step-success" hidden>
+    <h2>B 站账号绑定成功</h2>
+    <p id="success-detail"></p>
+    <p class="muted" id="redirect-hint">正在跳转统一登录……</p>
+  </section>
+
+  <section id="step-error" hidden>
+    <h2>出错了</h2>
+    <p id="error-message"></p>
+    <button id="retry" type="button">重新获取</button>
+  </section>
+
+  <footer class="muted small">
+    <p>隐私提示：我们仅读取你主动发送的 token 与弹幕发送者的公开资料（UID、昵称、头像），用于账号绑定。</p>
+  </footer>
+</main>
+<script src="/connect/connect.js"></script>
+</body>
+</html>

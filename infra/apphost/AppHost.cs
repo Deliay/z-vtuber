@@ -104,6 +104,21 @@ api.WithReference(crawler)
     .WaitFor(crawler)
     .WithEnvironment("CrawlerService:BaseUrl", crawler.GetEndpoint("http"));
 
+var auth = builder.AddProject<Projects.Z_Vtuber_Auth>("auth")
+    .WithReference(mongo)
+    .WaitFor(mongo)
+    .WithReference(messaging)
+    .WaitFor(messaging)
+    .WithReference(api)
+    .WaitFor(api)
+    .WithEnvironment("Auth:Danmaku:BaseUrl", api.GetEndpoint("http"))
+    .WithEnvironment("Auth:Danmaku:RoomIds:0", "30066")
+    .WithEnvironment("Auth:PublicBaseUrl", "http://auth")
+    .WithEnvironment("Auth:Mode", "standalone")
+    .WithEnvironment("Auth:TokenPepper", "dev-only-change-me-0123456789abcdef0123456789abcdef")
+    .WithExternalHttpEndpoints()
+    .WithHttpHealthCheck("/health");
+
 var web = builder.AddViteApp("web", "../../apps/web")
     .WithReference(api)
     .WithReference(notifier)

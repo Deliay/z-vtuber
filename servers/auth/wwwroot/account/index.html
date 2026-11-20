@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>账号中心 - 统一登录</title>
+  <link rel="stylesheet" href="/shared/site.css">
+</head>
+<body>
+<main class="card">
+  <header>
+    <h1>账号中心</h1>
+    <p class="muted">查看当前绑定的 B 站账号与统一登录状态。</p>
+  </header>
+
+  <section id="loading">
+    <p class="muted">正在读取账号信息……</p>
+  </section>
+
+  <section id="profile" hidden>
+    <div class="user-card">
+      <img id="avatar" alt="B 站头像" hidden>
+      <div>
+        <strong id="name"></strong>
+        <p class="muted">B 站 UID：<span id="uid"></span></p>
+        <p class="muted">最近验证房间：<span id="room"></span></p>
+      </div>
+    </div>
+    <p class="muted">统一登录标识：<code id="subject"></code></p>
+    <div class="actions">
+      <button id="reauthorize" type="button" class="secondary" hidden>重新验证 B 站账号</button>
+      <button id="logout" type="button">退出登录</button>
+    </div>
+    <p class="muted small" id="reauthorize-hint" hidden>如需重新验证，请从站点登录入口进入。</p>
+  </section>
+
+  <section id="error" hidden>
+    <p id="error-message"></p>
+    <button id="login" type="button">去验证 B 站账号</button>
+  </section>
+</main>
+<script src="/account/account.js"></script>
+</body>
+</html>
