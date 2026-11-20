@@ -17,6 +17,7 @@
     <Project Path="recording-transcript-api/Z.Vtuber.RecordingTranscript.Api.csproj" />
     <Project Path="recording-transcript-consumer/Z.Vtuber.RecordingTranscript.Consumer.csproj" />
     <Project Path="training/Z.Vtuber.Training.csproj" />
+    <Project Path="auth/Z.Vtuber.Auth.csproj" />
   </Folder>
 
   <Folder Name="/tests/">

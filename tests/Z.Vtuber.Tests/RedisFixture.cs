@@ -9,10 +9,13 @@ public sealed class RedisFixture : IAsyncLifetime
 
     public IConnectionMultiplexer Connection { get; private set; } = null!;
 
+    public string ConnectionString { get; private set; } = string.Empty;
+
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
-        Connection = await ConnectionMultiplexer.ConnectAsync(_container.GetConnectionString());
+        ConnectionString = _container.GetConnectionString();
+        Connection = await ConnectionMultiplexer.ConnectAsync(ConnectionString);
     }
 
     public Task DisposeAsync()

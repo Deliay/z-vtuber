@@ -1,0 +1,521 @@
+openapi: 3.1.0
+info:
+  title: Z.Vtuber Auth API
+  version: 1.0.0
+  description: |
+    B 站弹幕帐号认证服务：账号中心 API、Casdoor Custom OAuth Provider 与健康/房间状态。
+    错误体：账号中心接口使用 `{ "error": { "code", "message" } }`；OAuth 端点使用标准 `{ "error", "error_description" }`。
+
+    ## Token 生命周期
+    - 弹幕 token：10 位 `[A-Za-z0-9]`（56 字符去混淆集，约 58 bit 熵）、默认 300s、一次性、仅存 HMAC。
+    - Provider Ticket：60s、一次性、绑定 `client_id/redirect_uri/state/scope/PKCE`、只存 HMAC。
+    - 授权码：5 分钟、一次性、绑定 client/redirect/scope、支持 PKCE `S256`、只存 HMAC。
+    - Provider access token：1 小时；refresh token：30 天、单文档原子轮换；均只存 HMAC。
+    - standalone access token：900s；refresh token：30 天；轮换后旧 token 立即失效。
+
+    ## 错误码
+    | HTTP | code | 场景 |
+    |--|--|--|
+    | 400 | `AUTH_INVALID_REQUEST` | 参数非法 / returnTo 缺失 |
+    | 400 | `AUTH_PROVIDER_RETURN_TO_INVALID` | returnTo 无法完成统一登录（记录转为 failed） |
+    | 401 | `AUTH_UNAUTHORIZED` / `invalid_client` | 未登录 / OAuth client 认证失败 |
+    | 404 | `AUTH_LOGIN_REQUEST_NOT_FOUND` | requestId 不存在或 pollToken 不匹配（统一，不暴露存在性） |
+    | 409 | `AUTH_LOGIN_REQUEST_NOT_VERIFIED` / `AUTH_LOGIN_REQUEST_ALREADY_CONSUMED` / `AUTH_CONFIRM_RACE` / `AUTH_LOGIN_REQUEST_FAILED` | 状态机冲突 |
+    | 410 | `AUTH_LOGIN_REQUEST_EXPIRED` | 登录请求过期 |
+    | 429 | `AUTH_TOKEN_RATE_LIMITED` / `too_many_requests` | 限流 |
+    | 500 | `AUTH_INTERNAL` / `server_error` | 未预期错误（账号中心 / OAuth 两套错误体） |
+    | 503 | `AUTH_DANMAKU_SOURCE_UNAVAILABLE` | 全部房间事件源不可用 |
+servers:
+  - url: http://localhost:8087
+tags:
+  - name: pages
+  - name: account
+  - name: oauth
+  - name: health
+paths:
+  /connect/bilibili:
+    get:
+      tags: [pages]
+      operationId: getConnectBilibiliPage
+      summary: auth 内嵌的弹幕验证/注册页
+      parameters:
+        - name: return_to
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: HTML 页面
+          content:
+            text/html:
+              schema: { type: string }
+  /account:
+    get:
+      tags: [pages]
+      operationId: getAccountPage
+      summary: auth 内嵌的账号中心页
+      responses:
+        '200':
+          description: HTML 页面
+          content:
+            text/html:
+              schema: { type: string }
+  /api/auth/danmaku/rooms:
+    get:
+      tags: [account]
+      operationId: listDanmakuRooms
+      summary: 查询配置房间与事件源状态
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoomListResponse' }
+  /api/auth/login-requests:
+    post:
+      tags: [account]
+      operationId: createLoginRequest
+      summary: 创建一次性弹幕 token
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLoginRequestRequest' }
+      responses:
+        '201':
+          description: 创建成功（token 只返回一次）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedLoginRequestResponse' }
+        '400': { $ref: '#/components/responses/AuthError' }
+        '429': { $ref: '#/components/responses/AuthError' }
+        '503': { $ref: '#/components/responses/AuthError' }
+  /api/auth/login-requests/{requestId}:
+    get:
+      tags: [account]
+      operationId: getLoginRequest
+      summary: 查询登录请求状态
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/PollToken'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginRequestStatusResponse' }
+        '404': { $ref: '#/components/responses/AuthError' }
+  /api/auth/login-requests/{requestId}/confirm:
+    post:
+      tags: [account]
+      operationId: confirmLoginRequest
+      summary: 确认本人，创建/复用用户并返回 Casdoor 跳转或 standalone tokens
+      description: |
+        casdoor 模式返回 60s 一次性 Provider Ticket 的 redirectUrl；standalone 模式返回 access(900s)/refresh(30d)。
+        确认窗口默认 120s；确认中的记录若 30s 内未完成会被扫描器回退为 verified。
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/PollToken'
+      responses:
+        '200':
+          description: 确认成功
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: standalone 模式设置 auth_provider_session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfirmLoginResponse' }
+        '400': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/AuthError' }
+        '404': { $ref: '#/components/responses/AuthError' }
+        '409': { $ref: '#/components/responses/AuthError' }
+        '410': { $ref: '#/components/responses/AuthError' }
+  /api/auth/login-requests/{requestId}/cancel:
+    post:
+      tags: [account]
+      operationId: cancelLoginRequest
+      summary: 取消登录请求（token 作废）
+      description: 仅 pending/verified 可取消；confirming 返回 409，consumed 返回 409，expired 返回 410。
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/PollToken'
+      responses:
+        '204': { description: 已取消或已取消（幂等） }
+        '404': { $ref: '#/components/responses/AuthError' }
+        '409': { $ref: '#/components/responses/AuthError' }
+        '410': { $ref: '#/components/responses/AuthError' }
+  /api/auth/me:
+    get:
+      tags: [account]
+      operationId: getCurrentUser
+      summary: 当前账号中心用户
+      security:
+        - ProviderSession: []
+        - Bearer: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MeResponse' }
+        '401': { $ref: '#/components/responses/AuthError' }
+  /api/auth/provider-sessions/logout:
+    post:
+      tags: [account]
+      operationId: logoutProviderSession
+      summary: 退出本服务会话并返回 Casdoor 登出地址
+      description: 撤销当前 Provider Session、该用户全部 Provider token 与会话；若配置 `Casdoor:LogoutUrl`，返回 end-session 地址用于结束 Casdoor SSO。
+      security:
+        - ProviderSession: []
+      responses:
+        '200':
+          description: 已退出本地会话
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogoutResponse' }
+  /api/auth/sessions/refresh:
+    post:
+      tags: [account]
+      operationId: refreshStandaloneSession
+      summary: standalone 模式刷新令牌轮换
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshSessionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StandaloneTokens' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '404': { description: casdoor 模式不提供 }
+  /api/auth/sessions/logout:
+    post:
+      tags: [account]
+      operationId: logoutStandaloneSession
+      summary: standalone 模式撤销本地会话
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LogoutSessionRequest' }
+      responses:
+        '204': { description: 已撤销 }
+        '404': { description: casdoor 模式不提供 }
+  /oauth/authorize:
+    get:
+      tags: [oauth]
+      operationId: oauthAuthorize
+      description: Casdoor Custom OAuth Provider 授权端点；standalone 模式返回 404。
+      parameters:
+        - { name: client_id, in: query, required: true, schema: { type: string } }
+        - { name: redirect_uri, in: query, required: true, schema: { type: string, format: uri } }
+        - { name: response_type, in: query, required: true, schema: { type: string, enum: [code] } }
+        - { name: state, in: query, required: false, schema: { type: string } }
+        - { name: scope, in: query, required: false, schema: { type: string } }
+        - { name: code_challenge, in: query, required: false, schema: { type: string } }
+        - { name: code_challenge_method, in: query, required: false, schema: { type: string, enum: [S256] } }
+        - { name: ticket, in: query, required: false, schema: { type: string } }
+      responses:
+        '302':
+          description: 授权码回调或跳转验证页/错误
+          headers:
+            Location: { schema: { type: string } }
+            Set-Cookie: { schema: { type: string } }
+        '400':
+          description: OAuth 标准错误
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '404': { description: standalone 模式不提供 }
+  /oauth/token:
+    post:
+      tags: [oauth]
+      operationId: oauthToken
+      summary: 授权码/刷新令牌换 token
+      description: 授权码 5 分钟一次性、支持 PKCE S256；access 1h、refresh 30d 原子轮换。standalone 模式返回 404。
+      security:
+        - OAuthBasic: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type: { type: string, enum: [authorization_code, refresh_token] }
+                code: { type: string }
+                redirect_uri: { type: string, format: uri }
+                code_verifier: { type: string }
+                refresh_token: { type: string }
+                client_id: { type: string }
+                client_secret: { type: string, format: password }
+      responses:
+        '200':
+          description: token
+          headers:
+            Cache-Control: { schema: { type: string }, example: no-store }
+            Pragma: { schema: { type: string }, example: no-cache }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthTokens' }
+        '400':
+          description: OAuth 标准错误
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '401':
+          description: invalid_client
+          headers:
+            WWW-Authenticate: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '404': { description: standalone 模式不提供 }
+        '429':
+          description: too_many_requests
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+  /oauth/userinfo:
+    get:
+      tags: [oauth]
+      operationId: oauthUserInfo
+      summary: 返回 Casdoor 映射的用户信息
+      description: Bearer access token；standalone 模式返回 404。
+      security:
+        - Bearer: []
+      responses:
+        '200':
+          description: OK
+          headers:
+            Cache-Control: { schema: { type: string }, example: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthUserInfo' }
+        '401':
+          description: invalid_token
+          headers:
+            WWW-Authenticate: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '404': { description: standalone 模式不提供 }
+  /oauth/logout:
+    post:
+      tags: [oauth]
+      operationId: oauthLogout
+      summary: 注销端点（client 认证必填，撤销 access/refresh/Provider Session）
+      description: RFC 7009 风格的 client 认证必填；standalone 模式返回 404。
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                token: { type: string }
+                refresh_token: { type: string }
+                client_id: { type: string }
+                client_secret: { type: string, format: password }
+      responses:
+        '200':
+          description: 已处理（幂等）
+        '401':
+          description: invalid_client
+          headers:
+            WWW-Authenticate: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '404': { description: standalone 模式不提供 }
+  /health:
+    get:
+      tags: [health]
+      operationId: healthLive
+      summary: 存活检查
+      responses:
+        '200': { description: Healthy }
+        '503': { description: Unhealthy }
+  /health/ready:
+    get:
+      tags: [health]
+      operationId: healthReady
+      summary: 就绪检查（Mongo + Redis + 至少一个房间可用）
+      responses:
+        '200': { description: Ready }
+        '503': { description: Not ready }
+components:
+  securitySchemes:
+    ProviderSession:
+      type: apiKey
+      in: cookie
+      name: auth_provider_session
+    Bearer:
+      type: http
+      scheme: bearer
+    OAuthBasic:
+      type: http
+      scheme: basic
+  parameters:
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PollToken:
+      name: X-Poll-Token
+      in: header
+      required: true
+      schema: { type: string, pattern: '^p_[A-Za-z0-9_-]+$' }
+  responses:
+    AuthError:
+      description: 账号中心统一错误体
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AuthErrorBody' }
+  schemas:
+    AuthErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+    OAuthError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        error_description: { type: string }
+    CreateLoginRequestRequest:
+      type: object
+      properties:
+        clientId: { type: string, maxLength: 128 }
+        clientNonce: { type: string, maxLength: 256 }
+        returnTo:
+          type: string
+          description: casdoor 模式必填；仅允许本服务 /oauth/authorize 相对 URL
+    CreatedLoginRequestResponse:
+      type: object
+      required: [requestId, token, pollToken, expiresAt, pollAfterMs, roomIds, primaryRoomId, confirmWindowSeconds, instruction]
+      properties:
+        requestId: { type: string, format: uuid }
+        token: { type: string, pattern: '^[A-Za-z0-9]{10}$' }
+        pollToken: { type: string }
+        expiresAt: { type: string, format: date-time }
+        pollAfterMs: { type: integer }
+        roomIds:
+          type: array
+          items: { type: string }
+        primaryRoomId: { type: string }
+        confirmWindowSeconds: { type: integer }
+        instruction: { type: string }
+    AuthUser:
+      type: object
+      required: [platform, uid, name]
+      properties:
+        platform: { type: string, enum: [bilibili] }
+        uid: { type: integer, format: int64 }
+        name: { type: string }
+        avatarUrl: { type: string, nullable: true }
+    LoginRequestStatusResponse:
+      type: object
+      required: [status, expiresAt, retryAfterMs]
+      properties:
+        status:
+          type: string
+          enum: [pending, verified, confirming, consumed, expired, cancelled, failed]
+        expiresAt: { type: string, format: date-time }
+        confirmExpiresAt: { type: string, format: date-time, nullable: true }
+        sourceRoomId: { type: string, nullable: true }
+        user: { $ref: '#/components/schemas/AuthUser' }
+        retryAfterMs: { type: integer }
+    StandaloneTokens:
+      type: object
+      required: [tokenType, accessToken, expiresIn, refreshToken, refreshExpiresIn]
+      properties:
+        tokenType: { type: string, enum: [Bearer] }
+        accessToken: { type: string }
+        expiresIn: { type: integer }
+        refreshToken: { type: string }
+        refreshExpiresIn: { type: integer }
+    ConfirmLoginResponse:
+      type: object
+      required: [mode, user]
+      properties:
+        mode: { type: string, enum: [casdoor, standalone] }
+        user: { $ref: '#/components/schemas/AuthUser' }
+        redirectUrl: { type: string, nullable: true }
+        providerTicketExpiresAt: { type: string, format: date-time, nullable: true }
+        tokens: { $ref: '#/components/schemas/StandaloneTokens' }
+    RoomListResponse:
+      type: object
+      required: [rooms]
+      properties:
+        rooms:
+          type: array
+          items:
+            type: object
+            required: [roomId, role, connected, available]
+            properties:
+              roomId: { type: string }
+              role: { type: string, enum: [leader, standby, disconnected] }
+              connected: { type: boolean }
+              available: { type: boolean }
+              lastHeartbeatAt: { type: string, format: date-time, nullable: true }
+              lastEventAt: { type: string, format: date-time, nullable: true }
+    MeResponse:
+      type: object
+      required: [authenticated, mode]
+      properties:
+        authenticated: { type: boolean }
+        user: { $ref: '#/components/schemas/AuthUser' }
+        providerSubject: { type: string, nullable: true }
+        bilibiliUid: { type: string, nullable: true }
+        bilibiliRoomId: { type: string, nullable: true }
+        mode: { type: string, enum: [casdoor, standalone] }
+        reauthorizeUrl: { type: string, nullable: true }
+    LogoutResponse:
+      type: object
+      properties:
+        logoutUrl:
+          type: string
+          nullable: true
+          description: Casdoor RP-initiated logout 地址；为空表示仅退出本服务会话。
+    RefreshSessionRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    LogoutSessionRequest:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+    OAuthTokens:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, scope]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer }
+        scope: { type: string }
+    OAuthUserInfo:
+      type: object
+      required: [sub, preferred_username, name]
+      properties:
+        sub: { type: string, example: bili_403496 }
+        preferred_username: { type: string, example: bili_403496 }
+        name: { type: string, example: Zero_Ash }
+        picture: { type: string, nullable: true }
+        bilibili_uid: { type: string }
+        bilibili_room_id: { type: string, nullable: true }
